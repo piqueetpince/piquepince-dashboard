@@ -18,19 +18,9 @@ with st.sidebar:
 
 if connect_btn:
     with st.spinner("Connexion en cours..."):
-        token, account_id = get_token(email, password)
-    if token:
-        shops = get_shops(token, account_id)
-        if shops:
-            shop_id = shops[0].get("id")
-            st.session_state["token"] = token
-            st.session_state["account_id"] = account_id
-            st.session_state["shop_id"] = shop_id
-            st.sidebar.success(f"Connecté ! Boutique #{shop_id}")
-        else:
-            st.sidebar.error("Connecté mais aucune boutique trouvée")
-    else:
-        st.sidebar.error("Identifiants incorrects")
+        status, message, _, _ = get_token(email, password)
+    st.sidebar.write(f"Status: {status}")
+    st.sidebar.write(f"Réponse: {message}")
 
 if "token" in st.session_state:
     token = st.session_state["token"]
