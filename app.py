@@ -114,26 +114,18 @@ if "token" in st.session_state:
     st.divider()
 
     if products_list:
-        st.subheader("Produits & stock")
         products = pd.DataFrame(products_list)
         products["stock"] = pd.to_numeric(products["stock"], errors="coerce").fillna(0).astype(int)
-
         produits_affiches = products[products["status"] == "visible"].copy()
 
-        col_stock1, col_stock2, col_stock3 = st.columns(3)
-        with col_stock1:
-            st.metric("Total produits", len(products))
-        with col_stock2:
-            st.metric("Produits affichés (en vente)", len(produits_affiches))
-        with col_stock3:
-            st.metric("Produits affichés en rupture", len(produits_affiches[produits_affiches["stock"] == 0]))
-
-        st.subheader("Produits affichés en boutique")
-        cols_produits = ["sku", "label", "stock"]
-        df_produits = produits_affiches[cols_produits].copy()
-        df_produits.columns = ["SKU", "Produit", "Stock"]
-        df_produits = df_produits.sort_values("Stock", ascending=True)
-        st.dataframe(df_produits, use_container_width=True, hide_index=True)
+        st.subheader("Debug — structure d'un produit avec variations")
+        produits_zero = produits_affiches[produits_affiches["stock"] == 0]
+        if not produits_zero.empty:
+            exemple = products_list[produits_zero.index[0]]
+            st.write("Toutes les clés disponibles pour ce produit :")
+            st.write(list(exemple.keys()))
+            st.write("Contenu complet :")
+            st.json(exemple)
 
     else:
         st.warning("Aucun produit récupéré.")
