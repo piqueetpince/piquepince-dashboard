@@ -12,20 +12,14 @@ def get_token(email, password):
         )
         if response.status_code in [200, 201]:
             data = response.json()
-            token = data.get("token")
-            account_id = data.get("account_id")
-            shop_id = data.get("default_shop_id")
-            return token, account_id, shop_id
+            return data.get("token"), data.get("account_id"), data.get("default_shop_id")
         return None, None, None
     except Exception as e:
         return None, None, None
 
 def get_orders_page(token, shop_id, page=1, limit=100):
     try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         response = requests.get(
             f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
             headers=headers,
@@ -40,20 +34,16 @@ def get_orders_page(token, shop_id, page=1, limit=100):
 def get_all_recent_orders(token, shop_id, nb_mois=12):
     date_limite = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)
     all_orders = []
-
     first_page = get_orders_page(token, shop_id, page=1, limit=100)
     if not first_page:
         return []
-
     total_pages = first_page.get("pages", 1)
     current_page = total_pages
-
     while current_page >= 1:
         data = get_orders_page(token, shop_id, page=current_page, limit=100)
         results = data.get("results", [])
         if not results:
             break
-
         recent = []
         stop = False
         for order in reversed(results):
@@ -62,46 +52,34 @@ def get_all_recent_orders(token, shop_id, nb_mois=12):
                 recent.append(order)
             else:
                 stop = True
-
         all_orders.extend(recent)
-
         if stop:
             break
-
         current_page -= 1
-
     return all_orders
 
-def get_all_products(token, shop_id):
+def get_all_skus(token, shop_id):
     try:
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        all_products = []
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        all_skus = []
         page = 1
-
         while True:
             response = requests.get(
-                f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products",
+                f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/skus",
                 headers=headers,
-                params={"page": page, "limit": 100}
+                params={"page": page, "limit": 500, "detailed": True}
             )
             if response.status_code != 200:
                 break
-
             data = response.json()
             results = data.get("results", [])
             if not results:
                 break
-
-            all_products.extend(results)
-
+            all_skus.extend(results)
             total_pages = data.get("pages", 1)
             if page >= total_pages:
                 break
             page += 1
-
-        return all_products
+        return all_skus
     except Exception as e:
         return []
