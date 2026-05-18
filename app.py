@@ -26,6 +26,7 @@ if connect_btn:
         st.session_state["token"] = token
         st.session_state["account_id"] = account_id
         st.session_state["shop_id"] = shop_id
+        st.session_state["sku_mapping"] = None
         st.sidebar.success("Connecté !")
     else:
         st.sidebar.error("Identifiants incorrects")
@@ -119,7 +120,18 @@ if "token" in st.session_state:
         skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
         skus_visibles = skus[skus["status"] == "visible"].copy()
 
-        sku_mapping = build_sku_mapping(products_list)
+        if st.session_state.get("sku_mapping") is None:
+            with st.spinner("Chargement des fournisseurs (première fois uniquement, ~2 min)..."):
+                sku_mapping = build_sku_mapping(
+                    products_list,
+                    token=token,
+                    shop_id=shop_id,
+                    load_suppliers=True
+                )
+                st.session_state["sku_mapping"] = sku_mapping
+        else:
+            sku_mapping = st.session_state["sku_mapping"]
+
         skus_visibles["Produit"] = skus_visibles["sku"].map(
             lambda x: sku_mapping.get(x, {}).get("nom", "")
         )
