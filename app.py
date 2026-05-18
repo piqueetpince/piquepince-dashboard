@@ -112,15 +112,36 @@ if "token" in st.session_state:
     st.divider()
 
     if skus_list:
+        st.subheader("Produits & stock")
         skus = pd.DataFrame(skus_list)
         skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
 
-        st.subheader("Debug SKUs — statut sans detailed")
-        st.write(f"Total SKUs : {len(skus)}")
-        st.write("Valeurs uniques du statut :")
-        st.write(skus["status"].unique().tolist() if "status" in skus.columns else "Absent")
-        st.write("Aperçu 5 premières :")
-        st.dataframe(skus[["sku", "label", "stock", "status", "type"]].head(5))
+        skus_visibles = skus[skus["status"] == "visible"].copy()
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total SKUs actives", len(skus_visibles))
+        with col2:
+            st.metric("SKUs en rupture", len(skus_visibles[skus_visibles["stock"] == 0]))
+        with col3:
+            st.metric("SKUs en stock", len(skus_visibles[skus_visibles["stock"] > 0]))
+
+        st.subheader("SKUs affichées en boutique")
+        cols_dispo = [c for c in ["sku", "stock", "type", "ean13"] if c in skus_visibles.columns]
+        df_skus = skus_visibles[cols_dispo].copy()
+        df_skus = df_skus.sort_values("stock", ascending=True)
+        df_skus.columns = [c.upper() for c in cols_dispo]
+        st.dataframe(df_skus, use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("Export stock")
+        csv_stock = skus_visibles.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Télécharger le stock en CSV",
+            data=csv_stock,
+            file_name="stock_wizishop.csv",
+            mime="text/csv"
+        )
 
     else:
         st.warning("Aucune SKU récupérée.")
