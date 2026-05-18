@@ -23,7 +23,7 @@ if connect_btn:
         st.session_state["token"] = token
         st.session_state["account_id"] = account_id
         st.session_state["shop_id"] = shop_id
-        st.sidebar.success(f"Connecté !")
+        st.sidebar.success("Connecté !")
     else:
         st.sidebar.error("Identifiants incorrects")
 
@@ -39,25 +39,31 @@ if "token" in st.session_state:
         orders = pd.DataFrame(orders_data["results"])
 
         if "created_at" in orders.columns:
-            orders["date"] = pd.to_datetime(orders["created_at"])
+            orders["date"] = pd.to_datetime(orders["created_at"], utc=True)
             orders["mois"] = orders["date"].dt.to_period("M").astype(str)
             mois_max = orders["mois"].max()
+            orders_ce_mois = orders[orders["mois"] == mois_max]
+        else:
+            mois_max = "N/A"
+            orders_ce_mois = orders
 
         st.subheader("Vue d'ensemble")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Commandes ce mois",
-                      len(orders[orders["mois"] == mois_max]))
+            st.metric("Commandes ce mois", len(orders_ce_mois))
         with col2:
             if "total_price" in orders.columns:
-                ca = orders[orders["mois"] == mois_max]["total_price"].sum()
+                ca = orders_ce_mois["total_price"].astype(float).sum()
                 st.metric("CA ce mois (Wizishop)", f"{ca:.0f} €")
+            else:
+                st.metric("CA ce mois (Wizishop)", "N/A")
         with col3:
             st.metric("Commandes total", orders_data.get("total", len(orders)))
 
-        st.subheader("Commandes par mois")
-        par_mois = orders.groupby("mois").size().reset_index(name="commandes")
-        st.bar_chart(par_mois.set_index("mois"))
+        if "mois" in orders.columns:
+            st.subheader("Commandes par mois")
+            par_mois = orders.groupby("mois").size().reset_index(name="commandes")
+            st.bar_chart(par_mois.set_index("mois"))
 
         st.subheader("Dernières commandes")
         st.dataframe(orders.tail(20), use_container_width=True)
