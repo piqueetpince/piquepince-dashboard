@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from wizishop_api import get_token, get_orders, get_products
 
 st.set_page_config(
@@ -13,14 +12,13 @@ st.title("Pique&Pince — Dashboard ventes")
 
 with st.sidebar:
     st.header("Connexion Wizishop")
-    email = st.text_input("Email", type="default")
+    email = st.text_input("Email")
     password = st.text_input("Mot de passe", type="password")
     connect_btn = st.button("Se connecter", use_container_width=True)
 
 if connect_btn:
     with st.spinner("Connexion en cours..."):
         token, shop_id = get_token(email, password)
-
     if token:
         st.session_state["token"] = token
         st.session_state["shop_id"] = shop_id
@@ -45,9 +43,8 @@ if "token" in st.session_state:
 
         st.subheader("Vue d'ensemble")
         col1, col2, col3 = st.columns(3)
-
         with col1:
-            st.metric("Commandes ce mois", 
+            st.metric("Commandes ce mois",
                       len(orders[orders["mois"] == orders["mois"].max()]))
         with col2:
             if "total_price" in orders.columns:
@@ -59,15 +56,13 @@ if "token" in st.session_state:
         st.subheader("Commandes par mois")
         if "mois" in orders.columns:
             commandes_par_mois = orders.groupby("mois").size().reset_index(name="commandes")
-            fig = px.bar(commandes_par_mois, x="mois", y="commandes",
-                        color_discrete_sequence=["#1D9E75"])
-            st.plotly_chart(fig, use_container_width=True)
+            st.bar_chart(commandes_par_mois.set_index("mois"))
 
         st.subheader("Dernières commandes")
         st.dataframe(orders.tail(20), use_container_width=True)
 
     else:
-        st.warning("Aucune commande récupérée — vérifie ta connexion.")
+        st.warning("Aucune commande récupérée.")
 
     if products_data:
         st.subheader("Produits & stock")
