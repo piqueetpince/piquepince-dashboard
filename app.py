@@ -113,12 +113,43 @@ if "token" in st.session_state:
     st.divider()
 
     if skus_list and products_list:
-        st.subheader("Debug — champs disponibles dans un produit")
-        st.write("Clés du premier produit :")
-        st.write(list(products_list[0].keys()))
-        st.write("Valeur du champ supplier sur les 5 premiers produits :")
-        for p in products_list[:5]:
-            st.write(f"{p.get('label', '?')} → supplier: {p.get('supplier')} / fournisseur: {p.get('fournisseur')} / provider: {p.get('provider')}")
+        st.subheader("Produits & stock")
+
+        skus = pd.DataFrame(skus_list)
+        skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
+        skus_visibles = skus[skus["status"] == "visible"].copy()
+
+        sku_mapping = build_sku_mapping(products_list)
+        skus_visibles["Produit"] = skus_visibles["sku"].map(
+            lambda x: sku_mapping.get(x, {}).get("nom", "")
+        )
+        skus_visibles["Fournisseur"] = skus_visibles["sku"].map(
+            lambda x: sku_mapping.get(x, {}).get("fournisseur", "")
+        )
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total SKUs actives", len(skus_visibles))
+        with col2:
+            st.metric("SKUs en rupture", len(skus_visibles[skus_visibles["stock"] == 0]))
+        with col3:
+            st.metric("SKUs en stock", len(skus_visibles[skus_visibles["stock"] > 0]))
+
+        st.subheader("SKUs affichées en boutique")
+        df_skus = skus_visibles[["sku", "Produit", "Fournisseur", "stock", "type"]].copy()
+        df_skus.columns = ["SKU", "Produit", "Fournisseur", "Stock", "Type"]
+        df_skus = df_skus.sort_values("Stock", ascending=True)
+        st.dataframe(df_skus, use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader("Export stock")
+        csv_stock = df_skus.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="Télécharger le stock en CSV",
+            data=csv_stock,
+            file_name="stock_wizishop.csv",
+            mime="text/csv"
+        )
 
     else:
         st.warning("Aucune SKU ou produit récupéré.")
