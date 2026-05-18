@@ -1,11 +1,11 @@
 import requests
 
-WIZISHOP_API_URL = "https://api.wizishop.com/v3"
+WIZISHOP_API_URL = "https://api.wizishop.com"
 
 def get_token(email, password):
     try:
         response = requests.post(
-            f"{WIZISHOP_API_URL}/users/login",
+            f"{WIZISHOP_API_URL}/v3/login",
             json={"username": email, "password": password}
         )
         return response.status_code, response.text, None, None
@@ -15,7 +15,7 @@ def get_token(email, password):
 def get_orders(token, shop_id, page=1, per_page=100):
     headers = {"Authorization": f"Bearer {token}"}
     response = requests.get(
-        f"{WIZISHOP_API_URL}/shops/{shop_id}/orders",
+        f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
         headers=headers,
         params={"page": page, "per_page": per_page}
     )
@@ -26,7 +26,7 @@ def get_orders(token, shop_id, page=1, per_page=100):
 def get_products(token, shop_id):
     headers = {"Authorization": f"Bearer {token}"}
     response = requests.get(
-        f"{WIZISHOP_API_URL}/shops/{shop_id}/products",
+        f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products",
         headers=headers,
         params={"per_page": 100}
     )
