@@ -113,15 +113,14 @@ if "token" in st.session_state:
 
     if skus_list:
         skus = pd.DataFrame(skus_list)
+        skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
 
-        st.subheader("Debug SKUs")
-        st.write(f"Total SKUs récupérées : {len(skus)}")
-        st.write("Colonnes disponibles :")
-        st.write(list(skus.columns))
+        st.subheader("Debug SKUs — statut sans detailed")
+        st.write(f"Total SKUs : {len(skus)}")
         st.write("Valeurs uniques du statut :")
-        st.write(skus["status"].unique().tolist() if "status" in skus.columns else "Colonne status absente")
-        st.write("Aperçu des 5 premières SKUs :")
-        st.dataframe(skus.head(5), use_container_width=True)
+        st.write(skus["status"].unique().tolist() if "status" in skus.columns else "Absent")
+        st.write("Aperçu 5 premières :")
+        st.dataframe(skus[["sku", "label", "stock", "status", "type"]].head(5))
 
     else:
         st.warning("Aucune SKU récupérée.")
