@@ -30,6 +30,15 @@ if connect_btn:
     else:
         st.sidebar.error("Identifiants incorrects")
 
+STATUTS_VALIDES = [
+    "Livrée",
+    "Livraison en cours",
+    "En attente de préparation",
+    "Problème livraison / retour",
+    "Remboursée",
+    "En cours de retour"
+]
+
 if "token" in st.session_state:
     token = st.session_state["token"]
     shop_id = st.session_state["shop_id"]
@@ -39,16 +48,18 @@ if "token" in st.session_state:
         products_data = get_products(token, shop_id, limit=100)
 
     if orders_list:
-        orders = pd.DataFrame(orders_list)
-        orders["date"] = pd.to_datetime(orders["date"], utc=True)
-        orders = orders.sort_values("date", ascending=False)
-        orders["mois"] = orders["date"].dt.to_period("M").astype(str)
-        orders["total_amount"] = pd.to_numeric(orders["total_amount"], errors="coerce")
+        orders_brutes = pd.DataFrame(orders_list)
+        orders_brutes["date"] = pd.to_datetime(orders_brutes["date"], utc=True)
+        orders_brutes = orders_brutes.sort_values("date", ascending=False)
+        orders_brutes["mois"] = orders_brutes["date"].dt.to_period("M").astype(str)
+        orders_brutes["total_amount"] = pd.to_numeric(orders_brutes["total_amount"], errors="coerce")
 
-        mois_max = orders["mois"].max()
+        orders = orders_brutes[orders_brutes["status_text"].isin(STATUTS_VALIDES)].copy()
+
+        mois_max = orders["mois"].max() if not orders.empty else ""
         orders_ce_mois = orders[orders["mois"] == mois_max]
 
-        st.subheader("Vue d'ensemble")
+        st.subheader("Vue d'ensemble — commandes validées")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Commandes ce mois", len(orders_ce_mois))
@@ -59,14 +70,14 @@ if "token" in st.session_state:
             ca_periode = orders["total_amount"].sum()
             st.metric(f"CA sur {nb_mois} mois", f"{ca_periode:.0f} €")
         with col4:
-            st.metric("Commandes sur la période", len(orders))
+            st.metric("Commandes validées (période)", len(orders))
 
         st.divider()
 
         col_graph, col_top = st.columns([3, 2])
 
         with col_graph:
-            st.subheader("Commandes par mois")
+            st.subheader("Commandes validées par mois")
             par_mois = orders.groupby("mois").agg(
                 commandes=("id", "count"),
                 ca=("total_amount", "sum")
@@ -74,13 +85,13 @@ if "token" in st.session_state:
             st.bar_chart(par_mois.set_index("mois")[["commandes"]])
 
         with col_top:
-            st.subheader("Statut des commandes")
-            par_statut = orders.groupby("status_text").size().reset_index(name="nb")
+            st.subheader("Répartition par statut")
+            par_statut = orders_brutes.groupby("status_text").size().reset_index(name="nb")
             par_statut = par_statut.sort_values("nb", ascending=False)
             st.dataframe(par_statut, use_container_width=True, hide_index=True)
 
         st.divider()
-        st.subheader("Dernières commandes")
+        st.subheader("Dernières commandes validées")
         cols = ["date", "public_id", "client_full_name", "nb_products", "total_amount", "status_text", "currency"]
         df_affichage = orders[cols].copy()
         df_affichage["date"] = df_affichage["date"].dt.strftime("%d/%m/%Y")
@@ -91,7 +102,7 @@ if "token" in st.session_state:
         st.subheader("Export")
         csv = orders[cols].to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="Télécharger les commandes en CSV",
+            label="Télécharger les commandes validées en CSV",
             data=csv,
             file_name=f"commandes_wizishop_{nb_mois}mois.csv",
             mime="text/csv"
