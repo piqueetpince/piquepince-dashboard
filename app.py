@@ -15,6 +15,11 @@ with st.sidebar:
     email = st.text_input("Email")
     password = st.text_input("Mot de passe", type="password")
     connect_btn = st.button("Se connecter", use_container_width=True)
+    
+    if "token" in st.session_state:
+        st.divider()
+        st.subheader("Filtres")
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
 if connect_btn:
     with st.spinner("Connexion en cours..."):
@@ -40,12 +45,17 @@ if "token" in st.session_state:
 
         if "created_at" in orders.columns:
             orders["date"] = pd.to_datetime(orders["created_at"], utc=True)
+            orders = orders.sort_values("date", ascending=False)
             orders["mois"] = orders["date"].dt.to_period("M").astype(str)
-            mois_max = orders["mois"].max()
-            orders_ce_mois = orders[orders["mois"] == mois_max]
+
+            date_limite = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)
+            orders_filtrees = orders[orders["date"] >= date_limite]
+            mois_max = orders_filtrees["mois"].max() if not orders_filtrees.empty else orders["mois"].max()
+            orders_ce_mois = orders_filtrees[orders_filtrees["mois"] == mois_max]
         else:
-            mois_max = "N/A"
+            orders_filtrees = orders
             orders_ce_mois = orders
+            mois_max = "N/A"
 
         st.subheader("Vue d'ensemble")
         col1, col2, col3 = st.columns(3)
@@ -56,17 +66,22 @@ if "token" in st.session_state:
                 ca = orders_ce_mois["total_price"].astype(float).sum()
                 st.metric("CA ce mois (Wizishop)", f"{ca:.0f} €")
             else:
-                st.metric("CA ce mois (Wizishop)", "N/A")
+                st.metric("CA ce mois", "N/A")
         with col3:
-            st.metric("Commandes total", orders_data.get("total", len(orders)))
+            st.metric("Commandes total (période)", len(orders_filtrees))
 
-        if "mois" in orders.columns:
-            st.subheader("Commandes par mois")
-            par_mois = orders.groupby("mois").size().reset_index(name="commandes")
+        if "mois" in orders_filtrees.columns and not orders_filtrees.empty:
+            st.subheader(f"Commandes par mois — {nb_mois} derniers mois")
+            par_mois = orders_filtrees.groupby("mois").size().reset_index(name="commandes")
+            par_mois = par_mois.sort_values("mois")
             st.bar_chart(par_mois.set_index("mois"))
 
         st.subheader("Dernières commandes")
-        st.dataframe(orders.tail(20), use_container_width=True)
+        cols_affichage = [c for c in ["created_at", "public_id", "total_price", "status_code", "firstname", "lastname"] if c in orders_filtrees.columns]
+        st.dataframe(
+            orders_filtrees[cols_affichage].head(20) if cols_affichage else orders_filtrees.head(20),
+            use_container_width=True
+        )
 
     else:
         st.warning("Aucune commande récupérée.")
@@ -74,7 +89,11 @@ if "token" in st.session_state:
     if products_data and products_data.get("results"):
         st.subheader("Produits & stock")
         products = pd.DataFrame(products_data["results"])
-        st.dataframe(products, use_container_width=True)
+        cols_produits = [c for c in ["id", "name", "reference", "price", "quantity"] if c in products.columns]
+        st.dataframe(
+            products[cols_produits] if cols_produits else products,
+            use_container_width=True
+        )
     else:
         st.warning("Aucun produit récupéré.")
 
