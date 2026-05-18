@@ -1,21 +1,21 @@
 import requests
 import psycopg2
-import pandas as pd
-from datetime import datetime, timezone
+import streamlit as st
 import time
 
-# Configuration — à remplacer par tes vraies valeurs
-DATABASE_URL = "postgresql://postgres:TONMOTDEPASSE@db.donsocudmtnopajnhomj.supabase.co:5432/postgres"
 WIZISHOP_API_URL = "https://api.wizishop.com"
 
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg2.connect(st.secrets["DATABASE_URL"])
 
-def get_wizi_token(email, password):
+def get_wizi_token():
     response = requests.post(
         f"{WIZISHOP_API_URL}/v3/auth/login",
         headers={"Content-Type": "application/json"},
-        json={"username": email, "password": password}
+        json={
+            "username": st.secrets["WIZISHOP_EMAIL"],
+            "password": st.secrets["WIZISHOP_PASSWORD"]
+        }
     )
     if response.status_code in [200, 201]:
         data = response.json()
@@ -40,8 +40,7 @@ def sync_categories(token, shop_id, conn):
                 INSERT INTO categories (id_wizi, id_parent, nom, url, menu_title, visible)
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id_wizi) DO UPDATE SET
-                    nom = EXCLUDED.nom, visible = EXCLUDED.visible,
-                    updated_at = NOW()
+                    nom = EXCLUDED.nom, visible = EXCLUDED.visible, updated_at = NOW()
             """, (cat.get("id"), cat.get("id_parent"), cat.get("name"),
                   cat.get("url"), cat.get("menu_title"), cat.get("visible")))
             total += 1
@@ -148,8 +147,7 @@ def sync_skus(token, shop_id, conn):
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (sku) DO UPDATE SET
                     stock = EXCLUDED.stock, statut = EXCLUDED.statut,
-                    date_maj_stock = EXCLUDED.date_maj_stock,
-                    updated_at = NOW()
+                    date_maj_stock = EXCLUDED.date_maj_stock, updated_at = NOW()
             """, (
                 s.get("sku"), s.get("prod_id"), s.get("type"), s.get("ean13"),
                 s.get("stock") or 0, s.get("status"),
@@ -175,11 +173,17 @@ def get_zone_tva(country_iso):
         return "ue"
     return "hors_ue"
 
-def sync_commandes(token, shop_id, conn, depuis_id=None):
+def sync_commandes(token, shop_id, conn):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(id_wizi) FROM commandes WHERE source = 'wizishop'")
+    result = cur.fetchone()
+    depuis_id = result[0] if result and result[0] else 0
+    cur.close()
+
     page, total = 1, 0
     while True:
-        params = {"page": page, "limit": 100, "sort": "-id"}
+        params = {"page": page, "limit": 100, "sort": "id"}
         if depuis_id:
             params["id_greater_than"] = depuis_id
         r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
@@ -203,7 +207,6 @@ def sync_commandes(token, shop_id, conn, depuis_id=None):
             shipping = o.get("shippings", [{}])[0] if o.get("shippings") else {}
             services = o.get("services", {})
             zone = get_zone_tva(bil.get("country_iso"))
-
             cur = conn.cursor()
             cur.execute("""
                 INSERT INTO commandes (
@@ -254,7 +257,6 @@ def sync_commandes(token, shop_id, conn, depuis_id=None):
                 services.get("gift_wrap", False), services.get("message"),
                 zone
             ))
-
             for sku_item in shipping.get("skus", []):
                 cur.execute("""
                     INSERT INTO lignes_commande (
@@ -267,12 +269,10 @@ def sync_commandes(token, shop_id, conn, depuis_id=None):
                     sku_item.get("tax"), sku_item.get("total_discount"),
                     sku_item.get("weight")
                 ))
-
             conn.commit()
             cur.close()
             total += 1
             time.sleep(0.05)
-
         if page >= data.get("pages", 1):
             break
         page += 1
@@ -287,40 +287,28 @@ def log_sync(conn, table, source, nb, statut, message, duree):
     conn.commit()
     cur.close()
 
-def run_full_sync(email, password):
-    print("Connexion à Wizishop...")
-    token, account_id, shop_id = get_wizi_token(email, password)
+def run_full_sync():
+    token, account_id, shop_id = get_wizi_token()
     if not token:
-        print("Erreur de connexion Wizishop")
-        return
-
-    print(f"Connecté ! Shop ID: {shop_id}")
+        return False, "Erreur de connexion Wizishop"
     conn = get_db_connection()
-
+    resultats = {}
     etapes = [
         ("categories", sync_categories),
         ("marques", sync_marques),
         ("skus", sync_skus),
         ("commandes", sync_commandes),
     ]
-
     for nom, fn in etapes:
-        print(f"Synchronisation {nom}...")
         debut = time.time()
         try:
             nb = fn(token, shop_id, conn)
             duree = time.time() - debut
             log_sync(conn, nom, "wizishop", nb, "success", f"{nb} enregistrements", duree)
-            print(f"  ✓ {nb} enregistrements en {duree:.1f}s")
+            resultats[nom] = {"nb": nb, "duree": duree, "statut": "✓"}
         except Exception as e:
             duree = time.time() - debut
             log_sync(conn, nom, "wizishop", 0, "error", str(e), duree)
-            print(f"  ✗ Erreur: {e}")
-
+            resultats[nom] = {"nb": 0, "duree": duree, "statut": "✗", "erreur": str(e)}
     conn.close()
-    print("Synchronisation terminée !")
-
-if __name__ == "__main__":
-    EMAIL = "contact@ns-ebiz.fr"
-    PASSWORD = "TONMOTDEPASSE"
-    run_full_sync(EMAIL, PASSWORD)
+    return True, resultats
