@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from wizishop_api import get_token, get_all_recent_orders, get_all_skus
+from wizishop_api import get_token, get_all_recent_orders, get_all_skus, get_all_products
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -46,6 +46,7 @@ if "token" in st.session_state:
     with st.spinner("Chargement des données..."):
         orders_list = get_all_recent_orders(token, shop_id, nb_mois=nb_mois)
         skus_list = get_all_skus(token, shop_id)
+        products_list = get_all_products(token, shop_id)
 
     if orders_list:
         orders_brutes = pd.DataFrame(orders_list)
@@ -111,12 +112,21 @@ if "token" in st.session_state:
 
     st.divider()
 
-    if skus_list:
+    if skus_list and products_list:
         st.subheader("Produits & stock")
+
         skus = pd.DataFrame(skus_list)
         skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
-
         skus_visibles = skus[skus["status"] == "visible"].copy()
+
+        products = pd.DataFrame(products_list)
+        prod_cols = ["sku", "label"]
+        if "supplier" in products.columns:
+            prod_cols.append("supplier")
+        products_reduit = products[prod_cols].copy()
+        products_reduit = products_reduit.rename(columns={"sku": "sku", "label": "Produit", "supplier": "Fournisseur"})
+
+        skus_enrichies = skus_visibles.merge(products_reduit, on="sku", how="left")
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -127,15 +137,19 @@ if "token" in st.session_state:
             st.metric("SKUs en stock", len(skus_visibles[skus_visibles["stock"] > 0]))
 
         st.subheader("SKUs affichées en boutique")
-        cols_dispo = [c for c in ["sku", "stock", "type", "ean13"] if c in skus_visibles.columns]
-        df_skus = skus_visibles[cols_dispo].copy()
+        cols_affichage = ["sku", "stock", "type"]
+        if "Produit" in skus_enrichies.columns:
+            cols_affichage.insert(1, "Produit")
+        if "Fournisseur" in skus_enrichies.columns:
+            cols_affichage.append("Fournisseur")
+
+        df_skus = skus_enrichies[cols_affichage].copy()
         df_skus = df_skus.sort_values("stock", ascending=True)
-        df_skus.columns = [c.upper() for c in cols_dispo]
         st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
         st.divider()
         st.subheader("Export stock")
-        csv_stock = skus_visibles.to_csv(index=False).encode("utf-8")
+        csv_stock = skus_enrichies.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Télécharger le stock en CSV",
             data=csv_stock,
@@ -144,7 +158,7 @@ if "token" in st.session_state:
         )
 
     else:
-        st.warning("Aucune SKU récupérée.")
+        st.warning("Aucune SKU ou produit récupéré.")
 
 else:
     st.info("Entre tes identifiants Wizishop dans le menu à gauche pour commencer.")
