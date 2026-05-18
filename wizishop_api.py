@@ -110,17 +110,38 @@ def get_all_products(token, shop_id):
     except Exception as e:
         return []
 
-def build_sku_mapping(products_list):
+def get_product_detail(token, shop_id, product_id):
+    try:
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        response = requests.get(
+            f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products/{product_id}",
+            headers=headers
+        )
+        if response.status_code == 200:
+            return response.json()
+        return {}
+    except Exception as e:
+        return {}
+
+def build_sku_mapping(products_list, token=None, shop_id=None, load_suppliers=False):
     mapping = {}
     for product in products_list:
         nom = product.get("label", "")
-        fournisseur = product.get("supplier") or ""
         sku_parent = product.get("sku", "")
+        product_id = product.get("id", "")
+        fournisseur = ""
+
+        if load_suppliers and token and shop_id and product_id:
+            detail = get_product_detail(token, shop_id, product_id)
+            fournisseur = detail.get("supplier") or ""
+
         if sku_parent:
             mapping[sku_parent] = {"nom": nom, "fournisseur": fournisseur}
+
         for attribute in product.get("attributes", []):
             for option in attribute.get("options", []):
                 sku_variation = option.get("sku", "")
                 if sku_variation:
                     mapping[sku_variation] = {"nom": nom, "fournisseur": fournisseur}
+
     return mapping
