@@ -109,3 +109,18 @@ def get_all_products(token, shop_id):
         return all_products
     except Exception as e:
         return []
+
+def build_sku_mapping(products_list):
+    mapping = {}
+    for product in products_list:
+        nom = product.get("label", "")
+        fournisseur = product.get("supplier") or ""
+        sku_parent = product.get("sku", "")
+        if sku_parent:
+            mapping[sku_parent] = {"nom": nom, "fournisseur": fournisseur}
+        for attribute in product.get("attributes", []):
+            for option in attribute.get("options", []):
+                sku_variation = option.get("sku", "")
+                if sku_variation:
+                    mapping[sku_variation] = {"nom": nom, "fournisseur": fournisseur}
+    return mapping
