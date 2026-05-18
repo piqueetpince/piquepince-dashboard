@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
+import pg8000.native as psycopg2
 from sync_database import run_full_sync
 
 st.set_page_config(
@@ -12,7 +12,13 @@ st.set_page_config(
 st.title("Pique&Pince — Dashboard ventes")
 
 def get_db_connection():
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+    return pg8000.native.Connection(
+    host="db.donsocudmtnopajnhomj.supabase.co",
+    database="postgres",
+    user="postgres",
+    password=st.secrets["SUPABASE_DB_PASSWORD"],
+    port=5432
+)
 
 def get_zone_tva(country_iso):
     ue = {"AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR",
