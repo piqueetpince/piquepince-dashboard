@@ -83,3 +83,29 @@ def get_all_skus(token, shop_id):
         return all_skus
     except Exception as e:
         return []
+
+def get_all_products(token, shop_id):
+    try:
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        all_products = []
+        page = 1
+        while True:
+            response = requests.get(
+                f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products",
+                headers=headers,
+                params={"page": page, "limit": 100}
+            )
+            if response.status_code != 200:
+                break
+            data = response.json()
+            results = data.get("results", [])
+            if not results:
+                break
+            all_products.extend(results)
+            total_pages = data.get("pages", 1)
+            if page >= total_pages:
+                break
+            page += 1
+        return all_products
+    except Exception as e:
+        return []
