@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from wizishop_api import get_token, get_all_recent_orders, get_all_products
+from wizishop_api import get_token, get_all_recent_orders, get_all_skus
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -45,7 +45,7 @@ if "token" in st.session_state:
 
     with st.spinner("Chargement des données..."):
         orders_list = get_all_recent_orders(token, shop_id, nb_mois=nb_mois)
-        products_list = get_all_products(token, shop_id)
+        skus_list = get_all_skus(token, shop_id)
 
     if orders_list:
         orders_brutes = pd.DataFrame(orders_list)
@@ -55,7 +55,6 @@ if "token" in st.session_state:
         orders_brutes["total_amount"] = pd.to_numeric(orders_brutes["total_amount"], errors="coerce")
 
         orders = orders_brutes[orders_brutes["status_text"].isin(STATUTS_VALIDES)].copy()
-
         mois_max = orders["mois"].max() if not orders.empty else ""
         orders_ce_mois = orders[orders["mois"] == mois_max]
 
@@ -73,7 +72,6 @@ if "token" in st.session_state:
             st.metric("Commandes validées (période)", len(orders))
 
         st.divider()
-
         col_graph, col_top = st.columns([3, 2])
 
         with col_graph:
@@ -113,22 +111,30 @@ if "token" in st.session_state:
 
     st.divider()
 
-    if products_list:
-        products = pd.DataFrame(products_list)
-        products["stock"] = pd.to_numeric(products["stock"], errors="coerce").fillna(0).astype(int)
-        produits_affiches = products[products["status"] == "visible"].copy()
+    if skus_list:
+        st.subheader("Produits & stock")
+        skus = pd.DataFrame(skus_list)
+        skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
 
-        st.subheader("Debug — structure d'un produit avec variations")
-        produits_zero = produits_affiches[produits_affiches["stock"] == 0]
-        if not produits_zero.empty:
-            exemple = products_list[produits_zero.index[0]]
-            st.write("Toutes les clés disponibles pour ce produit :")
-            st.write(list(exemple.keys()))
-            st.write("Contenu complet :")
-            st.json(exemple)
+        skus_visibles = skus[skus["status"] == "visible"].copy()
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total SKUs actives", len(skus_visibles))
+        with col2:
+            st.metric("SKUs en rupture", len(skus_visibles[skus_visibles["stock"] == 0]))
+        with col3:
+            st.metric("SKUs en stock", len(skus_visibles[skus_visibles["stock"] > 0]))
+
+        st.subheader("SKUs affichées en boutique")
+        cols_skus = ["sku", "label", "stock", "type"]
+        df_skus = skus_visibles[cols_skus].copy()
+        df_skus.columns = ["SKU", "Produit", "Stock", "Type"]
+        df_skus = df_skus.sort_values("Stock", ascending=True)
+        st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
     else:
-        st.warning("Aucun produit récupéré.")
+        st.warning("Aucune SKU récupérée.")
 
 else:
     st.info("Entre tes identifiants Wizishop dans le menu à gauche pour commencer.")
