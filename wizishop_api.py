@@ -67,7 +67,7 @@ def get_all_skus(token, shop_id):
             response = requests.get(
                 f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/skus",
                 headers=headers,
-                params={"page": page, "limit": 500, "detailed": True}
+                params={"page": page, "limit": 500}
             )
             if response.status_code != 200:
                 break
