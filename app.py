@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from wizishop_api import get_token, get_all_recent_orders, get_all_skus, get_all_products
+from wizishop_api import get_token, get_all_recent_orders, get_all_skus, get_all_products, build_sku_mapping
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -119,14 +119,13 @@ if "token" in st.session_state:
         skus["stock"] = pd.to_numeric(skus["stock"], errors="coerce").fillna(0).astype(int)
         skus_visibles = skus[skus["status"] == "visible"].copy()
 
-        products = pd.DataFrame(products_list)
-        prod_cols = ["sku", "label"]
-        if "supplier" in products.columns:
-            prod_cols.append("supplier")
-        products_reduit = products[prod_cols].copy()
-        products_reduit = products_reduit.rename(columns={"sku": "sku", "label": "Produit", "supplier": "Fournisseur"})
-
-        skus_enrichies = skus_visibles.merge(products_reduit, on="sku", how="left")
+        sku_mapping = build_sku_mapping(products_list)
+        skus_visibles["Produit"] = skus_visibles["sku"].map(
+            lambda x: sku_mapping.get(x, {}).get("nom", "")
+        )
+        skus_visibles["Fournisseur"] = skus_visibles["sku"].map(
+            lambda x: sku_mapping.get(x, {}).get("fournisseur", "")
+        )
 
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -137,19 +136,14 @@ if "token" in st.session_state:
             st.metric("SKUs en stock", len(skus_visibles[skus_visibles["stock"] > 0]))
 
         st.subheader("SKUs affichées en boutique")
-        cols_affichage = ["sku", "stock", "type"]
-        if "Produit" in skus_enrichies.columns:
-            cols_affichage.insert(1, "Produit")
-        if "Fournisseur" in skus_enrichies.columns:
-            cols_affichage.append("Fournisseur")
-
-        df_skus = skus_enrichies[cols_affichage].copy()
-        df_skus = df_skus.sort_values("stock", ascending=True)
+        df_skus = skus_visibles[["sku", "Produit", "Fournisseur", "stock", "type"]].copy()
+        df_skus.columns = ["SKU", "Produit", "Fournisseur", "Stock", "Type"]
+        df_skus = df_skus.sort_values("Stock", ascending=True)
         st.dataframe(df_skus, use_container_width=True, hide_index=True)
 
         st.divider()
         st.subheader("Export stock")
-        csv_stock = skus_enrichies.to_csv(index=False).encode("utf-8")
+        csv_stock = df_skus.to_csv(index=False).encode("utf-8")
         st.download_button(
             label="Télécharger le stock en CSV",
             data=csv_stock,
