@@ -1,4 +1,5 @@
 import requests
+import pandas as pd
 
 WIZISHOP_API_URL = "https://api.wizishop.com"
 
@@ -19,7 +20,7 @@ def get_token(email, password):
     except Exception as e:
         return None, None, None
 
-def get_orders(token, shop_id, page=1, limit=100, sort="date_desc"):
+def get_orders_page(token, shop_id, page=1, limit=100):
     try:
         headers = {
             "Authorization": f"Bearer {token}",
@@ -28,7 +29,7 @@ def get_orders(token, shop_id, page=1, limit=100, sort="date_desc"):
         response = requests.get(
             f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
             headers=headers,
-            params={"page": page, "limit": limit, "sort": sort}
+            params={"page": page, "limit": limit}
         )
         if response.status_code == 200:
             return response.json()
@@ -37,29 +38,37 @@ def get_orders(token, shop_id, page=1, limit=100, sort="date_desc"):
         return {}
 
 def get_all_recent_orders(token, shop_id, nb_mois=12):
-    import pandas as pd
-    from datetime import timezone
-    all_orders = []
-    page = 1
     date_limite = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)
+    all_orders = []
 
-    while True:
-        data = get_orders(token, shop_id, page=page, limit=100, sort="date_desc")
+    first_page = get_orders_page(token, shop_id, page=1, limit=100)
+    if not first_page:
+        return []
+
+    total_pages = first_page.get("pages", 1)
+    current_page = total_pages
+
+    while current_page >= 1:
+        data = get_orders_page(token, shop_id, page=current_page, limit=100)
         results = data.get("results", [])
         if not results:
             break
 
-        for order in results:
+        recent = []
+        stop = False
+        for order in reversed(results):
             order_date = pd.to_datetime(order.get("date"), utc=True)
             if order_date >= date_limite:
-                all_orders.append(order)
+                recent.append(order)
             else:
-                return all_orders
+                stop = True
 
-        total_pages = data.get("pages", 1)
-        if page >= total_pages:
+        all_orders.extend(recent)
+
+        if stop:
             break
-        page += 1
+
+        current_page -= 1
 
     return all_orders
 
