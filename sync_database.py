@@ -1,12 +1,18 @@
 import requests
-import psycopg2
+import pg8000.native as psycopg2
 import streamlit as st
 import time
 
 WIZISHOP_API_URL = "https://api.wizishop.com"
 
 def get_db_connection():
-    return psycopg2.connect(st.secrets["DATABASE_URL"])
+    return pg8000.native.Connection(
+    host="db.donsocudmtnopajnhomj.supabase.co",
+    database="postgres",
+    user="postgres",
+    password=st.secrets["SUPABASE_DB_PASSWORD"],
+    port=5432
+)
 
 def get_wizi_token():
     response = requests.post(
