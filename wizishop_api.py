@@ -72,19 +72,36 @@ def get_all_recent_orders(token, shop_id, nb_mois=12):
 
     return all_orders
 
-def get_products(token, shop_id, page=1, limit=100):
+def get_all_products(token, shop_id):
     try:
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json"
         }
-        response = requests.get(
-            f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products",
-            headers=headers,
-            params={"page": page, "limit": limit}
-        )
-        if response.status_code == 200:
-            return response.json()
-        return {}
+        all_products = []
+        page = 1
+
+        while True:
+            response = requests.get(
+                f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products",
+                headers=headers,
+                params={"page": page, "limit": 100}
+            )
+            if response.status_code != 200:
+                break
+
+            data = response.json()
+            results = data.get("results", [])
+            if not results:
+                break
+
+            all_products.extend(results)
+
+            total_pages = data.get("pages", 1)
+            if page >= total_pages:
+                break
+            page += 1
+
+        return all_products
     except Exception as e:
-        return {}
+        return []
