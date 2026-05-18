@@ -7,7 +7,7 @@ def get_token(email, password):
         response = requests.post(
             f"{WIZISHOP_API_URL}/v3/auth/login",
             headers={"Content-type": "application/json"},
-            json={"username": email, "password": password}
+            json={"mail": email, "password": password}
         )
         if response.status_code == 200:
             data = response.json()
