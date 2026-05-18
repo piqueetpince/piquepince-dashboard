@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from wizishop_api import get_token, get_all_recent_orders, get_products
+from wizishop_api import get_token, get_all_recent_orders, get_all_products
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -45,7 +45,7 @@ if "token" in st.session_state:
 
     with st.spinner("Chargement des données..."):
         orders_list = get_all_recent_orders(token, shop_id, nb_mois=nb_mois)
-        products_data = get_products(token, shop_id, limit=100)
+        products_list = get_all_products(token, shop_id)
 
     if orders_list:
         orders_brutes = pd.DataFrame(orders_list)
@@ -109,24 +109,28 @@ if "token" in st.session_state:
         )
 
     else:
-        st.warning("Aucune commande trouvée sur cette période. Essaie d'élargir la période avec le slider.")
+        st.warning("Aucune commande trouvée sur cette période.")
 
     st.divider()
 
-    if products_data and products_data.get("results"):
+    if products_list:
         st.subheader("Produits & stock")
-        products = pd.DataFrame(products_data["results"])
+        products = pd.DataFrame(products_list)
         products["stock"] = pd.to_numeric(products["stock"], errors="coerce").fillna(0).astype(int)
 
-        col_stock1, col_stock2 = st.columns(2)
-        with col_stock1:
-            nb_actifs = len(products[products["status"] == "enabled"]) if "status" in products.columns else len(products)
-            st.metric("Produits actifs", nb_actifs)
-        with col_stock2:
-            st.metric("Produits en rupture", len(products[products["stock"] == 0]))
+        produits_affiches = products[products["status"] == "available"].copy()
 
+        col_stock1, col_stock2, col_stock3 = st.columns(3)
+        with col_stock1:
+            st.metric("Total produits", len(products))
+        with col_stock2:
+            st.metric("Produits affichés (en vente)", len(produits_affiches))
+        with col_stock3:
+            st.metric("Produits affichés en rupture", len(produits_affiches[produits_affiches["stock"] == 0]))
+
+        st.subheader("Produits affichés en boutique")
         cols_produits = ["sku", "label", "stock", "status"]
-        df_produits = products[cols_produits].copy()
+        df_produits = produits_affiches[cols_produits].copy()
         df_produits.columns = ["SKU", "Produit", "Stock", "Statut"]
         df_produits = df_produits.sort_values("Stock", ascending=True)
         st.dataframe(df_produits, use_container_width=True, hide_index=True)
