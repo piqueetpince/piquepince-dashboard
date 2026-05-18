@@ -7,17 +7,11 @@ def get_token(email, password):
         response = requests.post(
             f"{WIZISHOP_API_URL}/v3/auth/login",
             headers={"Content-type": "application/json"},
-            json={"mail": email, "password": password}
+            json={"email": email, "password": password}
         )
-        if response.status_code == 200:
-            data = response.json()
-            token = data.get("token")
-            account_id = data.get("account_id")
-            return token, account_id
-        else:
-            return None, None
+        return response.status_code, response.text, None, None
     except Exception as e:
-        return None, None
+        return None, str(e), None, None
 
 def get_shops(token, account_id):
     headers = {
