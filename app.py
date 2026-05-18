@@ -15,11 +15,9 @@ with st.sidebar:
     email = st.text_input("Email")
     password = st.text_input("Mot de passe", type="password")
     connect_btn = st.button("Se connecter", use_container_width=True)
-
-    if "token" in st.session_state:
-        st.divider()
-        st.subheader("Filtres")
-        nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
+    st.divider()
+    st.subheader("Filtres")
+    nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
 if connect_btn:
     with st.spinner("Connexion en cours..."):
