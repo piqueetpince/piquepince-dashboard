@@ -1,7 +1,7 @@
 import requests
 import streamlit as st
 import time
-from supabase_api import upsert, select
+from supabase_api import upsert, select, insert
 
 WIZISHOP_API_URL = "https://api.wizishop.com"
 
@@ -288,7 +288,7 @@ def sync_commandes(token, shop_id):
                     "source": "wizishop"
                 })
             if lignes:
-                upsert("lignes_commande", lignes, "id_commande,sku")
+                insert("lignes_commande", lignes)
 
             total += 1
             time.sleep(0.05)
