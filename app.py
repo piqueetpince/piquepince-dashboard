@@ -207,4 +207,75 @@ elif page == "🏭 Stock & Fournisseurs":
         df_skus["stock"] = pd.to_numeric(df_skus["stock"], errors="coerce").fillna(0).astype(int)
 
         if produits:
-            df_prod = pd.DataFrame(pro
+            df_prod = pd.DataFrame(produits)[["sku", "nom", "fournisseur"]].rename(
+                columns={"nom": "nom_produit", "fournisseur": "fournisseur_prod"})
+            df_skus = df_skus.merge(df_prod, on="sku", how="left")
+            df_skus["nom"] = df_skus["nom"].fillna(df_skus["nom_produit"])
+            df_skus["fournisseur"] = df_skus["fournisseur"].fillna(df_skus["fournisseur_prod"])
+
+        if fournisseur_filtre:
+            df_skus = df_skus[df_skus["fournisseur"].str.contains(fournisseur_filtre, case=False, na=False)]
+        if stock_filtre == "En rupture (stock = 0)":
+            df_skus = df_skus[df_skus["stock"] == 0]
+        elif stock_filtre == "En stock (stock > 0)":
+            df_skus = df_skus[df_skus["stock"] > 0]
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total SKUs actives", len(df_skus))
+        with col2:
+            st.metric("En rupture", len(df_skus[df_skus["stock"] == 0]))
+        with col3:
+            st.metric("En stock", len(df_skus[df_skus["stock"] > 0]))
+
+        cols = [c for c in ["sku", "nom", "fournisseur", "stock", "date_maj_stock"] if c in df_skus.columns]
+        df_affichage = df_skus[cols].copy()
+        if "date_maj_stock" in df_affichage.columns:
+            df_affichage["date_maj_stock"] = pd.to_datetime(df_affichage["date_maj_stock"]).dt.strftime("%d/%m/%Y")
+        df_affichage.columns = ["SKU", "Produit", "Fournisseur", "Stock", "Dernière MAJ"][:len(cols)]
+        st.dataframe(df_affichage, use_container_width=True, hide_index=True)
+        csv = df_affichage.to_csv(index=False).encode("utf-8")
+        st.download_button("Télécharger en CSV", csv, "stock.csv", "text/csv")
+    else:
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+
+elif page == "🌍 Comptabilité TVA":
+    with st.sidebar:
+        st.divider()
+        annee = st.selectbox("Année", [2026, 2025, 2024, 2023], index=0)
+
+    commandes = select("commandes",
+        f"select=zone_tva,pays_facturation,pays_facturation_iso,montant_ttc,montant_ht&statut_code=not.in.(0,50)&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01&source=eq.wizishop")
+
+    if commandes:
+        df = pd.DataFrame(commandes)
+        df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
+        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
+
+        zones = df.groupby("zone_tva").agg(
+            nb_commandes=("montant_ttc", "count"),
+            ca_ttc=("montant_ttc", "sum"),
+            ca_ht=("montant_ht", "sum")
+        ).reset_index()
+        zones["zone_tva"] = zones["zone_tva"].map({
+            "france": "🇫🇷 France",
+            "ue": "🇪🇺 Union Européenne",
+            "hors_ue": "🌍 Hors UE",
+            "inconnu": "❓ Inconnu"
+        }).fillna(zones["zone_tva"])
+        zones.columns = ["Zone", "Nb commandes", "CA TTC (€)", "CA HT (€)"]
+        st.subheader(f"Répartition CA par zone TVA — {annee}")
+        st.dataframe(zones, use_container_width=True, hide_index=True)
+
+        pays = df.groupby(["pays_facturation", "pays_facturation_iso", "zone_tva"]).agg(
+            nb_commandes=("montant_ttc", "count"),
+            ca_ttc=("montant_ttc", "sum")
+        ).reset_index().sort_values("ca_ttc", ascending=False)
+        pays.columns = ["Pays", "ISO", "Zone", "Nb commandes", "CA TTC (€)"]
+        st.divider()
+        st.subheader("Détail par pays")
+        st.dataframe(pays, use_container_width=True, hide_index=True)
+        csv = pays.to_csv(index=False).encode("utf-8")
+        st.download_button("Télécharger en CSV", csv, f"tva_{annee}.csv", "text/csv")
+    else:
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
