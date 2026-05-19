@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase_api import select
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
-                           sync_skus, sync_commandes, log_sync, get_zone_tva)
+                           sync_skus, sync_commandes, log_sync)
 import time
 
 st.set_page_config(
@@ -56,34 +56,34 @@ if page == "🔄 Synchronisation":
                         duree = time.time() - debut
                         log_sync("categories", "wizishop", nb_cat, "success", f"{nb_cat} enregistrements", duree)
                         log_sync("marques", "wizishop", nb_mar, "success", f"{nb_mar} enregistrements", duree)
-                        st.success(f"✓ {nb_cat} catégories et {nb_mar} marques synchronisées en {duree:.1f}s")
+                        st.success(f"✓ {nb_cat} catégories et {nb_mar} marques en {duree:.1f}s")
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
             if st.button("2️⃣ Sync SKUs & Stock", use_container_width=True):
-                with st.spinner("Synchronisation SKUs... (peut prendre 2-3 min)"):
+                with st.spinner("Synchronisation SKUs... (2-3 min)"):
                     debut = time.time()
                     try:
                         nb = sync_skus(token_cached, shop_id_cached)
                         duree = time.time() - debut
                         log_sync("skus", "wizishop", nb, "success", f"{nb} enregistrements", duree)
-                        st.success(f"✓ {nb} SKUs synchronisées en {duree:.1f}s")
+                        st.success(f"✓ {nb} SKUs en {duree:.1f}s")
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
         with col2:
             if st.button("3️⃣ Sync Commandes", use_container_width=True):
-                with st.spinner("Synchronisation commandes... (peut prendre 10-15 min)"):
+                with st.spinner("Synchronisation commandes... (10-15 min)"):
                     debut = time.time()
                     try:
                         nb = sync_commandes(token_cached, shop_id_cached)
                         duree = time.time() - debut
                         log_sync("commandes", "wizishop", nb, "success", f"{nb} enregistrements", duree)
-                        st.success(f"✓ {nb} commandes synchronisées en {duree:.1f}s")
+                        st.success(f"✓ {nb} commandes en {duree:.1f}s")
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
-            st.info("💡 **Conseil** : Lance d'abord 1️⃣ puis 2️⃣ puis 3️⃣. Les prochaines synchros seront plus rapides car seules les nouvelles données seront importées.")
+            st.info("💡 Lance 1️⃣ puis 2️⃣ puis 3️⃣. Les prochaines synchros seront plus rapides.")
 
     logs = select("sync_log", "select=table_name,nb_enregistrements,statut,created_at&order=created_at.desc&limit=10")
     if logs:
@@ -100,7 +100,7 @@ elif page == "📊 Vue d'ensemble":
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
     commandes = select("commandes",
-        "select=date_commande,montant_ttc,montant_ht,statut_code&statut_code=neq.0&statut_code=neq.50&source=eq.wizishop")
+        "select=date_commande,montant_ttc,montant_ht,statut_code&statut_code=not.in.(0,50)&source=eq.wizishop")
 
     if commandes:
         df = pd.DataFrame(commandes)
@@ -147,7 +147,7 @@ elif page == "📦 Commandes":
 
     date_limite = (pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)).isoformat()
     commandes = select("commandes",
-        f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi&date_commande=gte.{date_limite}&statut_code=neq.0&statut_code=neq.50&order=date_commande.desc&limit=500")
+        f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi&date_commande=gte.{date_limite}&statut_code=not.in.(0,50)&order=date_commande.desc&limit=500")
 
     if commandes:
         df = pd.DataFrame(commandes)
@@ -168,7 +168,7 @@ elif page == "⭐ Best-sellers":
     date_limite = (pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)).isoformat()
     lignes = select("lignes_commande", "select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
     commandes_valides = select("commandes",
-        f"select=id_wizi&statut_code=neq.0&statut_code=neq.50&date_commande=gte.{date_limite}&source=eq.wizishop")
+        f"select=id_wizi&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}&source=eq.wizishop")
 
     if lignes and commandes_valides:
         ids_valides = {c["id_wizi"] for c in commandes_valides}
@@ -207,75 +207,4 @@ elif page == "🏭 Stock & Fournisseurs":
         df_skus["stock"] = pd.to_numeric(df_skus["stock"], errors="coerce").fillna(0).astype(int)
 
         if produits:
-            df_prod = pd.DataFrame(produits)[["sku", "nom", "fournisseur"]].rename(
-                columns={"nom": "nom_produit", "fournisseur": "fournisseur_prod"})
-            df_skus = df_skus.merge(df_prod, on="sku", how="left")
-            df_skus["nom"] = df_skus["nom"].fillna(df_skus["nom_produit"])
-            df_skus["fournisseur"] = df_skus["fournisseur"].fillna(df_skus["fournisseur_prod"])
-
-        if fournisseur_filtre:
-            df_skus = df_skus[df_skus["fournisseur"].str.contains(fournisseur_filtre, case=False, na=False)]
-        if stock_filtre == "En rupture (stock = 0)":
-            df_skus = df_skus[df_skus["stock"] == 0]
-        elif stock_filtre == "En stock (stock > 0)":
-            df_skus = df_skus[df_skus["stock"] > 0]
-
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total SKUs actives", len(df_skus))
-        with col2:
-            st.metric("En rupture", len(df_skus[df_skus["stock"] == 0]))
-        with col3:
-            st.metric("En stock", len(df_skus[df_skus["stock"] > 0]))
-
-        cols = [c for c in ["sku", "nom", "fournisseur", "stock", "date_maj_stock"] if c in df_skus.columns]
-        df_affichage = df_skus[cols].copy()
-        if "date_maj_stock" in df_affichage.columns:
-            df_affichage["date_maj_stock"] = pd.to_datetime(df_affichage["date_maj_stock"]).dt.strftime("%d/%m/%Y")
-        df_affichage.columns = ["SKU", "Produit", "Fournisseur", "Stock", "Dernière MAJ"][:len(cols)]
-        st.dataframe(df_affichage, use_container_width=True, hide_index=True)
-        csv = df_affichage.to_csv(index=False).encode("utf-8")
-        st.download_button("Télécharger en CSV", csv, "stock.csv", "text/csv")
-    else:
-        st.info("Aucune donnée. Lance d'abord une synchronisation.")
-
-elif page == "🌍 Comptabilité TVA":
-    with st.sidebar:
-        st.divider()
-        annee = st.selectbox("Année", [2026, 2025, 2024, 2023], index=0)
-
-    commandes = select("commandes",
-        f"select=zone_tva,pays_facturation,pays_facturation_iso,montant_ttc,montant_ht&statut_code=neq.0&statut_code=neq.50&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01&source=eq.wizishop")
-
-    if commandes:
-        df = pd.DataFrame(commandes)
-        df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
-        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
-
-        zones = df.groupby("zone_tva").agg(
-            nb_commandes=("montant_ttc", "count"),
-            ca_ttc=("montant_ttc", "sum"),
-            ca_ht=("montant_ht", "sum")
-        ).reset_index()
-        zones["zone_tva"] = zones["zone_tva"].map({
-            "france": "🇫🇷 France",
-            "ue": "🇪🇺 Union Européenne",
-            "hors_ue": "🌍 Hors UE",
-            "inconnu": "❓ Inconnu"
-        }).fillna(zones["zone_tva"])
-        zones.columns = ["Zone", "Nb commandes", "CA TTC (€)", "CA HT (€)"]
-        st.subheader(f"Répartition CA par zone TVA — {annee}")
-        st.dataframe(zones, use_container_width=True, hide_index=True)
-
-        pays = df.groupby(["pays_facturation", "pays_facturation_iso", "zone_tva"]).agg(
-            nb_commandes=("montant_ttc", "count"),
-            ca_ttc=("montant_ttc", "sum")
-        ).reset_index().sort_values("ca_ttc", ascending=False)
-        pays.columns = ["Pays", "ISO", "Zone", "Nb commandes", "CA TTC (€)"]
-        st.divider()
-        st.subheader("Détail par pays")
-        st.dataframe(pays, use_container_width=True, hide_index=True)
-        csv = pays.to_csv(index=False).encode("utf-8")
-        st.download_button("Télécharger en CSV", csv, f"tva_{annee}.csv", "text/csv")
-    else:
-        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+            df_prod = pd.DataFrame(pro
