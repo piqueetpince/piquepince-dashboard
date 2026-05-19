@@ -1,18 +1,9 @@
 import requests
-import pg8000.native as psycopg2
 import streamlit as st
 import time
+from supabase_api import upsert, select
 
 WIZISHOP_API_URL = "https://api.wizishop.com"
-
-def get_db_connection():
-    return pg8000.native.Connection(
-    host="db.donsocudmtnopajnhomj.supabase.co",
-    database="postgres",
-    user="postgres",
-    password=st.secrets["SUPABASE_DB_PASSWORD"],
-    port=5432
-)
 
 def get_wizi_token():
     response = requests.post(
@@ -28,7 +19,7 @@ def get_wizi_token():
         return data.get("token"), data.get("account_id"), data.get("default_shop_id")
     return None, None, None
 
-def sync_categories(token, shop_id, conn):
+def sync_categories(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     page, total = 1, 0
     while True:
@@ -40,24 +31,26 @@ def sync_categories(token, shop_id, conn):
         results = data if isinstance(data, list) else data.get("results", [])
         if not results:
             break
-        cur = conn.cursor()
+        batch = []
         for cat in results:
-            cur.execute("""
-                INSERT INTO categories (id_wizi, id_parent, nom, url, menu_title, visible)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id_wizi) DO UPDATE SET
-                    nom = EXCLUDED.nom, visible = EXCLUDED.visible, updated_at = NOW()
-            """, (cat.get("id"), cat.get("id_parent"), cat.get("name"),
-                  cat.get("url"), cat.get("menu_title"), cat.get("visible")))
-            total += 1
-        conn.commit()
-        cur.close()
+            batch.append({
+                "id_wizi": cat.get("id"),
+                "id_parent": cat.get("id_parent"),
+                "nom": cat.get("name"),
+                "url": cat.get("url"),
+                "menu_title": cat.get("menu_title"),
+                "visible": cat.get("visible"),
+                "source": "wizishop"
+            })
+        if batch:
+            upsert("categories", batch, "id_wizi")
+            total += len(batch)
         if isinstance(data, list) or page >= data.get("pages", 1):
             break
         page += 1
     return total
 
-def sync_marques(token, shop_id, conn):
+def sync_marques(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     page, total = 1, 0
     while True:
@@ -69,23 +62,57 @@ def sync_marques(token, shop_id, conn):
         results = data.get("results", [])
         if not results:
             break
-        cur = conn.cursor()
+        batch = []
         for m in results:
-            cur.execute("""
-                INSERT INTO marques (id_wizi, nom, url, image_url)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (id_wizi) DO UPDATE SET
-                    nom = EXCLUDED.nom, updated_at = NOW()
-            """, (m.get("id"), m.get("name"), m.get("url"), m.get("image_url")))
-            total += 1
-        conn.commit()
-        cur.close()
+            batch.append({
+                "id_wizi": m.get("id"),
+                "nom": m.get("name"),
+                "url": m.get("url"),
+                "image_url": m.get("image_url"),
+                "source": "wizishop"
+            })
+        if batch:
+            upsert("marques", batch, "id_wizi")
+            total += len(batch)
         if page >= data.get("pages", 1):
             break
         page += 1
     return total
 
-def sync_produits(token, shop_id, conn):
+def sync_skus(token, shop_id):
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    page, total = 1, 0
+    while True:
+        r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/skus",
+                        headers=headers, params={"page": page, "limit": 500})
+        if r.status_code != 200:
+            break
+        data = r.json()
+        results = data.get("results", [])
+        if not results:
+            break
+        batch = []
+        for s in results:
+            batch.append({
+                "sku": s.get("sku"),
+                "id_produit_parent": s.get("prod_id"),
+                "type": s.get("type"),
+                "ean13": s.get("ean13"),
+                "stock": int(s.get("stock") or 0),
+                "statut": s.get("status"),
+                "date_creation": s.get("created_at"),
+                "date_maj_stock": s.get("updated_at"),
+                "source": "wizishop"
+            })
+        if batch:
+            upsert("skus", batch, "sku")
+            total += len(batch)
+        if page >= data.get("pages", 1):
+            break
+        page += 1
+    return total
+
+def sync_produits(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     page, total = 1, 0
     while True:
@@ -103,65 +130,26 @@ def sync_produits(token, shop_id, conn):
                 headers=headers
             )
             prod = detail_r.json() if detail_r.status_code == 200 else p
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO produits (id_wizi, sku, nom, fournisseur, reference_fournisseur,
-                    marque, ean13, prix_vente_ht, prix_achat_ht, tva_pct, poids,
-                    reduction, statut, image_url, url)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (id_wizi) DO UPDATE SET
-                    sku = EXCLUDED.sku, nom = EXCLUDED.nom,
-                    fournisseur = EXCLUDED.fournisseur,
-                    prix_vente_ht = EXCLUDED.prix_vente_ht,
-                    prix_achat_ht = EXCLUDED.prix_achat_ht,
-                    statut = EXCLUDED.statut, updated_at = NOW()
-            """, (
-                prod.get("id"), prod.get("sku"), prod.get("name") or prod.get("label"),
-                prod.get("supplier"), prod.get("supplier_reference"),
-                prod.get("brand"), prod.get("ean13"),
-                prod.get("price_tax_excluded"), prod.get("wholesale_price_tax_excluded"),
-                prod.get("tax"), prod.get("weight"), prod.get("reduction"),
-                prod.get("status") or ("visible" if prod.get("visible") else "hidden"),
-                prod.get("image_url"), prod.get("url")
-            ))
-            conn.commit()
-            cur.close()
+            upsert("produits", [{
+                "id_wizi": int(prod.get("id")),
+                "sku": prod.get("sku"),
+                "nom": prod.get("name") or prod.get("label"),
+                "fournisseur": prod.get("supplier"),
+                "reference_fournisseur": prod.get("supplier_reference"),
+                "marque": prod.get("brand"),
+                "ean13": prod.get("ean13"),
+                "prix_vente_ht": prod.get("price_tax_excluded"),
+                "prix_achat_ht": prod.get("wholesale_price_tax_excluded"),
+                "tva_pct": prod.get("tax"),
+                "poids": prod.get("weight"),
+                "reduction": prod.get("reduction"),
+                "statut": prod.get("status") or ("visible" if prod.get("visible") else "hidden"),
+                "image_url": prod.get("image_url"),
+                "url": prod.get("url"),
+                "source": "wizishop"
+            }], "id_wizi")
             total += 1
             time.sleep(0.05)
-        if page >= data.get("pages", 1):
-            break
-        page += 1
-    return total
-
-def sync_skus(token, shop_id, conn):
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    page, total = 1, 0
-    while True:
-        r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/skus",
-                        headers=headers, params={"page": page, "limit": 500})
-        if r.status_code != 200:
-            break
-        data = r.json()
-        results = data.get("results", [])
-        if not results:
-            break
-        cur = conn.cursor()
-        for s in results:
-            cur.execute("""
-                INSERT INTO skus (sku, id_produit_parent, type, ean13, stock, statut,
-                    date_creation, date_maj_stock)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (sku) DO UPDATE SET
-                    stock = EXCLUDED.stock, statut = EXCLUDED.statut,
-                    date_maj_stock = EXCLUDED.date_maj_stock, updated_at = NOW()
-            """, (
-                s.get("sku"), s.get("prod_id"), s.get("type"), s.get("ean13"),
-                s.get("stock") or 0, s.get("status"),
-                s.get("created_at"), s.get("updated_at")
-            ))
-            total += 1
-        conn.commit()
-        cur.close()
         if page >= data.get("pages", 1):
             break
         page += 1
@@ -179,14 +167,15 @@ def get_zone_tva(country_iso):
         return "ue"
     return "hors_ue"
 
-def sync_commandes(token, shop_id, conn):
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    cur = conn.cursor()
-    cur.execute("SELECT MAX(id_wizi) FROM commandes WHERE source = 'wizishop'")
-    result = cur.fetchone()
-    depuis_id = result[0] if result and result[0] else 0
-    cur.close()
+def get_max_commande_id():
+    results = select("commandes", "select=id_wizi&order=id_wizi.desc&limit=1&source=eq.wizishop")
+    if results:
+        return results[0].get("id_wizi", 0)
+    return 0
 
+def sync_commandes(token, shop_id):
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    depuis_id = get_max_commande_id()
     page, total = 1, 0
     while True:
         params = {"page": page, "limit": 100, "sort": "id"}
@@ -213,70 +202,76 @@ def sync_commandes(token, shop_id, conn):
             shipping = o.get("shippings", [{}])[0] if o.get("shippings") else {}
             services = o.get("services", {})
             zone = get_zone_tva(bil.get("country_iso"))
-            cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO commandes (
-                    id_wizi, numero_commande, date_commande, statut_code, statut_texte,
-                    devise, montant_ttc, montant_ht, montant_produits_ttc, frais_port,
-                    remise, code_promo, frais_supplementaires, mode_paiement,
-                    type_paiement, libelle_paiement, numero_transaction, numero_facture,
-                    url_facture, poids_total, origine, tag, commentaire, id_client,
-                    civilite_facturation, prenom_facturation, nom_facturation,
-                    email_client, telephone_facturation, societe_facturation,
-                    adresse_facturation, cp_facturation, ville_facturation,
-                    pays_facturation, pays_facturation_iso,
-                    prenom_livraison, nom_livraison, telephone_livraison,
-                    adresse_livraison, cp_livraison, ville_livraison,
-                    pays_livraison, pays_livraison_iso,
-                    mode_transport, nom_transporteur, numero_suivi,
-                    emballage_cadeau, message_cadeau, zone_tva
-                ) VALUES (
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s
-                )
-                ON CONFLICT (id_wizi) DO UPDATE SET
-                    statut_code = EXCLUDED.statut_code,
-                    statut_texte = EXCLUDED.statut_texte,
-                    numero_suivi = EXCLUDED.numero_suivi,
-                    updated_at = NOW()
-            """, (
-                o.get("id"), o.get("public_id"), o.get("date"),
-                o.get("status_code"), o.get("status_text"),
-                o.get("currency"), o.get("total_amount"), o.get("total_amount_excl_tax"),
-                o.get("total_products_amount"), o.get("total_shipping_amount"),
-                o.get("total_reduc_amount"), o.get("discount_code"),
-                o.get("total_fees"), o.get("payment_mode"),
-                o.get("payment_type"), o.get("payment_label"),
-                o.get("transaction_number"), o.get("invoice_id"),
-                o.get("invoice_url"), o.get("weight"),
-                o.get("origin"), o.get("tag"), o.get("comment"),
-                o.get("customer_id"),
-                bil.get("civility"), bil.get("firstname"), bil.get("lastname"),
-                bil.get("email"), bil.get("phone"), bil.get("company"),
-                bil.get("street"), bil.get("postal_code"), bil.get("town"),
-                bil.get("country"), bil.get("country_iso"),
-                shp.get("firstname"), shp.get("lastname"), shp.get("phone"),
-                shp.get("street"), shp.get("postal_code"), shp.get("town"),
-                shp.get("country"), shp.get("country_iso"),
-                shipping.get("mode"), shipping.get("name"), shipping.get("tracking_number"),
-                services.get("gift_wrap", False), services.get("message"),
-                zone
-            ))
+
+            upsert("commandes", [{
+                "id_wizi": o.get("id"),
+                "numero_commande": o.get("public_id"),
+                "date_commande": o.get("date"),
+                "statut_code": o.get("status_code"),
+                "statut_texte": o.get("status_text"),
+                "devise": o.get("currency"),
+                "montant_ttc": o.get("total_amount"),
+                "montant_ht": o.get("total_amount_excl_tax"),
+                "montant_produits_ttc": o.get("total_products_amount"),
+                "frais_port": o.get("total_shipping_amount"),
+                "remise": o.get("total_reduc_amount"),
+                "code_promo": o.get("discount_code"),
+                "frais_supplementaires": o.get("total_fees"),
+                "mode_paiement": str(o.get("payment_mode")) if o.get("payment_mode") else None,
+                "type_paiement": str(o.get("payment_type")) if o.get("payment_type") else None,
+                "libelle_paiement": o.get("payment_label"),
+                "numero_transaction": o.get("transaction_number"),
+                "numero_facture": str(o.get("invoice_id")) if o.get("invoice_id") else None,
+                "url_facture": o.get("invoice_url"),
+                "poids_total": o.get("weight"),
+                "origine": o.get("origin"),
+                "tag": o.get("tag"),
+                "commentaire": o.get("comment"),
+                "id_client": o.get("customer_id"),
+                "civilite_facturation": bil.get("civility"),
+                "prenom_facturation": bil.get("firstname"),
+                "nom_facturation": bil.get("lastname"),
+                "email_client": bil.get("email"),
+                "telephone_facturation": bil.get("phone"),
+                "societe_facturation": bil.get("company"),
+                "adresse_facturation": bil.get("street"),
+                "cp_facturation": bil.get("postal_code"),
+                "ville_facturation": bil.get("town"),
+                "pays_facturation": bil.get("country"),
+                "pays_facturation_iso": bil.get("country_iso"),
+                "prenom_livraison": shp.get("firstname"),
+                "nom_livraison": shp.get("lastname"),
+                "telephone_livraison": shp.get("phone"),
+                "adresse_livraison": shp.get("street"),
+                "cp_livraison": shp.get("postal_code"),
+                "ville_livraison": shp.get("town"),
+                "pays_livraison": shp.get("country"),
+                "pays_livraison_iso": shp.get("country_iso"),
+                "mode_transport": str(shipping.get("mode")) if shipping.get("mode") is not None else None,
+                "nom_transporteur": shipping.get("name"),
+                "numero_suivi": shipping.get("tracking_number"),
+                "emballage_cadeau": services.get("gift_wrap", False),
+                "message_cadeau": services.get("message"),
+                "zone_tva": zone,
+                "source": "wizishop"
+            }], "id_wizi")
+
+            lignes = []
             for sku_item in shipping.get("skus", []):
-                cur.execute("""
-                    INSERT INTO lignes_commande (
-                        id_commande, sku, nom_produit, quantite,
-                        prix_unitaire_ttc, tva, remise_produit, poids
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """, (
-                    o.get("id"), sku_item.get("sku"), sku_item.get("title"),
-                    sku_item.get("quantity"), sku_item.get("price"),
-                    sku_item.get("tax"), sku_item.get("total_discount"),
-                    sku_item.get("weight")
-                ))
-            conn.commit()
-            cur.close()
+                lignes.append({
+                    "id_commande": o.get("id"),
+                    "sku": sku_item.get("sku"),
+                    "nom_produit": sku_item.get("title"),
+                    "quantite": sku_item.get("quantity"),
+                    "prix_unitaire_ttc": sku_item.get("price"),
+                    "tva": sku_item.get("tax"),
+                    "remise_produit": sku_item.get("total_discount"),
+                    "poids": sku_item.get("weight"),
+                    "source": "wizishop"
+                })
+            if lignes:
+                upsert("lignes_commande", lignes, "id_commande,sku")
+
             total += 1
             time.sleep(0.05)
         if page >= data.get("pages", 1):
@@ -284,20 +279,21 @@ def sync_commandes(token, shop_id, conn):
         page += 1
     return total
 
-def log_sync(conn, table, source, nb, statut, message, duree):
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO sync_log (table_name, source, nb_enregistrements, statut, message, duree_secondes)
-        VALUES (%s, %s, %s, %s, %s, %s)
-    """, (table, source, nb, statut, message, duree))
-    conn.commit()
-    cur.close()
+def log_sync(table, source, nb, statut, message, duree):
+    from supabase_api import upsert
+    upsert("sync_log", [{
+        "table_name": table,
+        "source": source,
+        "nb_enregistrements": nb,
+        "statut": statut,
+        "message": message,
+        "duree_secondes": round(duree, 2)
+    }], "id")
 
 def run_full_sync():
     token, account_id, shop_id = get_wizi_token()
     if not token:
         return False, "Erreur de connexion Wizishop"
-    conn = get_db_connection()
     resultats = {}
     etapes = [
         ("categories", sync_categories),
@@ -308,13 +304,12 @@ def run_full_sync():
     for nom, fn in etapes:
         debut = time.time()
         try:
-            nb = fn(token, shop_id, conn)
+            nb = fn(token, shop_id)
             duree = time.time() - debut
-            log_sync(conn, nom, "wizishop", nb, "success", f"{nb} enregistrements", duree)
+            log_sync(nom, "wizishop", nb, "success", f"{nb} enregistrements", duree)
             resultats[nom] = {"nb": nb, "duree": duree, "statut": "✓"}
         except Exception as e:
             duree = time.time() - debut
-            log_sync(conn, nom, "wizishop", 0, "error", str(e), duree)
+            log_sync(nom, "wizishop", 0, "error", str(e), duree)
             resultats[nom] = {"nb": 0, "duree": duree, "statut": "✗", "erreur": str(e)}
-    conn.close()
     return True, resultats
