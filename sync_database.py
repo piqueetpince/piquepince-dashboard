@@ -191,7 +191,12 @@ def sync_commandes(token, shop_id):
     depuis_id = get_max_commande_id()
     page, total = 1, 0
     while True:
-        params = {"page": page, "limit": 100, "sort": "id"}
+        params = {
+            "page": page,
+            "limit": 100,
+            "sort": "id",
+            "start_date": "2024-01-01T00:00:00+00:00"
+        }
         if depuis_id:
             params["id_greater_than"] = depuis_id
         r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
