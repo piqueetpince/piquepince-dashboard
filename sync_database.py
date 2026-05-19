@@ -19,6 +19,19 @@ def get_wizi_token():
         return data.get("token"), data.get("account_id"), data.get("default_shop_id")
     return None, None, None
 
+def clean_date(date_str):
+    if not date_str:
+        return None
+    try:
+        from datetime import datetime
+        date_str_clean = str(date_str).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(date_str_clean)
+        if dt.year < 1900:
+            return None
+        return date_str
+    except:
+        return None
+
 def sync_categories(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     page, total = 1, 0
@@ -94,14 +107,14 @@ def sync_skus(token, shop_id):
         batch = []
         for s in results:
             batch.append({
-                "sku": s.get("sku"),
-                "id_produit_parent": s.get("prod_id"),
+                "sku": str(s.get("sku")) if s.get("sku") else None,
+                "id_produit_parent": str(s.get("prod_id")) if s.get("prod_id") else None,
                 "type": s.get("type"),
                 "ean13": s.get("ean13"),
-                "stock": int(s.get("stock") or 0),
+                "stock": int(float(s.get("stock") or 0)),
                 "statut": s.get("status"),
-                "date_creation": s.get("created_at"),
-                "date_maj_stock": s.get("updated_at"),
+                "date_creation": clean_date(s.get("created_at")),
+                "date_maj_stock": clean_date(s.get("updated_at")),
                 "source": "wizishop"
             })
         if batch:
@@ -206,7 +219,7 @@ def sync_commandes(token, shop_id):
             upsert("commandes", [{
                 "id_wizi": o.get("id"),
                 "numero_commande": o.get("public_id"),
-                "date_commande": o.get("date"),
+                "date_commande": clean_date(o.get("date")),
                 "statut_code": o.get("status_code"),
                 "statut_texte": o.get("status_text"),
                 "devise": o.get("currency"),
@@ -280,7 +293,6 @@ def sync_commandes(token, shop_id):
     return total
 
 def log_sync(table, source, nb, statut, message, duree):
-    from supabase_api import upsert
     upsert("sync_log", [{
         "table_name": table,
         "source": source,
