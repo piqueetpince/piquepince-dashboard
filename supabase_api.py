@@ -24,9 +24,18 @@ def upsert(table, data, on_conflict):
     payload = data if isinstance(data, list) else [data]
     r = requests.post(url, headers=headers, json=payload)
     if r.status_code not in [200, 201, 204]:
-        # Log l'erreur dans Streamlit
-        import streamlit as st
         st.warning(f"Erreur upsert {table}: {r.status_code} — {r.text[:200]}")
+        return False
+    return True
+
+def insert(table, data):
+    headers = get_headers()
+    headers["Prefer"] = "return=minimal"
+    url = get_url(table)
+    payload = data if isinstance(data, list) else [data]
+    r = requests.post(url, headers=headers, json=payload)
+    if r.status_code not in [200, 201, 204]:
+        st.warning(f"Erreur insert {table}: {r.status_code} — {r.text[:200]}")
         return False
     return True
 
