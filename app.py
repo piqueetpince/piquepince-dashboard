@@ -166,33 +166,40 @@ elif page == "⭐ Best-sellers":
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    lignes = select("lignes_commande",
-        "select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
+
     commandes_valides = select("commandes",
         f"select=id_wizi&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}&source=eq.wizishop")
 
-    if lignes and commandes_valides:
-        ids_valides = {c["id_wizi"] for c in commandes_valides}
-        df_lignes = pd.DataFrame(lignes)
-        df_lignes = df_lignes[df_lignes["id_commande"].isin(ids_valides)]
-        df_lignes["quantite"] = pd.to_numeric(df_lignes["quantite"], errors="coerce").fillna(0)
-        df_lignes["prix_unitaire_ttc"] = pd.to_numeric(df_lignes["prix_unitaire_ttc"], errors="coerce").fillna(0)
-        df_lignes["ca"] = df_lignes["quantite"] * df_lignes["prix_unitaire_ttc"]
+    if commandes_valides:
+        ids_valides = [str(c["id_wizi"]) for c in commandes_valides]
+        ids_str = ",".join(ids_valides)
 
-        bestsellers = df_lignes.groupby(["sku", "nom_produit"]).agg(
-            total_vendu=("quantite", "sum"),
-            ca_total=("ca", "sum"),
-            nb_commandes=("id_commande", "nunique")
-        ).reset_index().sort_values("total_vendu", ascending=False).head(50)
+        lignes = select("lignes_commande",
+            f"select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})&source=eq.wizishop",
+            limit=50000)
 
-        bestsellers.columns = ["SKU", "Produit", "Unités vendues", "CA (€)", "Nb commandes"]
-        bestsellers["CA (€)"] = bestsellers["CA (€)"].apply(lambda x: f"{x:.2f}")
-        st.subheader(f"Top 50 best-sellers — {nb_mois} derniers mois")
-        st.dataframe(bestsellers, use_container_width=True, hide_index=True)
-        csv = bestsellers.to_csv(index=False).encode("utf-8")
-        st.download_button("Télécharger en CSV", csv, "bestsellers.csv", "text/csv")
+        if lignes:
+            df_lignes = pd.DataFrame(lignes)
+            df_lignes["quantite"] = pd.to_numeric(df_lignes["quantite"], errors="coerce").fillna(0)
+            df_lignes["prix_unitaire_ttc"] = pd.to_numeric(df_lignes["prix_unitaire_ttc"], errors="coerce").fillna(0)
+            df_lignes["ca"] = df_lignes["quantite"] * df_lignes["prix_unitaire_ttc"]
+
+            bestsellers = df_lignes.groupby(["sku", "nom_produit"]).agg(
+                total_vendu=("quantite", "sum"),
+                ca_total=("ca", "sum"),
+                nb_commandes=("id_commande", "nunique")
+            ).reset_index().sort_values("total_vendu", ascending=False).head(50)
+
+            bestsellers.columns = ["SKU", "Produit", "Unités vendues", "CA (€)", "Nb commandes"]
+            bestsellers["CA (€)"] = bestsellers["CA (€)"].apply(lambda x: f"{x:.2f}")
+            st.subheader(f"Top 50 best-sellers — {nb_mois} derniers mois")
+            st.dataframe(bestsellers, use_container_width=True, hide_index=True)
+            csv = bestsellers.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "bestsellers.csv", "text/csv")
+        else:
+            st.info("Aucune ligne de commande trouvée.")
     else:
-        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+        st.info("Aucune commande valide trouvée.")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
