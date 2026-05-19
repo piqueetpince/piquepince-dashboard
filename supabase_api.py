@@ -6,15 +6,19 @@ def get_headers():
         "apikey": st.secrets["SUPABASE_KEY"],
         "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=minimal"
+        "Prefer": "resolution=merge-duplicates,return=minimal",
+        "Range-Unit": "items",
+        "Range": "0-4999"
     }
 
 def get_url(table):
     return f"{st.secrets['SUPABASE_URL']}/rest/v1/{table}"
 
-def select(table, query=""):
-    r = requests.get(f"{get_url(table)}?{query}", headers=get_headers())
-    if r.status_code == 200:
+def select(table, query="", limit=5000):
+    headers = get_headers()
+    headers["Range"] = f"0-{limit-1}"
+    r = requests.get(f"{get_url(table)}?{query}", headers=headers)
+    if r.status_code in [200, 206]:
         return r.json()
     return []
 
