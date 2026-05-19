@@ -127,6 +127,10 @@ def sync_skus(token, shop_id):
 
 def sync_produits(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    categories_list = select("categories", "select=id_wizi,nom&source=eq.wizishop")
+    cat_map = {c["id_wizi"]: c["nom"] for c in categories_list} if categories_list else {}
+
     page, total = 1, 0
     while True:
         r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products",
@@ -143,6 +147,8 @@ def sync_produits(token, shop_id):
                 headers=headers
             )
             prod = detail_r.json() if detail_r.status_code == 200 else p
+            id_cat = prod.get("category_id")
+            nom_cat = cat_map.get(id_cat, "") if id_cat else ""
             upsert("produits", [{
                 "id_wizi": int(prod.get("id")),
                 "sku": prod.get("sku"),
@@ -151,6 +157,8 @@ def sync_produits(token, shop_id):
                 "reference_fournisseur": prod.get("supplier_reference"),
                 "marque": prod.get("brand"),
                 "ean13": prod.get("ean13"),
+                "id_categorie": id_cat,
+                "nom_categorie": nom_cat,
                 "prix_vente_ht": prod.get("price_tax_excluded"),
                 "prix_achat_ht": prod.get("wholesale_price_tax_excluded"),
                 "tva_pct": prod.get("tax"),
@@ -268,25 +276,66 @@ def sync_commandes(token, shop_id):
                 "mode_transport": str(shipping.get("mode")) if shipping.get("mode") is not None else None,
                 "nom_transporteur": shipping.get("name"),
                 "numero_suivi": shipping.get("tracking_number"),
+                "pickup_number": shipping.get("pickup_number"),
+                "shipping_tax": shipping.get("tax"),
                 "emballage_cadeau": services.get("gift_wrap", False),
                 "message_cadeau": services.get("message"),
+                "third_party_id": o.get("third_party_id"),
+                "third_party_from": o.get("third_party_from"),
                 "zone_tva": zone,
                 "source": "wizishop"
             }], "id_wizi")
 
             lignes = []
             for sku_item in shipping.get("skus", []):
-                lignes.append({
-                    "id_commande": o.get("id"),
-                    "sku": sku_item.get("sku"),
-                    "nom_produit": sku_item.get("title"),
-                    "quantite": sku_item.get("quantity"),
-                    "prix_unitaire_ttc": sku_item.get("price"),
-                    "tva": sku_item.get("tax"),
-                    "remise_produit": sku_item.get("total_discount"),
-                    "poids": sku_item.get("weight"),
-                    "source": "wizishop"
-                })
+                customisations = sku_item.get("customisations", [])
+                custom_titre = customisations[0].get("title") if customisations else None
+                custom_contenu = customisations[0].get("content") if customisations else None
+                custom_prix = customisations[0].get("price") if customisations else None
+
+                variations = sku_item.get("variations", [])
+                if variations:
+                    for variation in variations:
+                        lignes.append({
+                            "id_commande": o.get("id"),
+                            "sku": sku_item.get("sku"),
+                            "nom_produit": sku_item.get("title"),
+                            "quantite": sku_item.get("quantity"),
+                            "prix_unitaire_ttc": sku_item.get("price"),
+                            "tva": sku_item.get("tax"),
+                            "remise_produit": sku_item.get("total_discount"),
+                            "poids": sku_item.get("weight"),
+                            "image_url": sku_item.get("image_url"),
+                            "sku_variation": variation.get("sku"),
+                            "libelle_variation": variation.get("title"),
+                            "quantite_variation": variation.get("quantity"),
+                            "poids_variation": variation.get("weight"),
+                            "customisation_titre": custom_titre,
+                            "customisation_contenu": custom_contenu,
+                            "customisation_prix": custom_prix,
+                            "source": "wizishop"
+                        })
+                else:
+                    lignes.append({
+                        "id_commande": o.get("id"),
+                        "sku": sku_item.get("sku"),
+                        "nom_produit": sku_item.get("title"),
+                        "quantite": sku_item.get("quantity"),
+                        "prix_unitaire_ttc": sku_item.get("price"),
+                        "tva": sku_item.get("tax"),
+                        "remise_produit": sku_item.get("total_discount"),
+                        "poids": sku_item.get("weight"),
+                        "image_url": sku_item.get("image_url"),
+                        "sku_variation": None,
+                        "libelle_variation": None,
+                        "quantite_variation": None,
+                        "poids_variation": None,
+                        "customisation_titre": custom_titre,
+                        "customisation_contenu": custom_contenu,
+                        "customisation_prix": custom_prix,
+                        "source": "wizishop"
+                    })
+
             if lignes:
                 insert("lignes_commande", lignes)
 
