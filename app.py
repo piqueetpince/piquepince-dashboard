@@ -104,9 +104,9 @@ elif page == "📊 Vue d'ensemble":
 
     if commandes:
         df = pd.DataFrame(commandes)
-        df["date_commande"] = pd.to_datetime(df["date_commande"], utc=True).dt.tz_localize(None)
-        df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce")
-        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce")
+        df["date_commande"] = pd.to_datetime(df["date_commande"]).dt.tz_convert(None)
+        df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
+        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
         df["mois"] = df["date_commande"].dt.strftime("%Y-%m")
 
         date_limite = pd.Timestamp.now() - pd.DateOffset(months=nb_mois)
@@ -166,7 +166,8 @@ elif page == "⭐ Best-sellers":
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    lignes = select("lignes_commande", "select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
+    lignes = select("lignes_commande",
+        "select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
     commandes_valides = select("commandes",
         f"select=id_wizi&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}&source=eq.wizishop")
 
@@ -199,8 +200,10 @@ elif page == "🏭 Stock & Fournisseurs":
         fournisseur_filtre = st.text_input("Filtrer par fournisseur")
         stock_filtre = st.selectbox("Stock", ["Tous", "En rupture (stock = 0)", "En stock (stock > 0)"])
 
-    skus = select("skus", "select=sku,nom,fournisseur,stock,statut,date_maj_stock&statut=eq.visible&order=stock.asc")
-    produits = select("produits", "select=id_wizi,sku,nom,fournisseur&statut=eq.visible")
+    skus = select("skus",
+        "select=sku,nom,fournisseur,stock,statut,date_maj_stock&statut=eq.visible&order=stock.asc")
+    produits = select("produits",
+        "select=id_wizi,sku,nom,fournisseur&statut=eq.visible")
 
     if skus:
         df_skus = pd.DataFrame(skus)
@@ -210,8 +213,8 @@ elif page == "🏭 Stock & Fournisseurs":
             df_prod = pd.DataFrame(produits)[["sku", "nom", "fournisseur"]].rename(
                 columns={"nom": "nom_produit", "fournisseur": "fournisseur_prod"})
             df_skus = df_skus.merge(df_prod, on="sku", how="left")
-            df_skus["nom"] = df_skus["nom"].fillna(df_skus["nom_produit"])
-            df_skus["fournisseur"] = df_skus["fournisseur"].fillna(df_skus["fournisseur_prod"])
+            df_skus["nom"] = df_skus["nom"].fillna(df_skus.get("nom_produit", ""))
+            df_skus["fournisseur"] = df_skus["fournisseur"].fillna(df_skus.get("fournisseur_prod", ""))
 
         if fournisseur_filtre:
             df_skus = df_skus[df_skus["fournisseur"].str.contains(fournisseur_filtre, case=False, na=False)]
@@ -231,7 +234,8 @@ elif page == "🏭 Stock & Fournisseurs":
         cols = [c for c in ["sku", "nom", "fournisseur", "stock", "date_maj_stock"] if c in df_skus.columns]
         df_affichage = df_skus[cols].copy()
         if "date_maj_stock" in df_affichage.columns:
-            df_affichage["date_maj_stock"] = pd.to_datetime(df_affichage["date_maj_stock"]).dt.strftime("%d/%m/%Y")
+            df_affichage["date_maj_stock"] = pd.to_datetime(
+                df_affichage["date_maj_stock"], errors="coerce").dt.strftime("%d/%m/%Y")
         df_affichage.columns = ["SKU", "Produit", "Fournisseur", "Stock", "Dernière MAJ"][:len(cols)]
         st.dataframe(df_affichage, use_container_width=True, hide_index=True)
         csv = df_affichage.to_csv(index=False).encode("utf-8")
