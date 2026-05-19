@@ -104,12 +104,12 @@ elif page == "📊 Vue d'ensemble":
 
     if commandes:
         df = pd.DataFrame(commandes)
-        df["date_commande"] = pd.to_datetime(df["date_commande"], utc=True)
+        df["date_commande"] = pd.to_datetime(df["date_commande"], utc=True).dt.tz_localize(None)
         df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce")
         df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce")
-        df["mois"] = df["date_commande"].dt.to_period("M").astype(str)
+        df["mois"] = df["date_commande"].dt.strftime("%Y-%m")
 
-        date_limite = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)
+        date_limite = pd.Timestamp.now() - pd.DateOffset(months=nb_mois)
         df_periode = df[df["date_commande"] >= date_limite]
         mois_max = df_periode["mois"].max() if not df_periode.empty else ""
         df_mois = df_periode[df_periode["mois"] == mois_max]
@@ -145,7 +145,7 @@ elif page == "📦 Commandes":
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=3)
 
-    date_limite = (pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)).isoformat()
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes = select("commandes",
         f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi&date_commande=gte.{date_limite}&statut_code=not.in.(0,50)&order=date_commande.desc&limit=500")
 
@@ -165,7 +165,7 @@ elif page == "⭐ Best-sellers":
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
-    date_limite = (pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)).isoformat()
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     lignes = select("lignes_commande", "select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
     commandes_valides = select("commandes",
         f"select=id_wizi&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}&source=eq.wizishop")
