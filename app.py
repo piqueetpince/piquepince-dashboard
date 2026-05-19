@@ -99,58 +99,46 @@ elif page == "📊 Vue d'ensemble":
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
-    commandes = select("commandes",
-        "select=date_commande,montant_ttc,montant_ht,statut_code&statut_code=not.in.(0,50)&source=eq.wizishop")
+    date_limite_str = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    st.write(f"Nb commandes récupérées : {len(commandes) if commandes else 0}")
+    commandes = select("commandes",
+        f"select=date_commande,montant_ttc,montant_ht,statut_code&statut_code=not.in.(0,50)&source=eq.wizishop&date_commande=gte.{date_limite_str}&order=date_commande.desc")
 
     if commandes:
         df = pd.DataFrame(commandes)
-        st.write(f"Exemple date_commande : {df['date_commande'].iloc[0]}")
-
         df["date_commande"] = pd.to_datetime(df["date_commande"]).dt.tz_convert(None)
         df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
+        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
         df["mois"] = df["date_commande"].dt.strftime("%Y-%m")
 
-        date_limite = pd.Timestamp.now() - pd.DateOffset(months=nb_mois)
-        st.write(f"Date limite : {date_limite}")
-        st.write(f"Min date : {df['date_commande'].min()}")
-        st.write(f"Max date : {df['date_commande'].max()}")
+        mois_max = df["mois"].max()
+        df_mois = df[df["mois"] == mois_max]
 
-        df_periode = df[df["date_commande"] >= date_limite]
-        st.write(f"Nb commandes dans la période : {len(df_periode)}")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Commandes ce mois", len(df_mois))
+        with col2:
+            st.metric("CA ce mois (TTC)", f"{df_mois['montant_ttc'].sum():.0f} €")
+        with col3:
+            st.metric(f"CA sur {nb_mois} mois (TTC)", f"{df['montant_ttc'].sum():.0f} €")
+        with col4:
+            st.metric(f"Commandes sur {nb_mois} mois", len(df))
 
-        if not df_periode.empty:
-            mois_max = df_periode["mois"].max()
-            df_mois = df_periode[df_periode["mois"] == mois_max]
+        st.divider()
+        par_mois = df.groupby("mois").agg(
+            Commandes=("montant_ttc", "count"),
+            CA=("montant_ttc", "sum")
+        ).reset_index().sort_values("mois")
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Commandes ce mois", len(df_mois))
-            with col2:
-                st.metric("CA ce mois (TTC)", f"{df_mois['montant_ttc'].sum():.0f} €")
-            with col3:
-                st.metric(f"CA sur {nb_mois} mois (TTC)", f"{df_periode['montant_ttc'].sum():.0f} €")
-            with col4:
-                st.metric(f"Commandes sur {nb_mois} mois", len(df_periode))
-
-            st.divider()
-            par_mois = df_periode.groupby("mois").agg(
-                Commandes=("montant_ttc", "count"),
-                CA=("montant_ttc", "sum")
-            ).reset_index().sort_values("mois")
-
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                st.subheader("Commandes par mois")
-                st.bar_chart(par_mois.set_index("mois")["Commandes"])
-            with col_g2:
-                st.subheader("CA par mois (€)")
-                st.bar_chart(par_mois.set_index("mois")["CA"])
-        else:
-            st.warning("Aucune commande dans la période sélectionnée.")
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            st.subheader("Commandes par mois")
+            st.bar_chart(par_mois.set_index("mois")["Commandes"])
+        with col_g2:
+            st.subheader("CA par mois (€)")
+            st.bar_chart(par_mois.set_index("mois")["CA"])
     else:
-        st.info("Aucune donnée récupérée de Supabase.")
+        st.info("Aucune donnée. Lance d'abord une synchronisation depuis le menu 🔄.")
 
 elif page == "📦 Commandes":
     with st.sidebar:
