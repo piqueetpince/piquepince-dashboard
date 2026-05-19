@@ -4,9 +4,9 @@ import streamlit as st
 def get_headers():
     return {
         "apikey": st.secrets["SUPABASE_KEY"],
-        "Authorization": f"Bearer {st.secrets["SUPABASE_KEY"]}",
+        "Authorization": f"Bearer {st.secrets['SUPABASE_KEY']}",
         "Content-Type": "application/json",
-        "Prefer": "return=minimal"
+        "Prefer": "resolution=merge-duplicates,return=minimal"
     }
 
 def get_url(table):
@@ -20,13 +20,15 @@ def select(table, query=""):
 
 def upsert(table, data, on_conflict):
     headers = get_headers()
-    headers["Prefer"] = f"resolution=merge-duplicates,return=minimal"
-    r = requests.post(
-        f"{get_url(table)}?on_conflict={on_conflict}",
-        headers=headers,
-        json=data if isinstance(data, list) else [data]
-    )
-    return r.status_code in [200, 201, 204]
+    url = f"{get_url(table)}?on_conflict={on_conflict}"
+    payload = data if isinstance(data, list) else [data]
+    r = requests.post(url, headers=headers, json=payload)
+    if r.status_code not in [200, 201, 204]:
+        # Log l'erreur dans Streamlit
+        import streamlit as st
+        st.warning(f"Erreur upsert {table}: {r.status_code} — {r.text[:200]}")
+        return False
+    return True
 
 def count(table, query=""):
     headers = get_headers()
