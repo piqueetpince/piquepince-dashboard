@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
 from supabase_api import select
-from sync_database import run_full_sync
+from sync_database import (get_wizi_token, sync_categories, sync_marques,
+                           sync_skus, sync_commandes, log_sync, get_zone_tva)
+import time
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -24,25 +26,69 @@ with st.sidebar:
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
-    st.info("La synchronisation récupère toutes les données Wizishop et les stocke dans la base de données.")
+    st.info("Lance chaque synchronisation séparément pour éviter les timeouts.")
 
-    if st.button("🔄 Lancer la synchronisation", use_container_width=True):
-        with st.spinner("Synchronisation en cours... (peut prendre plusieurs minutes)"):
-            succes, resultats = run_full_sync()
-        if succes:
-            st.success("Synchronisation terminée !")
-            for table, info in resultats.items():
-                if "erreur" in info:
-                    st.error(f"{info['statut']} **{table}** — Erreur : {info['erreur']}")
-                else:
-                    st.write(f"{info['statut']} **{table}** — {info['nb']} enregistrements en {info['duree']:.1f}s")
-        else:
-            st.error(f"Erreur : {resultats}")
+    token_cached = st.session_state.get("wizi_token")
+    shop_id_cached = st.session_state.get("wizi_shop_id")
+
+    if not token_cached:
+        with st.spinner("Connexion à Wizishop..."):
+            token, _, shop_id = get_wizi_token()
+            if token:
+                st.session_state["wizi_token"] = token
+                st.session_state["wizi_shop_id"] = shop_id
+                token_cached = token
+                shop_id_cached = shop_id
+                st.success("Connecté à Wizishop !")
+            else:
+                st.error("Impossible de se connecter à Wizishop.")
+
+    if token_cached:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("1️⃣ Sync Catégories & Marques", use_container_width=True):
+                with st.spinner("Synchronisation catégories et marques..."):
+                    debut = time.time()
+                    try:
+                        nb_cat = sync_categories(token_cached, shop_id_cached)
+                        nb_mar = sync_marques(token_cached, shop_id_cached)
+                        duree = time.time() - debut
+                        log_sync("categories", "wizishop", nb_cat, "success", f"{nb_cat} enregistrements", duree)
+                        log_sync("marques", "wizishop", nb_mar, "success", f"{nb_mar} enregistrements", duree)
+                        st.success(f"✓ {nb_cat} catégories et {nb_mar} marques synchronisées en {duree:.1f}s")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            if st.button("2️⃣ Sync SKUs & Stock", use_container_width=True):
+                with st.spinner("Synchronisation SKUs... (peut prendre 2-3 min)"):
+                    debut = time.time()
+                    try:
+                        nb = sync_skus(token_cached, shop_id_cached)
+                        duree = time.time() - debut
+                        log_sync("skus", "wizishop", nb, "success", f"{nb} enregistrements", duree)
+                        st.success(f"✓ {nb} SKUs synchronisées en {duree:.1f}s")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+        with col2:
+            if st.button("3️⃣ Sync Commandes", use_container_width=True):
+                with st.spinner("Synchronisation commandes... (peut prendre 10-15 min)"):
+                    debut = time.time()
+                    try:
+                        nb = sync_commandes(token_cached, shop_id_cached)
+                        duree = time.time() - debut
+                        log_sync("commandes", "wizishop", nb, "success", f"{nb} enregistrements", duree)
+                        st.success(f"✓ {nb} commandes synchronisées en {duree:.1f}s")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            st.info("💡 **Conseil** : Lance d'abord 1️⃣ puis 2️⃣ puis 3️⃣. Les prochaines synchros seront plus rapides car seules les nouvelles données seront importées.")
 
     logs = select("sync_log", "select=table_name,nb_enregistrements,statut,created_at&order=created_at.desc&limit=10")
     if logs:
         st.divider()
-        st.subheader("Dernières synchronisations")
+        st.subheader("Historique des synchronisations")
         df_logs = pd.DataFrame(logs)
         df_logs.columns = ["Table", "Nb", "Statut", "Date"]
         df_logs["Date"] = pd.to_datetime(df_logs["Date"]).dt.strftime("%d/%m/%Y %H:%M")
@@ -54,7 +100,7 @@ elif page == "📊 Vue d'ensemble":
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
     commandes = select("commandes",
-        f"select=date_commande,montant_ttc,montant_ht,statut_code&statut_code=neq.0&statut_code=neq.50&source=eq.wizishop")
+        "select=date_commande,montant_ttc,montant_ht,statut_code&statut_code=neq.0&statut_code=neq.50&source=eq.wizishop")
 
     if commandes:
         df = pd.DataFrame(commandes)
@@ -120,8 +166,7 @@ elif page == "⭐ Best-sellers":
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
     date_limite = (pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=nb_mois)).isoformat()
-    lignes = select("lignes_commande",
-        f"select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
+    lignes = select("lignes_commande", "select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&source=eq.wizishop")
     commandes_valides = select("commandes",
         f"select=id_wizi&statut_code=neq.0&statut_code=neq.50&date_commande=gte.{date_limite}&source=eq.wizishop")
 
@@ -141,7 +186,6 @@ elif page == "⭐ Best-sellers":
 
         bestsellers.columns = ["SKU", "Produit", "Unités vendues", "CA (€)", "Nb commandes"]
         bestsellers["CA (€)"] = bestsellers["CA (€)"].apply(lambda x: f"{x:.2f}")
-
         st.subheader(f"Top 50 best-sellers — {nb_mois} derniers mois")
         st.dataframe(bestsellers, use_container_width=True, hide_index=True)
         csv = bestsellers.to_csv(index=False).encode("utf-8")
@@ -155,8 +199,7 @@ elif page == "🏭 Stock & Fournisseurs":
         fournisseur_filtre = st.text_input("Filtrer par fournisseur")
         stock_filtre = st.selectbox("Stock", ["Tous", "En rupture (stock = 0)", "En stock (stock > 0)"])
 
-    query = "select=sku,nom,fournisseur,stock,statut,date_maj_stock&statut=eq.visible&order=stock.asc"
-    skus = select("skus", query)
+    skus = select("skus", "select=sku,nom,fournisseur,stock,statut,date_maj_stock&statut=eq.visible&order=stock.asc")
     produits = select("produits", "select=id_wizi,sku,nom,fournisseur&statut=eq.visible")
 
     if skus:
@@ -185,14 +228,12 @@ elif page == "🏭 Stock & Fournisseurs":
         with col3:
             st.metric("En stock", len(df_skus[df_skus["stock"] > 0]))
 
-        cols = ["sku", "nom", "fournisseur", "stock", "date_maj_stock"]
-        cols = [c for c in cols if c in df_skus.columns]
+        cols = [c for c in ["sku", "nom", "fournisseur", "stock", "date_maj_stock"] if c in df_skus.columns]
         df_affichage = df_skus[cols].copy()
         if "date_maj_stock" in df_affichage.columns:
             df_affichage["date_maj_stock"] = pd.to_datetime(df_affichage["date_maj_stock"]).dt.strftime("%d/%m/%Y")
         df_affichage.columns = ["SKU", "Produit", "Fournisseur", "Stock", "Dernière MAJ"][:len(cols)]
         st.dataframe(df_affichage, use_container_width=True, hide_index=True)
-
         csv = df_affichage.to_csv(index=False).encode("utf-8")
         st.download_button("Télécharger en CSV", csv, "stock.csv", "text/csv")
     else:
@@ -223,7 +264,6 @@ elif page == "🌍 Comptabilité TVA":
             "inconnu": "❓ Inconnu"
         }).fillna(zones["zone_tva"])
         zones.columns = ["Zone", "Nb commandes", "CA TTC (€)", "CA HT (€)"]
-
         st.subheader(f"Répartition CA par zone TVA — {annee}")
         st.dataframe(zones, use_container_width=True, hide_index=True)
 
@@ -232,12 +272,10 @@ elif page == "🌍 Comptabilité TVA":
             ca_ttc=("montant_ttc", "sum")
         ).reset_index().sort_values("ca_ttc", ascending=False)
         pays.columns = ["Pays", "ISO", "Zone", "Nb commandes", "CA TTC (€)"]
-
         st.divider()
         st.subheader("Détail par pays")
         st.dataframe(pays, use_container_width=True, hide_index=True)
-
         csv = pays.to_csv(index=False).encode("utf-8")
         st.download_button("Télécharger en CSV", csv, f"tva_{annee}.csv", "text/csv")
     else:
-        st.info("Aucune donnée. Lance d'abord une synchronisation.")     
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
