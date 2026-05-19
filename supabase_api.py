@@ -14,7 +14,6 @@ def get_url(table):
 
 def select(table, query="", limit=10000):
     headers = get_headers()
-    separator = "&" if "?" not in query and query else "?"
     if query:
         url = f"{get_url(table)}?{query}&limit={limit}"
     else:
