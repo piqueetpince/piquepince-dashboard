@@ -4,6 +4,7 @@ from supabase_api import select
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
                            sync_skus, sync_commandes, log_sync)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
+from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 import time
 
@@ -23,6 +24,7 @@ with st.sidebar:
         "⭐ Best-sellers",
         "🚨 Réapprovisionnement",
         "🏭 Stock & Fournisseurs",
+        "🏷️ Catalogue Etsy",
         "🌍 Comptabilité TVA",
         "🔄 Synchronisation"
     ])
@@ -97,6 +99,21 @@ if page == "🔄 Synchronisation":
                         duree = time.time() - debut
                         log_sync_etsy("commandes_etsy", nb, "success", f"{nb} commandes", duree)
                         st.success(f"✓ {nb} commandes Etsy en {duree:.1f}s")
+                    else:
+                        st.error("Impossible de récupérer le shop_id Etsy.")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+        if st.button("5️⃣ Sync Produits Etsy", use_container_width=True):
+            with st.spinner("Synchronisation produits Etsy..."):
+                debut = time.time()
+                try:
+                    shop_id_etsy = get_shop_id()
+                    if shop_id_etsy:
+                        nb_listings, nb_variations = sync_produits_etsy(shop_id_etsy)
+                        duree = time.time() - debut
+                        log_sync_etsy("produits_etsy", nb_listings, "success", f"{nb_listings} listings, {nb_variations} variations", duree)
+                        st.success(f"✓ {nb_listings} listings et {nb_variations} variations en {duree:.1f}s")
                     else:
                         st.error("Impossible de récupérer le shop_id Etsy.")
                 except Exception as e:
@@ -494,6 +511,68 @@ elif page == "🏭 Stock & Fournisseurs":
         st.download_button("Télécharger en CSV", csv, "stock.csv", "text/csv")
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation.")
+
+elif page == "🏷️ Catalogue Etsy":
+    st.subheader("🏷️ Catalogue Etsy")
+
+    with st.sidebar:
+        st.divider()
+        filtre_alerte = st.checkbox("🔴 Alertes stock uniquement", value=False)
+        filtre_statut = st.selectbox("Statut", ["Tous", "Actif", "Inactif"])
+
+    variations = select("produits_etsy_variations",
+        "select=sku,variation_valeur,stock_etsy,stock_wizishop,is_enabled,alerte_stock,prix,listing_id")
+    listings = select("produits_etsy", "select=listing_id,titre,url,has_variations,nb_favoris")
+    listing_map = {l["listing_id"]: l for l in listings} if listings else {}
+
+    if variations:
+        df = pd.DataFrame(variations)
+        df["stock_etsy"] = pd.to_numeric(df["stock_etsy"], errors="coerce").fillna(0).astype(int)
+        df["stock_wizishop"] = pd.to_numeric(df["stock_wizishop"], errors="coerce").fillna(0).astype(int)
+        df["titre"] = df["listing_id"].map(lambda x: listing_map.get(x, {}).get("titre", "")[:60] if x else "")
+        df["url"] = df["listing_id"].map(lambda x: listing_map.get(x, {}).get("url", "") if x else "")
+        df["nb_favoris"] = df["listing_id"].map(lambda x: listing_map.get(x, {}).get("nb_favorers", 0) if x else 0)
+
+        if filtre_alerte:
+            df = df[df["alerte_stock"] == True]
+        if filtre_statut == "Actif":
+            df = df[df["is_enabled"] == True]
+        elif filtre_statut == "Inactif":
+            df = df[df["is_enabled"] == False]
+
+        nb_alertes = len(df[df["alerte_stock"] == True])
+        nb_actifs = len(df[df["is_enabled"] == True])
+        nb_inactifs = len(df[df["is_enabled"] == False])
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🔴 Alertes stock", nb_alertes)
+        with col2:
+            st.metric("✅ Variations actives", nb_actifs)
+        with col3:
+            st.metric("⏸️ Variations inactives", nb_inactifs)
+
+        df["Alerte"] = df["alerte_stock"].map({True: "🔴 Stock 0", False: "🟢 OK"})
+        df["Actif"] = df["is_enabled"].map({True: "✅", False: "⏸️"})
+
+        cols_show = ["sku", "titre", "variation_valeur", "Actif",
+                    "stock_wizishop", "stock_etsy", "prix", "Alerte"]
+        df_show = df[cols_show].copy()
+        df_show.columns = ["SKU", "Produit", "Variation", "Actif",
+                          "Stock Wizishop", "Stock Etsy", "Prix (€)", "Alerte"]
+        df_show = df_show.sort_values("Alerte", ascending=False)
+
+        st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+        if nb_alertes > 0:
+            st.divider()
+            st.subheader("🔴 Produits à désactiver sur Etsy")
+            df_alertes = df_show[df_show["Alerte"] == "🔴 Stock 0"]
+            st.dataframe(df_alertes, use_container_width=True, hide_index=True)
+            csv = df_alertes.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Télécharger liste alertes", csv, "alertes_stock_etsy.csv", "text/csv")
+    else:
+        st.info("Aucune donnée. Lance d'abord la sync 5️⃣ Produits Etsy.")
 
 elif page == "🌍 Comptabilité TVA":
     with st.sidebar:
