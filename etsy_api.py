@@ -40,18 +40,11 @@ def api_get(url, params=None):
     return r
 
 def get_shop_id():
-    r = api_get(f"{ETSY_API_URL}/application/shops/PiqueetPince")
+    if "ETSY_SHOP_ID" in st.secrets:
+        return st.secrets["ETSY_SHOP_ID"]
+    r = api_get(f"{ETSY_API_URL}/application/users/me")
     if r.status_code == 200:
         return r.json().get("shop_id")
-    r2 = api_get(f"{ETSY_API_URL}/application/users/me")
-    if r2.status_code == 200:
-        user_id = r2.json().get("user_id")
-        if user_id:
-            r3 = api_get(f"{ETSY_API_URL}/application/users/{user_id}/shops")
-            if r3.status_code == 200:
-                results = r3.json().get("results", [])
-                if results:
-                    return results[0].get("shop_id")
     return None
 
 def get_receipts(shop_id, limit=100, offset=0):
