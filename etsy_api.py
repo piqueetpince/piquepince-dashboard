@@ -25,15 +25,30 @@ def refresh_token():
 
 def get_shop_id():
     r = requests.get(
-        f"{ETSY_API_URL}/application/openapi-ping",
-        headers=get_headers()
+        f"{ETSY_API_URL}/application/shops",
+        headers=get_headers(),
+        params={"shop_name": "PiqueetPince"}
     )
+    if r.status_code == 200:
+        results = r.json().get("results", [])
+        if results:
+            return results[0].get("shop_id")
+
     r2 = requests.get(
         f"{ETSY_API_URL}/application/users/me",
         headers=get_headers()
     )
     if r2.status_code == 200:
-        return r2.json().get("shop_id")
+        user_id = r2.json().get("user_id")
+        if user_id:
+            r3 = requests.get(
+                f"{ETSY_API_URL}/application/users/{user_id}/shops",
+                headers=get_headers()
+            )
+            if r3.status_code == 200:
+                results = r3.json().get("results", [])
+                if results:
+                    return results[0].get("shop_id")
     return None
 
 def get_receipts(shop_id, limit=100, offset=0):
