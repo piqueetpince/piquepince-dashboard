@@ -117,27 +117,26 @@ elif page == "📊 Vue d'ensemble":
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
-        source_filtre = st.selectbox("Source", ["Toutes", "Wizishop", "Etsy"])
 
     date_limite_str = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    query = f"select=date_commande,montant_ttc,montant_ht,statut_code,source&statut_code=not.in.(0,50)&date_commande=gte.{date_limite_str}&order=date_commande.desc"
-    if source_filtre == "Wizishop":
-        query += "&source=eq.wizishop"
-    elif source_filtre == "Etsy":
-        query += "&source=eq.etsy"
 
-    commandes = select("commandes", query)
+    commandes = select("commandes",
+        f"select=date_commande,montant_ttc,statut_code,source&statut_code=not.in.(0,50)&date_commande=gte.{date_limite_str}&order=date_commande.desc")
 
     if commandes:
         df = pd.DataFrame(commandes)
         df["date_commande"] = pd.to_datetime(df["date_commande"]).dt.tz_convert(None)
         df["montant_ttc"] = pd.to_numeric(df["montant_ttc"], errors="coerce").fillna(0)
-        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
         df["mois"] = df["date_commande"].dt.strftime("%Y-%m")
 
         mois_max = df["mois"].max()
         df_mois = df[df["mois"] == mois_max]
+        df_wizi = df[df["source"] == "wizishop"]
+        df_etsy = df[df["source"] == "etsy"]
+        df_mois_wizi = df_mois[df_mois["source"] == "wizishop"]
+        df_mois_etsy = df_mois[df_mois["source"] == "etsy"]
 
+        st.subheader("📊 Vue consolidée")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Commandes ce mois", len(df_mois))
@@ -149,18 +148,44 @@ elif page == "📊 Vue d'ensemble":
             st.metric(f"Commandes sur {nb_mois} mois", len(df))
 
         st.divider()
-        par_mois = df.groupby("mois").agg(
+        col_w, col_e = st.columns(2)
+
+        with col_w:
+            st.subheader("🛍️ Wizishop")
+            w1, w2, w3 = st.columns(3)
+            with w1:
+                st.metric("Commandes ce mois", len(df_mois_wizi))
+            with w2:
+                st.metric("CA ce mois", f"{df_mois_wizi['montant_ttc'].sum():.0f} €")
+            with w3:
+                st.metric(f"CA {nb_mois} mois", f"{df_wizi['montant_ttc'].sum():.0f} €")
+
+        with col_e:
+            st.subheader("🏷️ Etsy")
+            e1, e2, e3 = st.columns(3)
+            with e1:
+                st.metric("Commandes ce mois", len(df_mois_etsy))
+            with e2:
+                st.metric("CA ce mois", f"{df_mois_etsy['montant_ttc'].sum():.0f} €")
+            with e3:
+                st.metric(f"CA {nb_mois} mois", f"{df_etsy['montant_ttc'].sum():.0f} €")
+
+        st.divider()
+        par_mois = df.groupby(["mois", "source"]).agg(
             Commandes=("montant_ttc", "count"),
             CA=("montant_ttc", "sum")
         ).reset_index().sort_values("mois")
 
+        par_mois_pivot_ca = par_mois.pivot(index="mois", columns="source", values="CA").fillna(0)
+        par_mois_pivot_cmd = par_mois.pivot(index="mois", columns="source", values="Commandes").fillna(0)
+
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             st.subheader("Commandes par mois")
-            st.bar_chart(par_mois.set_index("mois")["Commandes"])
+            st.bar_chart(par_mois_pivot_cmd)
         with col_g2:
             st.subheader("CA par mois (€)")
-            st.bar_chart(par_mois.set_index("mois")["CA"])
+            st.bar_chart(par_mois_pivot_ca)
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation depuis le menu 🔄.")
 
