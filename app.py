@@ -140,7 +140,7 @@ elif page == "📊 Vue d'ensemble":
 
     date_limite_str = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes = select("commandes",
-        f"select=date_commande,montant_ttc,statut_code,source&statut_code=not.in.(0,50)&date_commande=gte.{date_limite_str}&order=date_commande.desc")
+        f"select=date_commande,montant_ttc,statut_code,source&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite_str}&order=date_commande.desc")
 
     if commandes:
         df = pd.DataFrame(commandes)
@@ -214,7 +214,7 @@ elif page == "📦 Commandes":
         source_filtre = st.selectbox("Source", ["Toutes", "Wizishop", "Etsy"])
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    query = f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi,source&date_commande=gte.{date_limite}&statut_code=not.in.(0,50)&order=date_commande.desc&limit=500"
+    query = f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi,source&date_commande=gte.{date_limite}&statut_code=not.in.(0,45,50)&order=date_commande.desc&limit=500"
     if source_filtre == "Wizishop":
         query += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -242,7 +242,7 @@ elif page == "⭐ Best-sellers":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    query_cmd = f"select=id_wizi,source&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}"
+    query_cmd = f"select=id_wizi,source&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}"
     if source_filtre == "Wizishop":
         query_cmd += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -271,7 +271,6 @@ elif page == "⭐ Best-sellers":
             df_lignes["sku_variation"] = df_lignes["sku_variation"].fillna("")
             df_lignes["libelle_variation"] = df_lignes["libelle_variation"].fillna("—")
 
-            # ===== TABLEAU 1 — Par produit =====
             st.subheader(f"📊 Tableau 1 — Best-sellers par produit ({nb_mois} derniers mois)")
 
             grp_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku").agg(
@@ -307,8 +306,6 @@ elif page == "⭐ Best-sellers":
             st.download_button("Télécharger tableau 1", csv1, "bestsellers_produits.csv", "text/csv")
 
             st.divider()
-
-            # ===== TABLEAU 2 — Par variation =====
             st.subheader(f"🎨 Tableau 2 — Best-sellers par variation ({nb_mois} derniers mois)")
 
             skus_data = select("skus", "select=sku,stock&statut=eq.visible")
@@ -384,7 +381,7 @@ elif page == "🚨 Réapprovisionnement":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_valides = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}")
+        f"select=id_wizi&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
 
     skus_data = select("skus", "select=sku,nom,fournisseur,stock,statut&statut=eq.visible")
     produits_data = select("produits", "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur")
@@ -637,7 +634,7 @@ elif page == "🌍 Comptabilité TVA":
         annee = st.selectbox("Année", [2026, 2025, 2024, 2023], index=0)
         source_filtre = st.selectbox("Source", ["Toutes", "Wizishop", "Etsy"])
 
-    query = f"select=zone_tva,pays_facturation,pays_facturation_iso,montant_ttc,montant_ht,source&statut_code=not.in.(0,50)&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01"
+    query = f"select=zone_tva,pays_facturation,pays_facturation_iso,montant_ttc,montant_ht,source&statut_code=not.in.(0,45,50)&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01"
     if source_filtre == "Wizishop":
         query += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -687,7 +684,7 @@ elif page == "🔍 Vérification Wizishop":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_wizi = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,50)&source=eq.wizishop&date_commande=gte.{date_limite}")
+        f"select=id_wizi&statut_code=not.in.(0,45,50)&source=eq.wizishop&date_commande=gte.{date_limite}")
 
     if commandes_wizi:
         ids = [str(c["id_wizi"]) for c in commandes_wizi]
@@ -742,7 +739,7 @@ elif page == "🔍 Vérification Etsy":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_etsy = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,50)&source=eq.etsy&date_commande=gte.{date_limite}")
+        f"select=id_wizi&statut_code=not.in.(0,45,50)&source=eq.etsy&date_commande=gte.{date_limite}")
 
     if commandes_etsy:
         ids = [str(c["id_wizi"]) for c in commandes_etsy]
