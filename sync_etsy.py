@@ -1,7 +1,6 @@
 import streamlit as st
 import time
 from supabase_api import upsert, select, insert
-from etsy_api import get_all_receipts
 
 def get_zone_tva(country_iso):
     ue = {"AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR",
@@ -22,65 +21,95 @@ def get_max_etsy_commande_id():
     return 0
 
 def sync_etsy_commandes(shop_id):
+    from etsy_api import get_all_receipts
     depuis_id = get_max_etsy_commande_id()
-    depuis_date = None
-
-    if depuis_id:
-        commande = select("commandes", f"select=date_commande&id_wizi=eq.{depuis_id}&source=eq.etsy")
-        if commande:
-            from datetime import datetime
-            dt = datetime.fromisoformat(commande[0]["date_commande"].replace("Z", "+00:00"))
-            depuis_date = int(dt.timestamp())
-
-    receipts = get_all_receipts(shop_id, depuis_date=depuis_date)
+    receipts = get_all_receipts(shop_id)
     total = 0
 
     for receipt in receipts:
         id_etsy = receipt.get("receipt_id")
         if not id_etsy:
             continue
+        if depuis_id and id_etsy <= depuis_id:
+            continue
 
-        buyer = receipt.get("buyer_user_id")
-        ship = receipt.get("shipping_address") or {}
-        zone = get_zone_tva(ship.get("country_iso"))
+        country_iso = receipt.get("country_iso")
+        zone = get_zone_tva(country_iso)
 
         from datetime import datetime, timezone
         create_ts = receipt.get("create_timestamp")
         date_commande = datetime.fromtimestamp(create_ts, tz=timezone.utc).isoformat() if create_ts else None
 
+        # Montants
+        grandtotal = receipt.get("grandtotal", {})
+        subtotal = receipt.get("subtotal", {})
+        shipping = receipt.get("total_shipping_cost", {})
+        discount = receipt.get("discount_amt", {})
+        divisor = grandtotal.get("divisor", 100) or 100
+
+        montant_ttc = grandtotal.get("amount", 0) / divisor
+        montant_ht = subtotal.get("amount", 0) / divisor
+        frais_port = shipping.get("amount", 0) / (shipping.get("divisor", 100) or 100)
+        remise = discount.get("amount", 0) / (discount.get("divisor", 100) or 100)
+
+        # Statut
+        status = receipt.get("status", "")
+        if status in ["Paid", "Completed"]:
+            statut_code = 35
+        elif status == "Open":
+            statut_code = 20
+        else:
+            statut_code = 30
+
         upsert("commandes", [{
             "id_wizi": id_etsy,
-            "numero_commande": str(receipt.get("receipt_id")),
+            "numero_commande": str(id_etsy),
             "date_commande": date_commande,
-            "statut_code": 35 if receipt.get("status") == "completed" else 30,
-            "statut_texte": receipt.get("status"),
-            "devise": receipt.get("grand_total", {}).get("currency_code", "EUR"),
-            "montant_ttc": receipt.get("grand_total", {}).get("amount", 0) / 100,
-            "montant_ht": receipt.get("subtotal", {}).get("amount", 0) / 100,
-            "frais_port": receipt.get("total_shipping_cost", {}).get("amount", 0) / 100,
-            "remise": receipt.get("discount_amt", {}).get("amount", 0) / 100,
-            "id_client": buyer,
-            "prenom_livraison": ship.get("first_line"),
-            "nom_livraison": ship.get("name"),
-            "adresse_livraison": ship.get("first_line"),
-            "cp_livraison": ship.get("zip"),
-            "ville_livraison": ship.get("city"),
-            "pays_livraison": ship.get("country_iso"),
-            "pays_livraison_iso": ship.get("country_iso"),
-            "pays_facturation_iso": ship.get("country_iso"),
+            "statut_code": statut_code,
+            "statut_texte": status,
+            "devise": grandtotal.get("currency_code", "EUR"),
+            "montant_ttc": montant_ttc,
+            "montant_ht": montant_ht,
+            "frais_port": frais_port,
+            "remise": remise,
+            "id_client": receipt.get("buyer_user_id"),
+            "nom_facturation": receipt.get("name"),
+            "adresse_facturation": receipt.get("first_line"),
+            "cp_facturation": receipt.get("zip"),
+            "ville_facturation": receipt.get("city"),
+            "pays_facturation_iso": country_iso,
+            "pays_facturation": country_iso,
+            "nom_livraison": receipt.get("name"),
+            "adresse_livraison": receipt.get("first_line"),
+            "cp_livraison": receipt.get("zip"),
+            "ville_livraison": receipt.get("city"),
+            "pays_livraison_iso": country_iso,
+            "pays_livraison": country_iso,
             "zone_tva": zone,
             "source": "etsy"
         }], "id_wizi")
 
         lignes = []
         for transaction in receipt.get("transactions", []):
+            prix = transaction.get("price", {})
+            prix_div = prix.get("divisor", 100) or 100
+            prix_unitaire = prix.get("amount", 0) / prix_div
+
+            variations = transaction.get("variations", [])
+            sku_variation = None
+            libelle_variation = None
+            if variations:
+                libelle_variation = " / ".join([v.get("formatted_value", "") for v in variations])
+                sku_variation = transaction.get("sku")
+
             lignes.append({
                 "id_commande": id_etsy,
-                "sku": transaction.get("sku") or str(transaction.get("listing_id")),
+                "sku": transaction.get("sku"),
                 "nom_produit": transaction.get("title"),
                 "quantite": transaction.get("quantity"),
-                "prix_unitaire_ttc": transaction.get("price", {}).get("amount", 0) / 100,
-                "tva": transaction.get("taxable"),
+                "prix_unitaire_ttc": prix_unitaire,
+                "sku_variation": sku_variation,
+                "libelle_variation": libelle_variation,
                 "source": "etsy"
             })
 
@@ -88,7 +117,7 @@ def sync_etsy_commandes(shop_id):
             insert("lignes_commande", lignes)
 
         total += 1
-        time.sleep(0.1)
+        time.sleep(0.05)
 
     return total
 
