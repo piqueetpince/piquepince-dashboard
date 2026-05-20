@@ -102,7 +102,7 @@ if page == "🔄 Synchronisation":
                 except Exception as e:
                     st.error(f"Erreur : {e}")
 
-        st.info("💡 L'access token Etsy expire toutes les heures. Si erreur, relance la sync.")
+        st.info("💡 Le token Etsy se rafraîchit automatiquement.")
 
     logs = select("sync_log", "select=table_name,source,nb_enregistrements,statut,created_at&order=created_at.desc&limit=15")
     if logs:
@@ -203,8 +203,6 @@ elif page == "⭐ Best-sellers":
         query_cmd += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
         query_cmd += "&source=eq.etsy"
-    else:
-        query_cmd += "&source=not.is.null"
 
     commandes_valides = select("commandes", query_cmd)
 
@@ -252,46 +250,55 @@ elif page == "⭐ Best-sellers":
             df_var = df_lignes[df_lignes["sku_variation"].notna() & (df_lignes["sku_variation"] != "")].copy()
             df_novar = df_lignes[df_lignes["sku_variation"].isna() | (df_lignes["sku_variation"] == "")].copy()
 
-            bs_variation = pd.concat([
-                df_var.groupby(["sku_variation", "nom_affiche", "libelle_variation", "categorie"]).agg(
-                    total_vendu=("quantite_variation" if "quantite_variation" in df_var.columns else "quantite", "sum"),
-                    ca_total=("ca", "sum"),
-                    nb_commandes=("id_commande", "nunique")
-                ).reset_index().rename(columns={"sku_variation": "sku_var", "libelle_variation": "variation"}),
-                df_novar.groupby(["sku", "nom_affiche", "categorie"]).agg(
-                    total_vendu=("quantite", "sum"),
-                    ca_total=("ca", "sum"),
-                    nb_commandes=("id_commande", "nunique")
-                ).reset_index().rename(columns={"sku": "sku_var"}).assign(variation="—")
-            ]).sort_values("total_vendu", ascending=False).head(100)
-
             skus_data = select("skus", "select=sku,stock&statut=eq.visible")
             sku_stock = {s["sku"]: s["stock"] for s in skus_data} if skus_data else {}
 
-            bs_variation["stock"] = bs_variation["sku_var"].map(lambda x: sku_stock.get(x, 0))
-            bs_variation["moy_mois"] = (bs_variation["total_vendu"] / nb_mois).round(1)
-            bs_variation["mois_stock"] = bs_variation.apply(
-                lambda r: round(r["stock"] / r["moy_mois"], 1) if r["moy_mois"] > 0 else 99, axis=1)
+            rows_var = []
+            if not df_var.empty:
+                for (sku_var, nom, variation, cat), grp in df_var.groupby(["sku_variation", "nom_affiche", "libelle_variation", "categorie"]):
+                    total_vendu = grp["quantite"].sum()
+                    ca_total = grp["ca"].sum()
+                    nb_cmd = grp["id_commande"].nunique()
+                    stock = sku_stock.get(sku_var, 0)
+                    moy_mois = round(total_vendu / nb_mois, 1)
+                    mois_stock = round(stock / moy_mois, 1) if moy_mois > 0 else 99
+                    rows_var.append({
+                        "SKU": sku_var, "Produit": nom, "Variation": variation,
+                        "Catégorie": cat, "Stock": stock, "Unités vendues": total_vendu,
+                        "Moy/mois": moy_mois, "Mois de stock": mois_stock,
+                        "CA (€)": f"{ca_total:.2f}", "Nb commandes": nb_cmd
+                    })
 
-            def alerte(mois):
-                if mois <= 3:
-                    return "🔴 Commander"
-                elif mois <= 5:
-                    return "🟡 Surveiller"
-                else:
-                    return "🟢 OK"
+            if not df_novar.empty:
+                for (sku, nom, cat), grp in df_novar.groupby(["sku", "nom_affiche", "categorie"]):
+                    total_vendu = grp["quantite"].sum()
+                    ca_total = grp["ca"].sum()
+                    nb_cmd = grp["id_commande"].nunique()
+                    stock = sku_stock.get(sku, 0)
+                    moy_mois = round(total_vendu / nb_mois, 1)
+                    mois_stock = round(stock / moy_mois, 1) if moy_mois > 0 else 99
+                    rows_var.append({
+                        "SKU": sku, "Produit": nom, "Variation": "—",
+                        "Catégorie": cat, "Stock": stock, "Unités vendues": total_vendu,
+                        "Moy/mois": moy_mois, "Mois de stock": mois_stock,
+                        "CA (€)": f"{ca_total:.2f}", "Nb commandes": nb_cmd
+                    })
 
-            bs_variation["alerte"] = bs_variation["mois_stock"].apply(alerte)
+            if rows_var:
+                df_var_final = pd.DataFrame(rows_var).sort_values("Unités vendues", ascending=False)
 
-            cols_show = ["sku_var", "nom_affiche", "variation", "categorie", "stock",
-                        "total_vendu", "moy_mois", "mois_stock", "alerte"]
-            cols_show = [c for c in cols_show if c in bs_variation.columns]
-            df_show = bs_variation[cols_show].copy()
-            df_show.columns = ["SKU", "Produit", "Variation", "Catégorie", "Stock",
-                               "Unités vendues", "Moy/mois", "Mois de stock", "Alerte"][:len(cols_show)]
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
-            csv2 = df_show.to_csv(index=False).encode("utf-8")
-            st.download_button("Télécharger tableau 2", csv2, "bestsellers_variations.csv", "text/csv")
+                def alerte(mois):
+                    if mois <= 3:
+                        return "🔴 Commander"
+                    elif mois <= 5:
+                        return "🟡 Surveiller"
+                    else:
+                        return "🟢 OK"
+
+                df_var_final["Alerte"] = df_var_final["Mois de stock"].apply(alerte)
+                st.dataframe(df_var_final, use_container_width=True, hide_index=True)
+                csv2 = df_var_final.to_csv(index=False).encode("utf-8")
+                st.download_button("Télécharger tableau 2", csv2, "bestsellers_variations.csv", "text/csv")
         else:
             st.info("Aucune ligne de commande trouvée.")
     else:
