@@ -240,7 +240,7 @@ elif page == "⭐ Best-sellers":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    query_cmd = f"select=id_wizi&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}"
+    query_cmd = f"select=id_wizi,source&statut_code=not.in.(0,50)&date_commande=gte.{date_limite}"
     if source_filtre == "Wizishop":
         query_cmd += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -251,6 +251,7 @@ elif page == "⭐ Best-sellers":
     if commandes_valides:
         ids_valides = [str(c["id_wizi"]) for c in commandes_valides]
         ids_str = ",".join(ids_valides)
+        source_map = {str(c["id_wizi"]): c["source"] for c in commandes_valides}
 
         lignes = select("lignes_commande",
             f"select=sku,sku_variation,libelle_variation,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
@@ -264,6 +265,7 @@ elif page == "⭐ Best-sellers":
             df_lignes["quantite"] = pd.to_numeric(df_lignes["quantite"], errors="coerce").fillna(0)
             df_lignes["prix_unitaire_ttc"] = pd.to_numeric(df_lignes["prix_unitaire_ttc"], errors="coerce").fillna(0)
             df_lignes["ca"] = df_lignes["quantite"] * df_lignes["prix_unitaire_ttc"]
+            df_lignes["source"] = df_lignes["id_commande"].astype(str).map(source_map)
 
             df_lignes["nom_produit_enrichi"] = df_lignes["sku"].map(
                 lambda x: prod_map.get(x, {}).get("nom", "") or "")
@@ -272,21 +274,43 @@ elif page == "⭐ Best-sellers":
             df_lignes["nom_affiche"] = df_lignes.apply(
                 lambda r: r["nom_produit_enrichi"] if r["nom_produit_enrichi"] else r["nom_produit"], axis=1)
 
+            # Tableau 1 — Par produit
             st.subheader(f"📊 Tableau 1 — Best-sellers par produit ({nb_mois} derniers mois)")
-            bs_produit = df_lignes.groupby(["sku", "nom_affiche", "categorie"]).agg(
+
+            bs_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby(["sku", "nom_affiche", "categorie"]).agg(
+                vendu_wizi=("quantite", "sum")
+            ).reset_index()
+
+            bs_etsy = df_lignes[df_lignes["source"] == "etsy"].groupby(["sku", "nom_affiche", "categorie"]).agg(
+                vendu_etsy=("quantite", "sum")
+            ).reset_index()
+
+            bs_total = df_lignes.groupby(["sku", "nom_affiche", "categorie"]).agg(
                 total_vendu=("quantite", "sum"),
                 ca_total=("ca", "sum"),
                 nb_commandes=("id_commande", "nunique")
-            ).reset_index().sort_values("total_vendu", ascending=False).head(100)
+            ).reset_index()
 
+            bs_produit = bs_total.merge(bs_wizi[["sku", "vendu_wizi"]], on="sku", how="left")
+            bs_produit = bs_produit.merge(bs_etsy[["sku", "vendu_etsy"]], on="sku", how="left")
+            bs_produit["vendu_wizi"] = bs_produit["vendu_wizi"].fillna(0).astype(int)
+            bs_produit["vendu_etsy"] = bs_produit["vendu_etsy"].fillna(0).astype(int)
             bs_produit["moy_mois"] = (bs_produit["total_vendu"] / nb_mois).round(1)
-            bs_produit.columns = ["SKU", "Produit", "Catégorie", "Unités vendues", "CA (€)", "Nb commandes", "Moy/mois"]
+            bs_produit = bs_produit.sort_values("total_vendu", ascending=False).head(100)
+
+            bs_produit.columns = ["SKU", "Produit", "Catégorie", "Total vendu",
+                                  "CA (€)", "Nb commandes", "Wizishop", "Etsy", "Moy/mois"]
             bs_produit["CA (€)"] = bs_produit["CA (€)"].apply(lambda x: f"{x:.2f}")
+            bs_produit = bs_produit[["SKU", "Produit", "Catégorie", "Wizishop",
+                                     "Etsy", "Total vendu", "Moy/mois", "CA (€)", "Nb commandes"]]
+
             st.dataframe(bs_produit, use_container_width=True, hide_index=True)
             csv1 = bs_produit.to_csv(index=False).encode("utf-8")
             st.download_button("Télécharger tableau 1", csv1, "bestsellers_produits.csv", "text/csv")
 
             st.divider()
+
+            # Tableau 2 — Par variation
             st.subheader(f"🎨 Tableau 2 — Best-sellers par variation ({nb_mois} derniers mois)")
 
             df_var = df_lignes[df_lignes["sku_variation"].notna() & (df_lignes["sku_variation"] != "")].copy()
@@ -296,18 +320,24 @@ elif page == "⭐ Best-sellers":
             sku_stock = {s["sku"]: s["stock"] for s in skus_data} if skus_data else {}
 
             rows_var = []
+
             if not df_var.empty:
-                for (sku_var, nom, variation, cat), grp in df_var.groupby(["sku_variation", "nom_affiche", "libelle_variation", "categorie"]):
+                for (sku_var, nom, variation, cat), grp in df_var.groupby(
+                        ["sku_variation", "nom_affiche", "libelle_variation", "categorie"]):
                     total_vendu = grp["quantite"].sum()
                     ca_total = grp["ca"].sum()
                     nb_cmd = grp["id_commande"].nunique()
+                    vendu_wizi = grp[grp["source"] == "wizishop"]["quantite"].sum()
+                    vendu_etsy = grp[grp["source"] == "etsy"]["quantite"].sum()
                     stock = sku_stock.get(sku_var, 0)
                     moy_mois = round(total_vendu / nb_mois, 1)
                     mois_stock = round(stock / moy_mois, 1) if moy_mois > 0 else 99
                     rows_var.append({
                         "SKU": sku_var, "Produit": nom, "Variation": variation,
-                        "Catégorie": cat, "Stock": stock, "Unités vendues": total_vendu,
-                        "Moy/mois": moy_mois, "Mois de stock": mois_stock,
+                        "Catégorie": cat, "Wizishop": int(vendu_wizi),
+                        "Etsy": int(vendu_etsy), "Total vendu": int(total_vendu),
+                        "Stock": stock, "Moy/mois": moy_mois,
+                        "Mois de stock": mois_stock,
                         "CA (€)": f"{ca_total:.2f}", "Nb commandes": nb_cmd
                     })
 
@@ -316,18 +346,22 @@ elif page == "⭐ Best-sellers":
                     total_vendu = grp["quantite"].sum()
                     ca_total = grp["ca"].sum()
                     nb_cmd = grp["id_commande"].nunique()
+                    vendu_wizi = grp[grp["source"] == "wizishop"]["quantite"].sum()
+                    vendu_etsy = grp[grp["source"] == "etsy"]["quantite"].sum()
                     stock = sku_stock.get(sku, 0)
                     moy_mois = round(total_vendu / nb_mois, 1)
                     mois_stock = round(stock / moy_mois, 1) if moy_mois > 0 else 99
                     rows_var.append({
                         "SKU": sku, "Produit": nom, "Variation": "—",
-                        "Catégorie": cat, "Stock": stock, "Unités vendues": total_vendu,
-                        "Moy/mois": moy_mois, "Mois de stock": mois_stock,
+                        "Catégorie": cat, "Wizishop": int(vendu_wizi),
+                        "Etsy": int(vendu_etsy), "Total vendu": int(total_vendu),
+                        "Stock": stock, "Moy/mois": moy_mois,
+                        "Mois de stock": mois_stock,
                         "CA (€)": f"{ca_total:.2f}", "Nb commandes": nb_cmd
                     })
 
             if rows_var:
-                df_var_final = pd.DataFrame(rows_var).sort_values("Unités vendues", ascending=False)
+                df_var_final = pd.DataFrame(rows_var).sort_values("Total vendu", ascending=False)
 
                 def alerte(mois):
                     if mois <= 3:
