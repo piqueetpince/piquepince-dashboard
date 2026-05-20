@@ -51,17 +51,19 @@ def sync_etsy_commandes(shop_id):
         frais_port = shipping.get("amount", 0) / (shipping.get("divisor", 100) or 100)
         remise = discount.get("amount", 0) / (discount.get("divisor", 100) or 100)
 
-        status = receipt.get("status", "")
-        if status == "Completed":
-            statut_code = 35
-        elif status == "Paid":
-            statut_code = 30
-        elif status in ["Canceled", "Cancelled"]:
-            statut_code = 50
-        elif status == "Open":
-            statut_code = 20
-        else:
-            statut_code = 30
+       status = receipt.get("status", "")
+if status == "Completed":
+    statut_code = 35
+elif status == "Paid":
+    statut_code = 30
+elif status in ["Canceled", "Cancelled"]:
+    statut_code = 50
+elif status in ["Fully refunded", "Partially refunded"]:
+    statut_code = 45
+elif status == "Open":
+    statut_code = 20
+else:
+    statut_code = 30
 
         upsert("commandes", [{
             "id_wizi": id_etsy,
