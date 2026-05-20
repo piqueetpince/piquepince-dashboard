@@ -54,12 +54,16 @@ def sync_etsy_commandes(shop_id):
 
         # Statut
         status = receipt.get("status", "")
-        if status in ["Paid", "Completed"]:
-            statut_code = 35
-        elif status == "Open":
-            statut_code = 20
-        else:
-            statut_code = 30
+if status == "Completed":
+    statut_code = 35
+elif status == "Paid":
+    statut_code = 30
+elif status in ["Canceled", "Cancelled"]:
+    statut_code = 50
+elif status == "Open":
+    statut_code = 20
+else:
+    statut_code = 30
 
         upsert("commandes", [{
             "id_wizi": id_etsy,
