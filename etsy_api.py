@@ -3,14 +3,7 @@ import streamlit as st
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
 
-def get_headers():
-    return {
-        "x-api-key": st.secrets["ETSY_API_KEY"],
-        "Authorization": f"Bearer {st.secrets['ETSY_ACCESS_TOKEN']}",
-        "Content-Type": "application/json"
-    }
-
-def refresh_token():
+def refresh_access_token():
     r = requests.post(
         "https://api.etsy.com/v3/public/oauth/token",
         data={
@@ -20,46 +13,54 @@ def refresh_token():
         }
     )
     if r.status_code == 200:
-        return r.json().get("access_token")
+        data = r.json()
+        st.session_state["etsy_access_token"] = data.get("access_token")
+        st.session_state["etsy_refresh_token"] = data.get("refresh_token")
+        return data.get("access_token")
     return None
 
-def get_shop_id():
-    r = requests.get(
-        f"{ETSY_API_URL}/application/shops",
-        headers=get_headers(),
-        params={"shop_name": "PiqueetPince"}
-    )
-    if r.status_code == 200:
-        results = r.json().get("results", [])
-        if results:
-            return results[0].get("shop_id")
+def get_access_token():
+    if "etsy_access_token" in st.session_state:
+        return st.session_state["etsy_access_token"]
+    return st.secrets.get("ETSY_ACCESS_TOKEN")
 
-    r2 = requests.get(
-        f"{ETSY_API_URL}/application/users/me",
-        headers=get_headers()
-    )
-    if r2.status_code == 200:
-        user_id = r2.json().get("user_id")
+def get_headers():
+    return {
+        "x-api-key": st.secrets["ETSY_API_KEY"],
+        "Authorization": f"Bearer {get_access_token()}",
+        "Content-Type": "application/json"
+    }
+
+def api_get(url, params=None):
+    r = requests.get(url, headers=get_headers(), params=params)
+    if r.status_code == 401:
+        new_token = refresh_access_token()
+        if new_token:
+            r = requests.get(url, headers=get_headers(), params=params)
+    return r
+
+def get_shop_id():
+    r = api_get(f"{ETSY_API_URL}/application/users/me")
+    if r.status_code == 200:
+        user_id = r.json().get("user_id")
         if user_id:
-            r3 = requests.get(
-                f"{ETSY_API_URL}/application/users/{user_id}/shops",
-                headers=get_headers()
-            )
-            if r3.status_code == 200:
-                results = r3.json().get("results", [])
+            r2 = api_get(f"{ETSY_API_URL}/application/users/{user_id}/shops")
+            if r2.status_code == 200:
+                results = r2.json().get("results", [])
                 if results:
                     return results[0].get("shop_id")
+    r3 = api_get(f"{ETSY_API_URL}/application/shops",
+                 params={"shop_name": "PiqueetPince"})
+    if r3.status_code == 200:
+        results = r3.json().get("results", [])
+        if results:
+            return results[0].get("shop_id")
     return None
 
 def get_receipts(shop_id, limit=100, offset=0):
-    r = requests.get(
+    r = api_get(
         f"{ETSY_API_URL}/application/shops/{shop_id}/receipts",
-        headers=get_headers(),
-        params={
-            "limit": limit,
-            "offset": offset,
-            "was_paid": "true"
-        }
+        params={"limit": limit, "offset": offset, "was_paid": "true"}
     )
     if r.status_code == 200:
         return r.json()
