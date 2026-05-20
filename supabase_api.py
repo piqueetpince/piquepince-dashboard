@@ -12,16 +12,41 @@ def get_headers():
 def get_url(table):
     return f"{st.secrets['SUPABASE_URL']}/rest/v1/{table}"
 
-def select(table, query="", limit=10000):
+def select(table, query="", limit=None):
     headers = get_headers()
-    if query:
-        url = f"{get_url(table)}?{query}&limit={limit}"
-    else:
-        url = f"{get_url(table)}?limit={limit}"
-    r = requests.get(url, headers=headers)
-    if r.status_code in [200, 206]:
-        return r.json()
-    return []
+    all_results = []
+    page_size = 1000
+    offset = 0
+
+    while True:
+        range_end = offset + page_size - 1
+        req_headers = {**headers, "Range-Unit": "items", "Range": f"{offset}-{range_end}"}
+        if query:
+            url = f"{get_url(table)}?{query}&limit={page_size}&offset={offset}"
+        else:
+            url = f"{get_url(table)}?limit={page_size}&offset={offset}"
+
+        r = requests.get(url, headers=req_headers)
+
+        if r.status_code not in [200, 206]:
+            break
+
+        data = r.json()
+        if not data:
+            break
+
+        all_results.extend(data)
+
+        if limit and len(all_results) >= limit:
+            all_results = all_results[:limit]
+            break
+
+        if len(data) < page_size:
+            break
+
+        offset += page_size
+
+    return all_results
 
 def upsert(table, data, on_conflict):
     headers = get_headers()
