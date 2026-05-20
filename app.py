@@ -290,9 +290,9 @@ elif page == "⭐ Best-sellers":
             bs_produit["total_vendu"] = bs_produit["vendu_wizi"] + bs_produit["vendu_etsy"]
             bs_produit["moy_mois"] = (bs_produit["total_vendu"] / nb_mois).round(1)
             bs_produit["nom"] = bs_produit["sku"].map(
-                lambda x: prod_map.get(x, {}).get("nom", "") or x)
+                lambda x: prod_map.get(str(x), {}).get("nom", "") or str(x))
             bs_produit["categorie"] = bs_produit["sku"].map(
-                lambda x: prod_map.get(x, {}).get("nom_categorie", "") or "")
+                lambda x: prod_map.get(str(x), {}).get("nom_categorie", "") or "")
 
             bs_produit = bs_produit.sort_values("total_vendu", ascending=False).head(100)
             bs_produit = bs_produit[["sku", "nom", "categorie", "vendu_wizi",
@@ -314,7 +314,6 @@ elif page == "⭐ Best-sellers":
             skus_data = select("skus", "select=sku,stock&statut=eq.visible")
             sku_stock = {s["sku"]: int(s["stock"] or 0) for s in skus_data} if skus_data else {}
 
-            # Utiliser sku_variation si disponible, sinon sku
             df_lignes["sku_effectif"] = df_lignes.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
 
@@ -323,11 +322,11 @@ elif page == "⭐ Best-sellers":
                 if not sku_eff:
                     continue
                 sku_parent = grp["sku"].iloc[0]
-                nom = prod_map.get(sku_parent, {}).get("nom", "") or \
-                      prod_map.get(sku_eff, {}).get("nom", "") or \
-                      grp["nom_produit"].iloc[0] or sku_eff
-                cat = prod_map.get(sku_parent, {}).get("nom_categorie", "") or \
-                      prod_map.get(sku_eff, {}).get("nom_categorie", "") or ""
+                nom = prod_map.get(str(sku_parent), {}).get("nom", "") or \
+                      prod_map.get(str(sku_eff), {}).get("nom", "") or \
+                      grp["nom_produit"].iloc[0] or str(sku_eff)
+                cat = prod_map.get(str(sku_parent), {}).get("nom_categorie", "") or \
+                      prod_map.get(str(sku_eff), {}).get("nom_categorie", "") or ""
                 variation = grp["libelle_variation"].iloc[0] if grp["libelle_variation"].iloc[0] != "—" else "—"
 
                 total_vendu = int(grp["quantite"].sum())
@@ -709,11 +708,11 @@ elif page == "🔍 Vérification Wizishop":
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
             df["nom_wizi"] = df["sku"].map(
-                lambda x: prod_map.get(x, {}).get("nom", "") or "")
+                lambda x: prod_map.get(str(x), {}).get("nom", "") if x else "")
             df["nom_affiche"] = df.apply(
                 lambda r: r["nom_wizi"] if r["nom_wizi"] else r["nom_produit"], axis=1)
             df["categorie"] = df["sku"].map(
-                lambda x: prod_map.get(x, {}).get("nom_categorie", "") or "")
+                lambda x: prod_map.get(str(x), {}).get("nom_categorie", "") if x else "")
 
             result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
                 unites_vendues=("quantite", "sum"),
@@ -753,7 +752,6 @@ elif page == "🔍 Vérification Etsy":
             f"select=sku,sku_variation,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
             limit=50000)
 
-        produits_etsy = select("produits_etsy", "select=listing_id,titre")
         produits_wizi = select("produits", "select=sku,nom,nom_categorie")
         prod_wizi_map = {p["sku"]: p for p in produits_wizi} if produits_wizi else {}
 
@@ -765,12 +763,11 @@ elif page == "🔍 Vérification Etsy":
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
             df["nom_wizi"] = df["sku_effectif"].map(
-                lambda x: prod_wizi_map.get(x, {}).get("nom", "") or
-                          prod_wizi_map.get(x.split("_")[0] if x else "", {}).get("nom", "") or "")
+                lambda x: prod_wizi_map.get(str(x), {}).get("nom", "") if x else "")
             df["nom_affiche"] = df.apply(
                 lambda r: r["nom_wizi"] if r["nom_wizi"] else r["nom_produit"], axis=1)
             df["categorie"] = df["sku_effectif"].map(
-                lambda x: prod_wizi_map.get(x, {}).get("nom_categorie", "") or "")
+                lambda x: prod_wizi_map.get(str(x), {}).get("nom_categorie", "") if x else "")
 
             result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
                 unites_vendues=("quantite", "sum"),
