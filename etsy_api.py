@@ -26,7 +26,7 @@ def get_access_token():
 
 def get_headers():
     return {
-        "x-api-key": st.secrets["ETSY_API_KEY"],
+        "x-api-key": st.secrets["ETSY_SHARED_SECRET"],
         "Authorization": f"Bearer {get_access_token()}",
         "Content-Type": "application/json"
     }
