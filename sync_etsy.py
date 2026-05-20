@@ -40,7 +40,6 @@ def sync_etsy_commandes(shop_id):
         create_ts = receipt.get("create_timestamp")
         date_commande = datetime.fromtimestamp(create_ts, tz=timezone.utc).isoformat() if create_ts else None
 
-        # Montants
         grandtotal = receipt.get("grandtotal", {})
         subtotal = receipt.get("subtotal", {})
         shipping = receipt.get("total_shipping_cost", {})
@@ -52,18 +51,17 @@ def sync_etsy_commandes(shop_id):
         frais_port = shipping.get("amount", 0) / (shipping.get("divisor", 100) or 100)
         remise = discount.get("amount", 0) / (discount.get("divisor", 100) or 100)
 
-        # Statut
         status = receipt.get("status", "")
-if status == "Completed":
-    statut_code = 35
-elif status == "Paid":
-    statut_code = 30
-elif status in ["Canceled", "Cancelled"]:
-    statut_code = 50
-elif status == "Open":
-    statut_code = 20
-else:
-    statut_code = 30
+        if status == "Completed":
+            statut_code = 35
+        elif status == "Paid":
+            statut_code = 30
+        elif status in ["Canceled", "Cancelled"]:
+            statut_code = 50
+        elif status == "Open":
+            statut_code = 20
+        else:
+            statut_code = 30
 
         upsert("commandes", [{
             "id_wizi": id_etsy,
@@ -126,7 +124,6 @@ else:
     return total
 
 def log_sync_etsy(table, nb, statut, message, duree):
-    from supabase_api import upsert
     upsert("sync_log", [{
         "table_name": table,
         "source": "etsy",
