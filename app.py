@@ -1,12 +1,13 @@
 import streamlit as st
 import pandas as pd
-from supabase_api import select
+from supabase_api import select, upsert, insert
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_produits, log_sync)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 import time
+from datetime import datetime, timezone
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -282,11 +283,9 @@ elif page == "⭐ Best-sellers":
             df_lignes["sku_variation"] = df_lignes["sku_variation"].fillna("")
             df_lignes["libelle_variation"] = df_lignes["libelle_variation"].fillna("—")
 
-            # Noms depuis les lignes de commande Wizishop en priorité
             nom_par_sku_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku")["nom_produit"].first()
             nom_par_sku_etsy = df_lignes[df_lignes["source"] == "etsy"].groupby("sku")["nom_produit"].first()
 
-            # ===== TABLEAU 1 — Par produit =====
             st.subheader(f"📊 Tableau 1 — Best-sellers par produit ({nb_mois} derniers mois)")
 
             grp_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku").agg(
@@ -304,7 +303,6 @@ elif page == "⭐ Best-sellers":
             bs_produit["vendu_etsy"] = bs_produit["vendu_etsy"].fillna(0).astype(int)
             bs_produit["total_vendu"] = bs_produit["vendu_wizi"] + bs_produit["vendu_etsy"]
             bs_produit["moy_mois"] = (bs_produit["total_vendu"] / nb_mois).round(1)
-
             bs_produit["nom"] = bs_produit["sku"].map(
                 lambda x: prod_map.get(str(x), {}).get("nom", "") or
                           nom_par_sku_wizi.get(x, "") or
@@ -325,8 +323,6 @@ elif page == "⭐ Best-sellers":
             st.download_button("Télécharger tableau 1", csv1, "bestsellers_produits.csv", "text/csv")
 
             st.divider()
-
-            # ===== TABLEAU 2 — Par variation =====
             st.subheader(f"🎨 Tableau 2 — Best-sellers par variation ({nb_mois} derniers mois)")
 
             skus_data = select("skus", "select=sku,stock&statut=eq.visible")
@@ -340,11 +336,11 @@ elif page == "⭐ Best-sellers":
                 if not sku_eff:
                     continue
                 sku_parent = grp["sku"].iloc[0]
+                grp_wizi_rows = grp[grp["source"] == "wizishop"]
                 nom = prod_map.get(str(sku_parent), {}).get("nom", "") or \
                       prod_map.get(str(sku_eff), {}).get("nom", "") or \
-                      grp[grp["source"] == "wizishop"]["nom_produit"].iloc[0] \
-                      if len(grp[grp["source"] == "wizishop"]) > 0 \
-                      else grp["nom_produit"].iloc[0] or str(sku_eff)
+                      (grp_wizi_rows["nom_produit"].iloc[0] if len(grp_wizi_rows) > 0
+                       else grp["nom_produit"].iloc[0]) or str(sku_eff)
                 cat = prod_map.get(str(sku_parent), {}).get("nom_categorie", "") or \
                       prod_map.get(str(sku_eff), {}).get("nom_categorie", "") or ""
                 variation = grp["libelle_variation"].iloc[0] if grp["libelle_variation"].iloc[0] != "—" else "—"
@@ -399,14 +395,19 @@ elif page == "🚨 Réapprovisionnement":
             "🔴 + 🟡 Surveiller"
         ])
 
-    st.subheader("🚨 Réapprovisionnement — Tous les produits")
+    st.subheader("🚨 Réapprovisionnement")
     st.info(f"Calcul basé sur les ventes des {nb_mois} derniers mois. Délai fournisseur : 2 mois.")
+
+    # Récupérer les SKUs déjà en commande
+    en_commande = select("commandes_fournisseur",
+        "select=sku,nom_produit,fournisseur,date_commande,quantite_commandee,notes,id&statut=eq.en_commande")
+    skus_en_commande = {c["sku"] for c in en_commande} if en_commande else set()
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_valides = select("commandes",
         f"select=id_wizi&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
 
-    skus_data = select("skus", "select=sku,nom,fournisseur,stock,statut&statut=eq.visible")
+    skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
     produits_data = select("produits", "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur")
     prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
 
@@ -415,7 +416,7 @@ elif page == "🚨 Réapprovisionnement":
         ids_str = ",".join(ids_valides)
 
         lignes = select("lignes_commande",
-            f"select=sku,sku_variation,quantite,id_commande&id_commande=in.({ids_str})",
+            f"select=sku,sku_variation,quantite,nom_produit,id_commande&id_commande=in.({ids_str})",
             limit=50000)
 
         # Noms depuis lignes de commande
@@ -426,6 +427,7 @@ elif page == "🚨 Réapprovisionnement":
                 if sku and sku not in nom_par_sku:
                     nom_par_sku[sku] = ligne.get("nom_produit", "")
 
+        # Ventes par SKU effectif (variation si dispo, sinon parent)
         ventes_par_sku = {}
         if lignes:
             for ligne in lignes:
@@ -436,10 +438,12 @@ elif page == "🚨 Réapprovisionnement":
         rows = []
         for sku_item in skus_data:
             sku = sku_item.get("sku")
+            if sku in skus_en_commande:
+                continue  # Exclure les SKUs déjà en commande
             stock = int(sku_item.get("stock") or 0)
             prod = prod_map.get(sku, {})
-            nom = prod.get("nom") or sku_item.get("nom") or nom_par_sku.get(sku, "") or sku
-            fournisseur = prod.get("fournisseur") or sku_item.get("fournisseur") or ""
+            nom = prod.get("nom") or nom_par_sku.get(sku, "") or sku
+            fournisseur = prod.get("fournisseur") or ""
             ref_fourn = prod.get("reference_fournisseur") or ""
             categorie = prod.get("nom_categorie") or ""
             ventes = ventes_par_sku.get(sku, 0)
@@ -480,8 +484,35 @@ elif page == "🚨 Réapprovisionnement":
         with col3:
             st.metric("🟢 OK", len(df_reap[df_reap["Alerte"] == "🟢 OK"]))
 
-        st.dataframe(df_reap, use_container_width=True, hide_index=True)
+        # Tableau avec bouton "Marquer en commande"
+        st.divider()
+        st.subheader("📋 Produits à réapprovisionner")
 
+        for idx, row in df_reap.iterrows():
+            col_info, col_stock, col_alerte, col_btn = st.columns([4, 2, 2, 2])
+            with col_info:
+                st.write(f"**{row['Produit']}** ({row['SKU']})")
+                st.caption(f"{row['Catégorie']} — {row['Fournisseur']}")
+            with col_stock:
+                st.write(f"Stock : **{row['Stock']}**")
+                st.write(f"Ventes/mois : **{row['Ventes/mois']}**")
+                st.write(f"Mois de stock : **{row['Mois de stock']}**")
+            with col_alerte:
+                st.write(row['Alerte'])
+            with col_btn:
+                if st.button("📦 Commander", key=f"cmd_{row['SKU']}"):
+                    insert("commandes_fournisseur", [{
+                        "sku": row["SKU"],
+                        "nom_produit": row["Produit"],
+                        "fournisseur": row["Fournisseur"],
+                        "date_commande": datetime.now(timezone.utc).isoformat(),
+                        "statut": "en_commande"
+                    }])
+                    st.success(f"✓ {row['SKU']} marqué en commande !")
+                    st.rerun()
+            st.divider()
+
+        # Export CSV
         st.divider()
         st.subheader("Export par fournisseur")
         fournisseurs = df_reap["Fournisseur"].dropna().unique()
@@ -503,10 +534,33 @@ elif page == "🚨 Réapprovisionnement":
                 f"commande_{fournisseur_export.replace(' ', '_')}.csv",
                 "text/csv"
             )
-        else:
-            st.info("Aucun produit à commander pour ce fournisseur.")
+
+    # ===== TABLEAU PRODUITS EN COMMANDE =====
+    st.divider()
+    st.subheader("📦 Produits en commande")
+
+    if en_commande:
+        df_cmd = pd.DataFrame(en_commande)
+        df_cmd["date_commande"] = pd.to_datetime(df_cmd["date_commande"]).dt.strftime("%d/%m/%Y")
+
+        for idx, row in df_cmd.iterrows():
+            col_info, col_date, col_btn = st.columns([5, 3, 2])
+            with col_info:
+                st.write(f"**{row['nom_produit']}** ({row['sku']})")
+                st.caption(f"Fournisseur : {row['fournisseur']}")
+            with col_date:
+                st.write(f"Commandé le : **{row['date_commande']}**")
+            with col_btn:
+                if st.button("✅ Reçu", key=f"recu_{row['id']}"):
+                    upsert("commandes_fournisseur", [{
+                        "id": row["id"],
+                        "statut": "recu"
+                    }], "id")
+                    st.success(f"✓ {row['sku']} marqué comme reçu !")
+                    st.rerun()
+            st.divider()
     else:
-        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+        st.info("Aucun produit en commande actuellement.")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
