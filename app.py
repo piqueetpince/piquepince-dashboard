@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase_api import select
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
-                           sync_skus, sync_commandes, log_sync)
+                           sync_skus, sync_commandes, sync_produits, log_sync)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
@@ -87,10 +87,21 @@ if page == "🔄 Synchronisation":
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 
+            if st.button("4️⃣ Sync Produits Wizishop (lent ~2h)", use_container_width=True):
+                with st.spinner("Synchronisation produits... (très long, ne pas fermer la page)"):
+                    debut = time.time()
+                    try:
+                        nb = sync_produits(token_cached, shop_id_cached)
+                        duree = time.time() - debut
+                        log_sync("produits", "wizishop", nb, "success", f"{nb} enregistrements", duree)
+                        st.success(f"✓ {nb} produits en {duree:.1f}s")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
     with col2:
         st.subheader("🏷️ Etsy")
 
-        if st.button("4️⃣ Sync Commandes Etsy", use_container_width=True):
+        if st.button("5️⃣ Sync Commandes Etsy", use_container_width=True):
             with st.spinner("Connexion à Etsy et synchronisation..."):
                 debut = time.time()
                 try:
@@ -105,7 +116,7 @@ if page == "🔄 Synchronisation":
                 except Exception as e:
                     st.error(f"Erreur : {e}")
 
-        if st.button("5️⃣ Sync Produits Etsy", use_container_width=True):
+        if st.button("6️⃣ Sync Produits Etsy", use_container_width=True):
             with st.spinner("Synchronisation produits Etsy..."):
                 debut = time.time()
                 try:
@@ -271,6 +282,11 @@ elif page == "⭐ Best-sellers":
             df_lignes["sku_variation"] = df_lignes["sku_variation"].fillna("")
             df_lignes["libelle_variation"] = df_lignes["libelle_variation"].fillna("—")
 
+            # Noms depuis les lignes de commande Wizishop en priorité
+            nom_par_sku_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku")["nom_produit"].first()
+            nom_par_sku_etsy = df_lignes[df_lignes["source"] == "etsy"].groupby("sku")["nom_produit"].first()
+
+            # ===== TABLEAU 1 — Par produit =====
             st.subheader(f"📊 Tableau 1 — Best-sellers par produit ({nb_mois} derniers mois)")
 
             grp_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku").agg(
@@ -288,8 +304,11 @@ elif page == "⭐ Best-sellers":
             bs_produit["vendu_etsy"] = bs_produit["vendu_etsy"].fillna(0).astype(int)
             bs_produit["total_vendu"] = bs_produit["vendu_wizi"] + bs_produit["vendu_etsy"]
             bs_produit["moy_mois"] = (bs_produit["total_vendu"] / nb_mois).round(1)
+
             bs_produit["nom"] = bs_produit["sku"].map(
-                lambda x: prod_map.get(str(x), {}).get("nom", "") or str(x))
+                lambda x: prod_map.get(str(x), {}).get("nom", "") or
+                          nom_par_sku_wizi.get(x, "") or
+                          nom_par_sku_etsy.get(x, "") or str(x))
             bs_produit["categorie"] = bs_produit["sku"].map(
                 lambda x: prod_map.get(str(x), {}).get("nom_categorie", "") or "")
 
@@ -306,6 +325,8 @@ elif page == "⭐ Best-sellers":
             st.download_button("Télécharger tableau 1", csv1, "bestsellers_produits.csv", "text/csv")
 
             st.divider()
+
+            # ===== TABLEAU 2 — Par variation =====
             st.subheader(f"🎨 Tableau 2 — Best-sellers par variation ({nb_mois} derniers mois)")
 
             skus_data = select("skus", "select=sku,stock&statut=eq.visible")
@@ -321,7 +342,9 @@ elif page == "⭐ Best-sellers":
                 sku_parent = grp["sku"].iloc[0]
                 nom = prod_map.get(str(sku_parent), {}).get("nom", "") or \
                       prod_map.get(str(sku_eff), {}).get("nom", "") or \
-                      grp["nom_produit"].iloc[0] or str(sku_eff)
+                      grp[grp["source"] == "wizishop"]["nom_produit"].iloc[0] \
+                      if len(grp[grp["source"] == "wizishop"]) > 0 \
+                      else grp["nom_produit"].iloc[0] or str(sku_eff)
                 cat = prod_map.get(str(sku_parent), {}).get("nom_categorie", "") or \
                       prod_map.get(str(sku_eff), {}).get("nom_categorie", "") or ""
                 variation = grp["libelle_variation"].iloc[0] if grp["libelle_variation"].iloc[0] != "—" else "—"
@@ -395,6 +418,14 @@ elif page == "🚨 Réapprovisionnement":
             f"select=sku,sku_variation,quantite,id_commande&id_commande=in.({ids_str})",
             limit=50000)
 
+        # Noms depuis lignes de commande
+        nom_par_sku = {}
+        if lignes:
+            for ligne in lignes:
+                sku = ligne.get("sku")
+                if sku and sku not in nom_par_sku:
+                    nom_par_sku[sku] = ligne.get("nom_produit", "")
+
         ventes_par_sku = {}
         if lignes:
             for ligne in lignes:
@@ -407,7 +438,7 @@ elif page == "🚨 Réapprovisionnement":
             sku = sku_item.get("sku")
             stock = int(sku_item.get("stock") or 0)
             prod = prod_map.get(sku, {})
-            nom = prod.get("nom") or sku_item.get("nom") or sku
+            nom = prod.get("nom") or sku_item.get("nom") or nom_par_sku.get(sku, "") or sku
             fournisseur = prod.get("fournisseur") or sku_item.get("fournisseur") or ""
             ref_fourn = prod.get("reference_fournisseur") or ""
             categorie = prod.get("nom_categorie") or ""
@@ -626,7 +657,7 @@ elif page == "🏷️ Catalogue Etsy":
             st.download_button("📥 Télécharger liste à corriger",
                               csv, "skus_a_corriger_etsy.csv", "text/csv")
     else:
-        st.info("Aucune donnée. Lance d'abord la sync 5️⃣ Produits Etsy.")
+        st.info("Aucune donnée. Lance d'abord la sync 6️⃣ Produits Etsy.")
 
 elif page == "🌍 Comptabilité TVA":
     with st.sidebar:
