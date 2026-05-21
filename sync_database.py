@@ -125,6 +125,18 @@ def sync_skus(token, shop_id):
         page += 1
     return total
 
+def get_zone_tva(country_iso):
+    ue = {"AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR",
+          "HR","HU","IE","IT","LT","LU","LV","MT","NL","PL","PT","RO",
+          "SE","SI","SK"}
+    if not country_iso:
+        return "inconnu"
+    if country_iso == "FR":
+        return "france"
+    if country_iso in ue:
+        return "ue"
+    return "hors_ue"
+
 def sync_produits(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
@@ -141,6 +153,7 @@ def sync_produits(token, shop_id):
         results = data.get("results", [])
         if not results:
             break
+
         for p in results:
             detail_r = requests.get(
                 f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products/{p['id']}",
@@ -149,44 +162,72 @@ def sync_produits(token, shop_id):
             prod = detail_r.json() if detail_r.status_code == 200 else p
             id_cat = prod.get("category_id")
             nom_cat = cat_map.get(id_cat, "") if id_cat else ""
+            nom = prod.get("name") or prod.get("label") or ""
+            fournisseur = prod.get("supplier") or ""
+            ref_fourn = prod.get("supplier_reference") or ""
+            prix_achat = prod.get("wholesale_price_tax_excluded") or 0
+            prix_vente = prod.get("price_tax_excluded") or 0
+            tva = prod.get("tax") or 0
+            poids = prod.get("weight") or 0
+            statut = prod.get("status") or ("visible" if prod.get("visible") else "hidden")
+
+            # Upsert produit parent
             upsert("produits", [{
                 "id_wizi": int(prod.get("id")),
                 "sku": prod.get("sku"),
-                "nom": prod.get("name") or prod.get("label"),
-                "fournisseur": prod.get("supplier"),
-                "reference_fournisseur": prod.get("supplier_reference"),
+                "nom": nom,
+                "fournisseur": fournisseur,
+                "reference_fournisseur": ref_fourn,
                 "marque": prod.get("brand"),
                 "ean13": prod.get("ean13"),
                 "id_categorie": id_cat,
                 "nom_categorie": nom_cat,
-                "prix_vente_ht": prod.get("price_tax_excluded"),
-                "prix_achat_ht": prod.get("wholesale_price_tax_excluded"),
-                "tva_pct": prod.get("tax"),
-                "poids": prod.get("weight"),
+                "prix_vente_ht": prix_vente,
+                "prix_achat_ht": prix_achat,
+                "tva_pct": tva,
+                "poids": poids,
                 "reduction": prod.get("reduction"),
-                "statut": prod.get("status") or ("visible" if prod.get("visible") else "hidden"),
-                "image_url": prod.get("image_url"),
+                "statut": statut,
+                "image_url": prod.get("image_url") or (prod.get("images", [None])[0] if prod.get("images") else None),
                 "url": prod.get("url"),
                 "source": "wizishop"
             }], "id_wizi")
+
+            # Upsert variations dans produits avec le nom du parent
+            attributes = prod.get("attributes", [])
+            for attr in attributes:
+                for option in attr.get("options", []):
+                    sku_variation = option.get("sku")
+                    if not sku_variation:
+                        continue
+                    variation_valeur = option.get("value", "")
+                    nom_variation = f"{nom} - {variation_valeur}" if variation_valeur else nom
+
+                    upsert("produits", [{
+                        "id_wizi": int(prod.get("id")),
+                        "sku": sku_variation,
+                        "nom": nom_variation,
+                        "fournisseur": fournisseur,
+                        "reference_fournisseur": ref_fourn,
+                        "marque": prod.get("brand"),
+                        "id_categorie": id_cat,
+                        "nom_categorie": nom_cat,
+                        "prix_vente_ht": option.get("price_tax_excluded") or prix_vente,
+                        "prix_achat_ht": prix_achat,
+                        "tva_pct": tva,
+                        "statut": "visible" if option.get("active") else "hidden",
+                        "image_url": option.get("image"),
+                        "url": prod.get("url"),
+                        "source": "wizishop"
+                    }], "sku")
+
             total += 1
             time.sleep(0.05)
+
         if page >= data.get("pages", 1):
             break
         page += 1
     return total
-
-def get_zone_tva(country_iso):
-    ue = {"AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR",
-          "HR","HU","IE","IT","LT","LU","LV","MT","NL","PL","PT","RO",
-          "SE","SI","SK"}
-    if not country_iso:
-        return "inconnu"
-    if country_iso == "FR":
-        return "france"
-    if country_iso in ue:
-        return "ue"
-    return "hors_ue"
 
 def get_max_commande_id():
     results = select("commandes", "select=id_wizi&order=id_wizi.desc&limit=1&source=eq.wizishop")
@@ -355,27 +396,3 @@ def log_sync(table, source, nb, statut, message, duree):
         "message": message,
         "duree_secondes": round(duree, 2)
     }], "id")
-
-def run_full_sync():
-    token, account_id, shop_id = get_wizi_token()
-    if not token:
-        return False, "Erreur de connexion Wizishop"
-    resultats = {}
-    etapes = [
-        ("categories", sync_categories),
-        ("marques", sync_marques),
-        ("skus", sync_skus),
-        ("commandes", sync_commandes),
-    ]
-    for nom, fn in etapes:
-        debut = time.time()
-        try:
-            nb = fn(token, shop_id)
-            duree = time.time() - debut
-            log_sync(nom, "wizishop", nb, "success", f"{nb} enregistrements", duree)
-            resultats[nom] = {"nb": nb, "duree": duree, "statut": "✓"}
-        except Exception as e:
-            duree = time.time() - debut
-            log_sync(nom, "wizishop", 0, "error", str(e), duree)
-            resultats[nom] = {"nb": 0, "duree": duree, "statut": "✗", "erreur": str(e)}
-    return True, resultats
