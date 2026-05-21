@@ -2,10 +2,11 @@ import streamlit as st
 import time
 from supabase_api import upsert, select, insert
 
+
 def get_zone_tva(country_iso):
-    ue = {"AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR",
-          "HR","HU","IE","IT","LT","LU","LV","MT","NL","PL","PT","RO",
-          "SE","SI","SK"}
+    ue = {"AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR",
+          "HR", "HU", "IE", "IT", "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO",
+          "SE", "SI", "SK"}
     if not country_iso:
         return "inconnu"
     if country_iso == "FR":
@@ -14,11 +15,13 @@ def get_zone_tva(country_iso):
         return "ue"
     return "hors_ue"
 
+
 def get_max_etsy_commande_id():
     results = select("commandes", "select=id_wizi&order=id_wizi.desc&limit=1&source=eq.etsy")
     if results:
         return results[0].get("id_wizi", 0)
     return 0
+
 
 def sync_etsy_commandes(shop_id):
     from etsy_api import get_all_receipts
@@ -38,7 +41,8 @@ def sync_etsy_commandes(shop_id):
 
         from datetime import datetime, timezone
         create_ts = receipt.get("create_timestamp")
-        date_commande = datetime.fromtimestamp(create_ts, tz=timezone.utc).isoformat() if create_ts else None
+        date_commande = datetime.fromtimestamp(
+            create_ts, tz=timezone.utc).isoformat() if create_ts else None
 
         grandtotal = receipt.get("grandtotal", {})
         subtotal = receipt.get("subtotal", {})
@@ -51,19 +55,19 @@ def sync_etsy_commandes(shop_id):
         frais_port = shipping.get("amount", 0) / (shipping.get("divisor", 100) or 100)
         remise = discount.get("amount", 0) / (discount.get("divisor", 100) or 100)
 
-       status = receipt.get("status", "")
-if status == "Completed":
-    statut_code = 35
-elif status == "Paid":
-    statut_code = 30
-elif status in ["Canceled", "Cancelled"]:
-    statut_code = 50
-elif status in ["Fully refunded", "Partially refunded"]:
-    statut_code = 45
-elif status == "Open":
-    statut_code = 20
-else:
-    statut_code = 30
+        status = receipt.get("status", "")
+        if status == "Completed":
+            statut_code = 35
+        elif status == "Paid":
+            statut_code = 30
+        elif status in ["Canceled", "Cancelled"]:
+            statut_code = 50
+        elif status in ["Fully refunded", "Partially refunded"]:
+            statut_code = 45
+        elif status == "Open":
+            statut_code = 20
+        else:
+            statut_code = 30
 
         upsert("commandes", [{
             "id_wizi": id_etsy,
@@ -103,7 +107,8 @@ else:
             sku_variation = None
             libelle_variation = None
             if variations:
-                libelle_variation = " / ".join([v.get("formatted_value", "") for v in variations])
+                libelle_variation = " / ".join(
+                    [v.get("formatted_value", "") for v in variations])
                 sku_variation = transaction.get("sku")
 
             lignes.append({
@@ -124,6 +129,7 @@ else:
         time.sleep(0.05)
 
     return total
+
 
 def log_sync_etsy(table, nb, statut, message, duree):
     upsert("sync_log", [{
