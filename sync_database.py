@@ -170,8 +170,10 @@ def sync_produits(token, shop_id):
             tva = prod.get("tax") or 0
             poids = prod.get("weight") or 0
             statut = prod.get("status") or ("visible" if prod.get("visible") else "hidden")
+            image_url = prod.get("image_url") or (
+                prod.get("images", [None])[0] if prod.get("images") else None)
 
-            # Upsert produit parent
+            # Upsert produit parent avec sku comme clé
             upsert("produits", [{
                 "id_wizi": int(prod.get("id")),
                 "sku": prod.get("sku"),
@@ -188,12 +190,12 @@ def sync_produits(token, shop_id):
                 "poids": poids,
                 "reduction": prod.get("reduction"),
                 "statut": statut,
-                "image_url": prod.get("image_url") or (prod.get("images", [None])[0] if prod.get("images") else None),
+                "image_url": image_url,
                 "url": prod.get("url"),
                 "source": "wizishop"
-            }], "id_wizi")
+            }], "sku")
 
-            # Upsert variations dans produits avec le nom du parent
+            # Upsert chaque variation avec sku comme clé
             attributes = prod.get("attributes", [])
             for attr in attributes:
                 for option in attr.get("options", []):
@@ -210,13 +212,15 @@ def sync_produits(token, shop_id):
                         "fournisseur": fournisseur,
                         "reference_fournisseur": ref_fourn,
                         "marque": prod.get("brand"),
+                        "ean13": option.get("ean13") or "",
                         "id_categorie": id_cat,
                         "nom_categorie": nom_cat,
                         "prix_vente_ht": option.get("price_tax_excluded") or prix_vente,
                         "prix_achat_ht": prix_achat,
                         "tva_pct": tva,
+                        "poids": option.get("weight") or poids,
                         "statut": "visible" if option.get("active") else "hidden",
-                        "image_url": option.get("image"),
+                        "image_url": option.get("image") or image_url,
                         "url": prod.get("url"),
                         "source": "wizishop"
                     }], "sku")
@@ -382,6 +386,7 @@ def sync_commandes(token, shop_id):
 
             total += 1
             time.sleep(0.05)
+
         if page >= data.get("pages", 1):
             break
         page += 1
