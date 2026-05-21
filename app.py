@@ -15,6 +15,21 @@ st.set_page_config(
     layout="wide"
 )
 
+
+def get_prod_parent(sku, prod_map):
+    """Cherche le produit parent en testant des préfixes progressifs"""
+    if not sku:
+        return {}
+    sku = str(sku)
+    if sku in prod_map:
+        return prod_map[sku]
+    for longueur in range(len(sku)-1, 3, -1):
+        prefixe = sku[:longueur]
+        if prefixe in prod_map:
+            return prod_map[prefixe]
+    return {}
+
+
 st.title("Pique&Pince — Dashboard ventes")
 
 with st.sidebar:
@@ -283,9 +298,6 @@ elif page == "⭐ Best-sellers":
             df_lignes["sku_variation"] = df_lignes["sku_variation"].fillna("")
             df_lignes["libelle_variation"] = df_lignes["libelle_variation"].fillna("—")
 
-            nom_par_sku_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku")["nom_produit"].first()
-            nom_par_sku_etsy = df_lignes[df_lignes["source"] == "etsy"].groupby("sku")["nom_produit"].first()
-
             st.subheader(f"📊 Tableau 1 — Best-sellers par produit ({nb_mois} derniers mois)")
 
             grp_wizi = df_lignes[df_lignes["source"] == "wizishop"].groupby("sku").agg(
@@ -304,11 +316,9 @@ elif page == "⭐ Best-sellers":
             bs_produit["total_vendu"] = bs_produit["vendu_wizi"] + bs_produit["vendu_etsy"]
             bs_produit["moy_mois"] = (bs_produit["total_vendu"] / nb_mois).round(1)
             bs_produit["nom"] = bs_produit["sku"].map(
-                lambda x: prod_map.get(str(x), {}).get("nom", "") or
-                          nom_par_sku_wizi.get(x, "") or
-                          nom_par_sku_etsy.get(x, "") or str(x))
+                lambda x: get_prod_parent(x, prod_map).get("nom", "") or str(x))
             bs_produit["categorie"] = bs_produit["sku"].map(
-                lambda x: prod_map.get(str(x), {}).get("nom_categorie", "") or "")
+                lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
 
             bs_produit = bs_produit.sort_values("total_vendu", ascending=False).head(100)
             bs_produit = bs_produit[["sku", "nom", "categorie", "vendu_wizi",
@@ -336,13 +346,12 @@ elif page == "⭐ Best-sellers":
                 if not sku_eff:
                     continue
                 sku_parent = grp["sku"].iloc[0]
+                prod_info = get_prod_parent(sku_eff, prod_map) or get_prod_parent(sku_parent, prod_map)
                 grp_wizi_rows = grp[grp["source"] == "wizishop"]
-                nom = prod_map.get(str(sku_parent), {}).get("nom", "") or \
-                      prod_map.get(str(sku_eff), {}).get("nom", "") or \
+                nom = prod_info.get("nom", "") or \
                       (grp_wizi_rows["nom_produit"].iloc[0] if len(grp_wizi_rows) > 0
                        else grp["nom_produit"].iloc[0]) or str(sku_eff)
-                cat = prod_map.get(str(sku_parent), {}).get("nom_categorie", "") or \
-                      prod_map.get(str(sku_eff), {}).get("nom_categorie", "") or ""
+                cat = prod_info.get("nom_categorie", "") or ""
                 variation = grp["libelle_variation"].iloc[0] if grp["libelle_variation"].iloc[0] != "—" else "—"
 
                 total_vendu = int(grp["quantite"].sum())
@@ -388,7 +397,6 @@ elif page == "🚨 Réapprovisionnement":
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période calcul ventes (mois)", min_value=1, max_value=12, value=6)
-        fournisseur_filtre = st.selectbox("Fournisseur", ["Tous"])
         alerte_filtre = st.selectbox("Filtre alerte", [
             "Tous les produits",
             "🔴 À commander uniquement",
@@ -398,7 +406,6 @@ elif page == "🚨 Réapprovisionnement":
     st.subheader("🚨 Réapprovisionnement")
     st.info(f"Calcul basé sur les ventes des {nb_mois} derniers mois. Délai fournisseur : 2 mois.")
 
-    # Récupérer les SKUs déjà en commande
     en_commande = select("commandes_fournisseur",
         "select=id,sku,nom_produit,fournisseur,date_commande,quantite_commandee,notes&statut=eq.en_commande")
     skus_en_commande = {c["sku"] for c in en_commande} if en_commande else set()
@@ -440,12 +447,22 @@ elif page == "🚨 Réapprovisionnement":
             if sku in skus_en_commande:
                 continue
             stock = int(sku_item.get("stock") or 0)
-            prod = prod_map.get(sku, {})
+            prod = get_prod_parent(sku, prod_map)
             nom = prod.get("nom") or nom_par_sku.get(sku, "") or sku
             fournisseur = prod.get("fournisseur") or ""
             ref_fourn = prod.get("reference_fournisseur") or ""
             prix_achat = prod.get("prix_achat_ht") or 0
             categorie = prod.get("nom_categorie") or ""
+
+            # Détecter la variation depuis le SKU
+            prod_exact = prod_map.get(sku, {})
+            if not prod_exact and prod:
+                # C'est une variation, trouver le libellé
+                parent_sku = prod.get("sku", "")
+                variation = sku[len(parent_sku):] if parent_sku and sku.startswith(parent_sku) else ""
+            else:
+                variation = ""
+
             ventes = ventes_par_sku.get(sku, 0)
             moy_mois = round(ventes / nb_mois, 1)
             mois_stock = round(stock / moy_mois, 1) if moy_mois > 0 else 99
@@ -458,21 +475,26 @@ elif page == "🚨 Réapprovisionnement":
                 alerte = "🟢 OK"
 
             rows.append({
-                "SKU": sku, "Produit": nom, "Catégorie": categorie,
-                "Fournisseur": fournisseur, "Réf. fournisseur": ref_fourn,
+                "SKU": sku,
+                "Produit": nom,
+                "Variation": variation,
+                "Catégorie": categorie,
+                "Fournisseur": fournisseur,
+                "Réf. fournisseur": ref_fourn,
                 "Prix achat HT": f"{float(prix_achat):.2f} €" if prix_achat else "",
-                "Stock": stock, "Ventes/mois": moy_mois,
-                "Mois de stock": mois_stock, "Alerte": alerte
+                "Stock": stock,
+                "Ventes/mois": moy_mois,
+                "Mois de stock": mois_stock,
+                "Alerte": alerte
             })
 
         df_reap = pd.DataFrame(rows)
 
-        # Mise à jour du filtre fournisseur avec les vraies valeurs
+        # Filtre fournisseur dynamique
         fournisseurs_liste = ["Tous"] + sorted(
-            df_reap["Fournisseur"].dropna().unique().tolist())
+            [f for f in df_reap["Fournisseur"].dropna().unique().tolist() if f])
         with st.sidebar:
-            fournisseur_filtre = st.selectbox(
-                "Fournisseur", fournisseurs_liste, key="fourn_select")
+            fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_liste)
 
         if fournisseur_filtre != "Tous":
             df_reap = df_reap[df_reap["Fournisseur"] == fournisseur_filtre]
@@ -491,17 +513,14 @@ elif page == "🚨 Réapprovisionnement":
         with col3:
             st.metric("🟢 OK", len(df_reap[df_reap["Alerte"] == "🟢 OK"]))
 
-        # Tableau avec bouton Commander
         st.subheader("📋 Produits à réapprovisionner")
 
         if not df_reap.empty:
-            # Afficher tableau + bouton Commander par ligne
-            cols_affich = ["SKU", "Produit", "Catégorie", "Fournisseur",
+            cols_affich = ["SKU", "Produit", "Variation", "Catégorie", "Fournisseur",
                           "Réf. fournisseur", "Prix achat HT", "Stock",
                           "Ventes/mois", "Mois de stock", "Alerte"]
             df_show = df_reap[cols_affich].copy()
 
-            # Ajouter colonne Commander
             edited = st.data_editor(
                 df_show.assign(Commander=False),
                 column_config={
@@ -532,7 +551,6 @@ elif page == "🚨 Réapprovisionnement":
                     st.success(f"✓ {len(skus_selectionnes)} produit(s) marqués en commande !")
                     st.rerun()
 
-            # Export CSV
             st.divider()
             csv = df_show.to_csv(index=False).encode("utf-8")
             st.download_button(
@@ -548,11 +566,11 @@ elif page == "🚨 Réapprovisionnement":
     st.divider()
     st.subheader("📦 Produits en commande chez le fournisseur")
 
-    en_commande = select("commandes_fournisseur",
-        "select=id,sku,nom_produit,fournisseur,date_commande,quantite_commandee,notes&statut=eq.en_commande&order=date_commande.desc")
+    en_commande_affich = select("commandes_fournisseur",
+        "select=id,sku,nom_produit,fournisseur,date_commande&statut=eq.en_commande&order=date_commande.desc")
 
-    if en_commande:
-        df_cmd = pd.DataFrame(en_commande)
+    if en_commande_affich:
+        df_cmd = pd.DataFrame(en_commande_affich)
         df_cmd["date_commande"] = pd.to_datetime(
             df_cmd["date_commande"]).dt.strftime("%d/%m/%Y")
 
@@ -816,12 +834,12 @@ elif page == "🔍 Vérification Wizishop":
             df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
-            df["nom_wizi"] = df["sku"].map(
-                lambda x: prod_map.get(str(x), {}).get("nom", "") if x else "")
+            df["nom_affiche"] = df["sku_effectif"].map(
+                lambda x: get_prod_parent(x, prod_map).get("nom", "") or "")
             df["nom_affiche"] = df.apply(
-                lambda r: r["nom_wizi"] if r["nom_wizi"] else r["nom_produit"], axis=1)
-            df["categorie"] = df["sku"].map(
-                lambda x: prod_map.get(str(x), {}).get("nom_categorie", "") if x else "")
+                lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
+            df["categorie"] = df["sku_effectif"].map(
+                lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
 
             result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
                 unites_vendues=("quantite", "sum"),
@@ -871,12 +889,12 @@ elif page == "🔍 Vérification Etsy":
             df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
-            df["nom_wizi"] = df["sku_effectif"].map(
-                lambda x: prod_wizi_map.get(str(x), {}).get("nom", "") if x else "")
+            df["nom_affiche"] = df["sku_effectif"].map(
+                lambda x: get_prod_parent(x, prod_wizi_map).get("nom", "") or "")
             df["nom_affiche"] = df.apply(
-                lambda r: r["nom_wizi"] if r["nom_wizi"] else r["nom_produit"], axis=1)
+                lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
             df["categorie"] = df["sku_effectif"].map(
-                lambda x: prod_wizi_map.get(str(x), {}).get("nom_categorie", "") if x else "")
+                lambda x: get_prod_parent(x, prod_wizi_map).get("nom_categorie", "") or "")
 
             result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
                 unites_vendues=("quantite", "sum"),
