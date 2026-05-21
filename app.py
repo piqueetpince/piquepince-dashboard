@@ -17,7 +17,6 @@ st.set_page_config(
 
 
 def get_prod_parent(sku, prod_map):
-    """Cherche le produit parent en testant des préfixes progressifs"""
     if not sku:
         return {}
     sku = str(sku)
@@ -407,7 +406,7 @@ elif page == "🚨 Réapprovisionnement":
     st.info(f"Calcul basé sur les ventes des {nb_mois} derniers mois. Délai fournisseur : 2 mois.")
 
     en_commande = select("commandes_fournisseur",
-        "select=id,sku,nom_produit,fournisseur,date_commande,quantite_commandee,notes&statut=eq.en_commande")
+        "select=id,sku,nom_produit,fournisseur,date_commande&statut=eq.en_commande")
     skus_en_commande = {c["sku"] for c in en_commande} if en_commande else set()
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
@@ -454,10 +453,8 @@ elif page == "🚨 Réapprovisionnement":
             prix_achat = prod.get("prix_achat_ht") or 0
             categorie = prod.get("nom_categorie") or ""
 
-            # Détecter la variation depuis le SKU
             prod_exact = prod_map.get(sku, {})
             if not prod_exact and prod:
-                # C'est une variation, trouver le libellé
                 parent_sku = prod.get("sku", "")
                 variation = sku[len(parent_sku):] if parent_sku and sku.startswith(parent_sku) else ""
             else:
@@ -475,7 +472,7 @@ elif page == "🚨 Réapprovisionnement":
                 alerte = "🟢 OK"
 
             rows.append({
-                "SKU": sku,
+                "sku": sku,
                 "Produit": nom,
                 "Variation": variation,
                 "Catégorie": categorie,
@@ -490,7 +487,7 @@ elif page == "🚨 Réapprovisionnement":
 
         df_reap = pd.DataFrame(rows)
 
-        # Filtre fournisseur dynamique
+        # Filtre fournisseur dynamique dans sidebar
         fournisseurs_liste = ["Tous"] + sorted(
             [f for f in df_reap["Fournisseur"].dropna().unique().tolist() if f])
         with st.sidebar:
@@ -513,46 +510,50 @@ elif page == "🚨 Réapprovisionnement":
         with col3:
             st.metric("🟢 OK", len(df_reap[df_reap["Alerte"] == "🟢 OK"]))
 
+        # Tableau avec bouton Commander par ligne
         st.subheader("📋 Produits à réapprovisionner")
 
         if not df_reap.empty:
-            cols_affich = ["SKU", "Produit", "Variation", "Catégorie", "Fournisseur",
-                          "Réf. fournisseur", "Prix achat HT", "Stock",
-                          "Ventes/mois", "Mois de stock", "Alerte"]
-            df_show = df_reap[cols_affich].copy()
+            # En-tête du tableau
+            header = st.columns([1.5, 2, 1, 1, 1.5, 1, 1, 1, 1, 1])
+            header[0].markdown("**SKU**")
+            header[1].markdown("**Produit**")
+            header[2].markdown("**Variation**")
+            header[3].markdown("**Catégorie**")
+            header[4].markdown("**Fournisseur**")
+            header[5].markdown("**Réf.**")
+            header[6].markdown("**Stock**")
+            header[7].markdown("**Ventes/mois**")
+            header[8].markdown("**Alerte**")
+            header[9].markdown("**Action**")
+            st.divider()
 
-            edited = st.data_editor(
-                df_show.assign(Commander=False),
-                column_config={
-                    "Commander": st.column_config.CheckboxColumn(
-                        "Commander ?",
-                        help="Cochez pour marquer en commande",
-                        default=False
-                    )
-                },
-                disabled=cols_affich,
-                hide_index=True,
-                use_container_width=True
-            )
-
-            skus_selectionnes = edited[edited["Commander"] == True]["SKU"].tolist()
-            if skus_selectionnes:
-                if st.button(f"📦 Marquer {len(skus_selectionnes)} produit(s) en commande",
-                            type="primary"):
-                    for sku in skus_selectionnes:
-                        row = df_reap[df_reap["SKU"] == sku].iloc[0]
-                        insert("commandes_fournisseur", [{
-                            "sku": sku,
-                            "nom_produit": row["Produit"],
-                            "fournisseur": row["Fournisseur"],
-                            "date_commande": datetime.now(timezone.utc).isoformat(),
-                            "statut": "en_commande"
-                        }])
-                    st.success(f"✓ {len(skus_selectionnes)} produit(s) marqués en commande !")
+            for _, row in df_reap.iterrows():
+                cols = st.columns([1.5, 2, 1, 1, 1.5, 1, 1, 1, 1, 1])
+                cols[0].write(row["sku"])
+                cols[1].write(row["Produit"])
+                cols[2].write(row["Variation"])
+                cols[3].write(row["Catégorie"])
+                cols[4].write(row["Fournisseur"])
+                cols[5].write(row["Réf. fournisseur"])
+                cols[6].write(row["Stock"])
+                cols[7].write(row["Ventes/mois"])
+                cols[8].write(row["Alerte"])
+                if cols[9].button("📦", key=f"cmd_{row['sku']}", help="Marquer en commande"):
+                    insert("commandes_fournisseur", [{
+                        "sku": row["sku"],
+                        "nom_produit": row["Produit"],
+                        "fournisseur": row["Fournisseur"],
+                        "date_commande": datetime.now(timezone.utc).isoformat(),
+                        "statut": "en_commande"
+                    }])
                     st.rerun()
 
             st.divider()
-            csv = df_show.to_csv(index=False).encode("utf-8")
+            cols_export = ["sku", "Produit", "Variation", "Catégorie", "Fournisseur",
+                          "Réf. fournisseur", "Prix achat HT", "Stock",
+                          "Ventes/mois", "Mois de stock", "Alerte"]
+            csv = df_reap[cols_export].to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Télécharger liste",
                 csv,
@@ -570,39 +571,27 @@ elif page == "🚨 Réapprovisionnement":
         "select=id,sku,nom_produit,fournisseur,date_commande&statut=eq.en_commande&order=date_commande.desc")
 
     if en_commande_affich:
-        df_cmd = pd.DataFrame(en_commande_affich)
-        df_cmd["date_commande"] = pd.to_datetime(
-            df_cmd["date_commande"]).dt.strftime("%d/%m/%Y")
+        # En-tête
+        header2 = st.columns([1.5, 2.5, 1.5, 1.5, 1])
+        header2[0].markdown("**SKU**")
+        header2[1].markdown("**Produit**")
+        header2[2].markdown("**Fournisseur**")
+        header2[3].markdown("**Date commande**")
+        header2[4].markdown("**Action**")
+        st.divider()
 
-        edited_cmd = st.data_editor(
-            df_cmd[["sku", "nom_produit", "fournisseur", "date_commande"]].assign(Recu=False),
-            column_config={
-                "sku": st.column_config.TextColumn("SKU"),
-                "nom_produit": st.column_config.TextColumn("Produit"),
-                "fournisseur": st.column_config.TextColumn("Fournisseur"),
-                "date_commande": st.column_config.TextColumn("Date commande"),
-                "Recu": st.column_config.CheckboxColumn(
-                    "Reçu ?",
-                    help="Cochez pour marquer comme reçu",
-                    default=False
-                )
-            },
-            disabled=["sku", "nom_produit", "fournisseur", "date_commande"],
-            hide_index=True,
-            use_container_width=True
-        )
-
-        skus_recus = edited_cmd[edited_cmd["Recu"] == True]["sku"].tolist()
-        if skus_recus:
-            if st.button(f"✅ Marquer {len(skus_recus)} produit(s) comme reçu(s)",
-                        type="primary"):
-                for sku in skus_recus:
-                    row_cmd = df_cmd[df_cmd["sku"] == sku].iloc[0]
-                    upsert("commandes_fournisseur", [{
-                        "id": int(row_cmd["id"]),
-                        "statut": "recu"
-                    }], "id")
-                st.success(f"✓ {len(skus_recus)} produit(s) marqués comme reçus !")
+        for item in en_commande_affich:
+            date_fmt = pd.to_datetime(item["date_commande"]).strftime("%d/%m/%Y")
+            cols = st.columns([1.5, 2.5, 1.5, 1.5, 1])
+            cols[0].write(item["sku"])
+            cols[1].write(item["nom_produit"])
+            cols[2].write(item["fournisseur"])
+            cols[3].write(date_fmt)
+            if cols[4].button("✅", key=f"recu_{item['id']}", help="Marquer comme reçu"):
+                upsert("commandes_fournisseur", [{
+                    "id": int(item["id"]),
+                    "statut": "recu"
+                }], "id")
                 st.rerun()
     else:
         st.info("Aucun produit en commande actuellement.")
