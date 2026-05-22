@@ -1108,34 +1108,13 @@ elif page == "🔍 Vérification Etsy":
 elif page == "🔗 Connexion Faire":
     st.subheader("🔗 Connexion Faire")
 
-    token = st.secrets.get("FAIRE_TOKEN", "")
-    secret = st.secrets.get("FAIRE_SECRET", "")
-    st.write(f"- `FAIRE_TOKEN` présent : `{'oui — ' + token[:8] + '...' if token else 'NON'}`")
-    st.write(f"- `FAIRE_SECRET` présent : `{'oui' if secret else 'NON'}`")
-
-    if st.button("Tester les deux modes d'authentification"):
-        import base64, requests as _req
-        url = "https://www.faire.com/external-api/v2/orders"
-        params = {"limit": 1}
-
-        st.divider()
-        st.write("**Mode 1 — `X-FAIRE-ACCESS-TOKEN` (token Brand Portal direct)**")
-        r1 = _req.get(url, headers={"X-FAIRE-ACCESS-TOKEN": token}, params=params)
-        st.write(f"Status : `{r1.status_code}`")
-        if r1.status_code == 200:
-            st.success("✅ Mode 1 fonctionne")
-        else:
-            st.error(f"{r1.text[:300]}")
-
-        st.divider()
-        st.write("**Mode 2 — `X-FAIRE-OAUTH-ACCESS-TOKEN` + `X-FAIRE-APP-CREDENTIALS`**")
-        credentials = base64.b64encode(f"apa_82qgm4c87e:{secret}".encode()).decode()
-        r2 = _req.get(url, headers={
-            "X-FAIRE-OAUTH-ACCESS-TOKEN": token,
-            "X-FAIRE-APP-CREDENTIALS": credentials
-        }, params=params)
-        st.write(f"Status : `{r2.status_code}`")
-        if r2.status_code == 200:
-            st.success("✅ Mode 2 fonctionne")
-        else:
-            st.error(f"{r2.text[:300]}")
+    if st.button("Tester la connexion Faire"):
+        with st.spinner("Test de connexion..."):
+            try:
+                r = faire_api_get("/orders", params={"limit": 10})
+                if r.status_code == 200:
+                    st.success("✅ Connexion Faire fonctionnelle")
+                else:
+                    st.error(f"Erreur {r.status_code} : {r.text[:300]}")
+            except Exception as e:
+                st.error(f"Erreur : {e}")
