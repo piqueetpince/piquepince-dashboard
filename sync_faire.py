@@ -56,7 +56,7 @@ def sync_faire_commandes():
         tva_rate = 0.20 if zone in ("france", "ue") else 0.0
         montant_ht = round(montant_ttc / (1 + tva_rate), 2) if montant_ttc else 0
 
-        date_commande = order.get("payment_initiated_at") or order.get("created_at")
+        date_commande = order.get("created_at")
 
         upsert("commandes", [{
             "id_faire": order_id,
