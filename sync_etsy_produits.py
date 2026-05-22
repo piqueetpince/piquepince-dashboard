@@ -9,14 +9,11 @@ def get_all_listings(shop_id, state="active"):
     all_listings = []
     offset = 0
     limit = 100
-    endpoint = "inactive" if state == "inactive" else "active"
     while True:
         r = api_get(
-            f"{ETSY_API_URL}/application/shops/{shop_id}/listings/{endpoint}",
-            params={"limit": limit, "offset": offset}
+            f"{ETSY_API_URL}/application/shops/{shop_id}/listings",
+            params={"state": state, "limit": limit, "offset": offset}
         )
-        if state == "inactive":
-            st.write(f"**[DEBUG inactive]** status={r.status_code} | réponse={r.text[:200]}")
         if r.status_code != 200:
             break
         data = r.json()
@@ -39,11 +36,6 @@ def get_listing_inventory(listing_id):
 def sync_produits_etsy(shop_id):
     listings_actifs = get_all_listings(shop_id, state="active")
     listings_inactifs = get_all_listings(shop_id, state="inactive")
-    st.write(f"**[DEBUG]** Listings actifs : {len(listings_actifs)} — Listings inactifs : {len(listings_inactifs)}")
-    if listings_inactifs:
-        st.write("**[DEBUG] Listings inactifs :**")
-        for l in listings_inactifs:
-            st.write(f"- listing_id={l.get('listing_id')} | state={l.get('state')}")
     listings = listings_actifs + listings_inactifs
     total_listings = 0
     total_variations = 0
