@@ -48,8 +48,8 @@ def sync_faire_commandes():
         customer = order.get("customer") or {}
         payout = order.get("payout_costs") or {}
 
-        total_payout_obj = payout.get("total_payout") or {}
-        montant_ttc = (total_payout_obj.get("amount_minor") or 0) / 100
+        montant_ttc = (payout.get("subtotal_after_brand_discounts") or {}).get("amount_minor", 0) / 100
+        commission_faire = (payout.get("commission") or {}).get("amount_minor", 0) / 100
 
         country_iso2 = _country_iso2(address.get("country_code", ""))
         zone = get_zone_tva(country_iso2)
@@ -67,6 +67,7 @@ def sync_faire_commandes():
             "statut_texte": statut_brut,
             "montant_ttc": montant_ttc,
             "montant_ht": montant_ht,
+            "commission_faire": commission_faire,
             "pays_facturation_iso": country_iso2,
             "pays_facturation": address.get("country"),
             "ville_facturation": address.get("city"),
