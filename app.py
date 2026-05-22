@@ -812,12 +812,16 @@ elif page == "📊 Gestion stock Etsy":
             ventes_par_jour = v_total / 30
             jours_stock = round(stock_wizi / ventes_par_jour) if ventes_par_jour > 0 else 999
 
-            if (stock_wizi == 0 and is_enabled and v_total > 0) or \
-               (jours_stock < seuil_jours and v_total > 0):
+            if is_enabled and ((stock_wizi == 0 and v_total > 0) or
+                               (jours_stock < seuil_jours and v_total > 0)):
                 alerte = "🔴 URGENT"
                 priorite = 1
-            elif (stock_etsy > stock_wizi and v_total > 0) or \
-                 (ventes_par_jour > 0 and ecart > 0 and (ecart / ventes_par_jour) > seuil_ecart_jours):
+            elif is_enabled and ((stock_etsy > stock_wizi and v_total > 0) or
+                                 (ventes_par_jour > 0 and ecart > 0 and
+                                  (ecart / ventes_par_jour) > seuil_ecart_jours)):
+                alerte = "🟡 ATTENTION"
+                priorite = 2
+            elif not is_enabled and jours_stock > seuil_jours and v_total > 0:
                 alerte = "🟡 ATTENTION"
                 priorite = 2
             elif stock_etsy > stock_wizi and v_total == 0:
