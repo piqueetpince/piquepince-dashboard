@@ -46,9 +46,11 @@ with st.sidebar:
         "🏷️ Catalogue Etsy",
         "📊 Gestion stock Etsy",
         "🔎 Produits manquants sur Etsy",
+        "🔎 Produits manquants sur Faire",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
         "🔍 Vérification Etsy",
+        "🔍 Vérification Faire",
         "🔗 Connexion Faire",
         "🔄 Synchronisation"
     ])
@@ -211,8 +213,10 @@ elif page == "📊 Vue d'ensemble":
         df_mois = df[df["mois"] == mois_max]
         df_wizi = df[df["source"] == "wizishop"]
         df_etsy = df[df["source"] == "etsy"]
+        df_faire = df[df["source"] == "faire"]
         df_mois_wizi = df_mois[df_mois["source"] == "wizishop"]
         df_mois_etsy = df_mois[df_mois["source"] == "etsy"]
+        df_mois_faire = df_mois[df_mois["source"] == "faire"]
 
         st.subheader("📊 Vue consolidée")
         col1, col2, col3, col4 = st.columns(4)
@@ -226,7 +230,7 @@ elif page == "📊 Vue d'ensemble":
             st.metric(f"Commandes sur {nb_mois} mois", len(df))
 
         st.divider()
-        col_w, col_e = st.columns(2)
+        col_w, col_e, col_f = st.columns(3)
         with col_w:
             st.subheader("🛍️ Wizishop")
             w1, w2, w3 = st.columns(3)
@@ -246,6 +250,16 @@ elif page == "📊 Vue d'ensemble":
                 st.metric("CA ce mois", f"{df_mois_etsy['montant_ttc'].sum():.0f} €")
             with e3:
                 st.metric(f"CA {nb_mois} mois", f"{df_etsy['montant_ttc'].sum():.0f} €")
+
+        with col_f:
+            st.subheader("🛒 Faire")
+            f1, f2, f3 = st.columns(3)
+            with f1:
+                st.metric("Commandes ce mois", len(df_mois_faire))
+            with f2:
+                st.metric("CA ce mois", f"{df_mois_faire['montant_ttc'].sum():.0f} €")
+            with f3:
+                st.metric(f"CA {nb_mois} mois", f"{df_faire['montant_ttc'].sum():.0f} €")
 
         st.divider()
         par_mois = df.groupby(["mois", "source"]).agg(
@@ -1131,6 +1145,119 @@ elif page == "🔍 Vérification Etsy":
             st.info("Aucune ligne de commande trouvée.")
     else:
         st.info("Aucune commande Etsy trouvée.")
+
+elif page == "🔎 Produits manquants sur Faire":
+    st.subheader("🔎 Produits manquants sur Faire")
+
+    with st.sidebar:
+        st.divider()
+        fournisseurs_fixes = ["Tous", "VEINIERE", "NPC", "NPGL", "NAVARRO", "BAVOUX", "DELORME"]
+        fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_fixes)
+
+    skus_data = select("skus", "select=sku,stock&statut=eq.visible")
+    faire_variants = select("produits_faire_variants", "select=sku")
+    produits_data = select("produits",
+        "select=sku,nom,fournisseur,nom_categorie,prix_vente_ht,reference_fournisseur")
+
+    if skus_data:
+        skus_wizi = {s["sku"] for s in skus_data}
+        skus_faire = {v["sku"] for v in faire_variants if v.get("sku")} if faire_variants else set()
+        prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+        sku_stock = {s["sku"]: int(s["stock"] or 0) for s in skus_data}
+
+        rows = []
+        for sku in skus_wizi - skus_faire:
+            prod = get_prod_parent(sku, prod_map)
+            rows.append({
+                "SKU": sku,
+                "Produit": prod.get("nom") or "",
+                "Fournisseur": prod.get("fournisseur") or "",
+                "Catégorie": prod.get("nom_categorie") or "",
+                "Prix vente HT": prod.get("prix_vente_ht") or 0,
+                "Stock": sku_stock.get(sku, 0),
+                "Réf. fournisseur": prod.get("reference_fournisseur") or ""
+            })
+
+        df_manquants = pd.DataFrame(rows) if rows else pd.DataFrame()
+        total_manquants = len(df_manquants)
+
+        if fournisseur_filtre != "Tous" and not df_manquants.empty:
+            df_filtre = df_manquants[df_manquants["Fournisseur"] == fournisseur_filtre]
+        else:
+            df_filtre = df_manquants
+
+        nb_filtre = len(df_filtre)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total SKUs manquants sur Faire", total_manquants)
+        with col2:
+            label = f"Manquants — {fournisseur_filtre}" if fournisseur_filtre != "Tous" else "Manquants (tous fournisseurs)"
+            st.metric(label, nb_filtre)
+
+        if not df_filtre.empty:
+            df_show = df_filtre.sort_values("SKU").reset_index(drop=True)
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            csv = df_show.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Télécharger en CSV", csv, "produits_manquants_faire.csv", "text/csv")
+        else:
+            st.info("Aucun SKU manquant pour ce filtre." if fournisseur_filtre != "Tous"
+                    else "Tous les SKUs Wizishop sont présents sur Faire.")
+    else:
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+
+elif page == "🔍 Vérification Faire":
+    st.subheader("🔍 Vérification des ventes Faire")
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    commandes_faire = select("commandes",
+        f"select=id_faire&statut_code=not.in.(0,45,50)&source=eq.faire&date_commande=gte.{date_limite}")
+
+    if commandes_faire:
+        ids = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+        ids_str = ",".join(ids)
+
+        lignes = select("lignes_commande",
+            f"select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
+            limit=50000)
+
+        produits_data = select("produits", "select=sku,nom,nom_categorie")
+        prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+        if lignes:
+            df = pd.DataFrame(lignes)
+            df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
+            df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
+            df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
+            df["nom_affiche"] = df["sku"].map(
+                lambda x: get_prod_parent(x, prod_map).get("nom", "") or "")
+            df["nom_affiche"] = df.apply(
+                lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
+            df["categorie"] = df["sku"].map(
+                lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
+
+            result = df.groupby(["sku", "nom_affiche", "categorie"]).agg(
+                unites_vendues=("quantite", "sum"),
+                ca_total=("ca", "sum"),
+                nb_commandes=("id_commande", "nunique")
+            ).reset_index().sort_values("unites_vendues", ascending=False)
+
+            result.columns = ["SKU", "Produit", "Catégorie",
+                              "Unités vendues", "CA (€)", "Nb commandes"]
+            result["CA (€)"] = result["CA (€)"].apply(lambda x: f"{x:.2f}")
+
+            st.info(f"{len(result)} produits vendus sur Faire sur les {nb_mois} derniers mois")
+            st.dataframe(result, use_container_width=True, hide_index=True)
+            csv = result.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "verification_faire.csv", "text/csv")
+        else:
+            st.info("Aucune ligne de commande trouvée.")
+    else:
+        st.info("Aucune commande Faire trouvée.")
 
 elif page == "🔗 Connexion Faire":
     st.subheader("🔗 Connexion Faire")
