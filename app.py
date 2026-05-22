@@ -848,6 +848,7 @@ elif page == "📊 Gestion stock Etsy":
             })
 
         df = pd.DataFrame(rows)
+        df = df[~((df["Stock Wizishop"] == 0) & (df["Stock Etsy"] == 0))]
 
         nb_urgent = len(df[df["Alerte"] == "🔴 URGENT"])
         nb_attention = len(df[df["Alerte"] == "🟡 ATTENTION"])
