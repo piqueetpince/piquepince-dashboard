@@ -7,6 +7,7 @@ from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 import time
+import requests
 from datetime import datetime, timezone
 
 st.set_page_config(
@@ -47,6 +48,7 @@ with st.sidebar:
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
         "🔍 Vérification Etsy",
+        "🔗 Connexion Faire",
         "🔄 Synchronisation"
     ])
 
@@ -1102,3 +1104,48 @@ elif page == "🔍 Vérification Etsy":
             st.info("Aucune ligne de commande trouvée.")
     else:
         st.info("Aucune commande Etsy trouvée.")
+
+elif page == "🔗 Connexion Faire":
+    st.subheader("🔗 Connexion Faire")
+
+    FAIRE_AUTH_URL = (
+        "https://faire.com/oauth2/authorize"
+        "?applicationId=apa_82qgm4c87e"
+        "&scope=READ_ORDERS,READ_PRODUCTS,READ_INVENTORIES"
+        "&state=piquepince2026"
+        "&redirectUrl=https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
+    )
+    FAIRE_REDIRECT_URL = "https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
+
+    if st.session_state.get("faire_token"):
+        st.success("✅ Connecté à Faire")
+
+    st.link_button("Se connecter à Faire", FAIRE_AUTH_URL)
+
+    code = st.query_params.get("code")
+    if code:
+        st.info(f"Code OAuth reçu : `{code}`")
+        with st.spinner("Échange du code contre un token..."):
+            try:
+                resp = requests.post(
+                    "https://www.faire.com/api/external-api-oauth2/token",
+                    json={
+                        "application_token": "apa_82qgm4c87e",
+                        "application_secret": st.secrets["FAIRE_SECRET"],
+                        "redirect_url": FAIRE_REDIRECT_URL,
+                        "scope": ["READ_ORDERS", "READ_PRODUCTS", "READ_INVENTORIES"],
+                        "grant_type": "AUTHORIZATION_CODE",
+                        "authorization_code": code
+                    }
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    token = data.get("access_token") or data.get("token")
+                    st.session_state["faire_token"] = token
+                    st.success("✅ Token Faire obtenu avec succès !")
+                    st.code(token, language=None)
+                    st.info("Copie ce token dans les secrets Streamlit sous la clé `FAIRE_TOKEN`.")
+                else:
+                    st.error(f"Erreur {resp.status_code} : {resp.text}")
+            except Exception as e:
+                st.error(f"Erreur lors de l'échange du token : {e}")
