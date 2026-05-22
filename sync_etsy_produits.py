@@ -15,6 +15,8 @@ def get_all_listings(shop_id, state="active"):
             f"{ETSY_API_URL}/application/shops/{shop_id}/listings/{endpoint}",
             params={"limit": limit, "offset": offset}
         )
+        if state == "inactive":
+            st.write(f"**[DEBUG inactive]** status={r.status_code} | réponse={r.text[:200]}")
         if r.status_code != 200:
             break
         data = r.json()
