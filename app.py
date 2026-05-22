@@ -20,8 +20,10 @@ def get_prod_parent(sku, prod_map):
     if not sku:
         return {}
     sku = str(sku)
+    # Correspondance exacte : couvre les variations stockées par sync_produits
     if sku in prod_map:
         return prod_map[sku]
+    # Fallback préfixe : pour les SKUs absents de produits (sync non faite)
     for longueur in range(len(sku)-1, 3, -1):
         prefixe = sku[:longueur]
         if prefixe in prod_map:
