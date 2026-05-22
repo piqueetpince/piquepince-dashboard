@@ -6,6 +6,7 @@ from sync_database import (get_wizi_token, sync_categories, sync_marques,
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
+from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 import time
 from datetime import datetime, timezone
 from faire_api import api_get as faire_api_get
@@ -54,7 +55,7 @@ with st.sidebar:
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
         st.subheader("🛍️ Wizishop")
@@ -154,6 +155,32 @@ if page == "🔄 Synchronisation":
                     st.error(f"Erreur : {e}")
 
         st.info("💡 Le token Etsy se rafraîchit automatiquement.")
+
+    with col3:
+        st.subheader("🛒 Faire")
+
+        if st.button("7️⃣ Sync Commandes Faire", use_container_width=True):
+            with st.spinner("Synchronisation commandes Faire..."):
+                debut = time.time()
+                try:
+                    nb = sync_faire_commandes()
+                    duree = time.time() - debut
+                    log_sync_faire("commandes_faire", nb, "success", f"{nb} commandes", duree)
+                    st.success(f"✓ {nb} commandes Faire en {duree:.1f}s")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+        if st.button("8️⃣ Sync Produits Faire", use_container_width=True):
+            with st.spinner("Synchronisation produits Faire..."):
+                debut = time.time()
+                try:
+                    nb_prod, nb_var = sync_faire_produits()
+                    duree = time.time() - debut
+                    log_sync_faire("produits_faire", nb_prod, "success",
+                                   f"{nb_prod} produits, {nb_var} variants", duree)
+                    st.success(f"✓ {nb_prod} produits et {nb_var} variants en {duree:.1f}s")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
 
     logs = select("sync_log",
         "select=table_name,source,nb_enregistrements,statut,created_at&order=created_at.desc&limit=15")
