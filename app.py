@@ -42,6 +42,7 @@ with st.sidebar:
         "🚨 Réapprovisionnement",
         "🏭 Stock & Fournisseurs",
         "🏷️ Catalogue Etsy",
+        "🔎 Produits manquants sur Etsy",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
         "🔍 Vérification Etsy",
@@ -743,6 +744,67 @@ elif page == "🏷️ Catalogue Etsy":
                               csv, "skus_a_corriger_etsy.csv", "text/csv")
     else:
         st.info("Aucune donnée. Lance d'abord la sync 6️⃣ Produits Etsy.")
+
+elif page == "🔎 Produits manquants sur Etsy":
+    st.subheader("🔎 Produits manquants sur Etsy")
+
+    with st.sidebar:
+        st.divider()
+        fournisseurs_fixes = ["Tous", "VEINIERE", "NPC", "NPGL", "NAVARRO", "BAVOUX", "DELORME"]
+        fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_fixes)
+
+    skus_data = select("skus", "select=sku,stock&statut=eq.visible")
+    etsy_variations = select("produits_etsy_variations", "select=sku")
+    produits_data = select("produits",
+        "select=sku,nom,fournisseur,nom_categorie,prix_vente_ht,reference_fournisseur")
+
+    if skus_data:
+        skus_wizi = {s["sku"] for s in skus_data}
+        skus_etsy = {v["sku"] for v in etsy_variations} if etsy_variations else set()
+        prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+        sku_stock = {s["sku"]: int(s["stock"] or 0) for s in skus_data}
+
+        rows = []
+        for sku in skus_wizi - skus_etsy:
+            prod = get_prod_parent(sku, prod_map)
+            rows.append({
+                "SKU": sku,
+                "Produit": prod.get("nom") or "",
+                "Fournisseur": prod.get("fournisseur") or "",
+                "Catégorie": prod.get("nom_categorie") or "",
+                "Prix vente HT": prod.get("prix_vente_ht") or 0,
+                "Stock": sku_stock.get(sku, 0),
+                "Réf. fournisseur": prod.get("reference_fournisseur") or ""
+            })
+
+        df_manquants = pd.DataFrame(rows) if rows else pd.DataFrame()
+
+        total_manquants = len(df_manquants)
+
+        if fournisseur_filtre != "Tous" and not df_manquants.empty:
+            df_filtre = df_manquants[df_manquants["Fournisseur"] == fournisseur_filtre]
+        else:
+            df_filtre = df_manquants
+
+        nb_filtre = len(df_filtre)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Total SKUs manquants sur Etsy", total_manquants)
+        with col2:
+            label = f"Manquants — {fournisseur_filtre}" if fournisseur_filtre != "Tous" else "Manquants (tous fournisseurs)"
+            st.metric(label, nb_filtre)
+
+        if not df_filtre.empty:
+            df_show = df_filtre.sort_values("SKU").reset_index(drop=True)
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            csv = df_show.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Télécharger en CSV", csv, "produits_manquants_etsy.csv", "text/csv")
+        else:
+            st.info("Aucun SKU manquant pour ce filtre." if fournisseur_filtre != "Tous"
+                    else "Tous les SKUs Wizishop sont présents sur Etsy.")
+    else:
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
 
 elif page == "🌍 Comptabilité TVA":
     with st.sidebar:
