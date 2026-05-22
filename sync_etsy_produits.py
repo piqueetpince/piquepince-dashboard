@@ -5,13 +5,14 @@ from etsy_api import api_get
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
 
-def get_all_listings(shop_id):
+def get_all_listings(shop_id, state="active"):
     all_listings = []
     offset = 0
     limit = 100
+    endpoint = "inactive" if state == "inactive" else "active"
     while True:
         r = api_get(
-            f"{ETSY_API_URL}/application/shops/{shop_id}/listings/active",
+            f"{ETSY_API_URL}/application/shops/{shop_id}/listings/{endpoint}",
             params={"limit": limit, "offset": offset}
         )
         if r.status_code != 200:
@@ -34,7 +35,9 @@ def get_listing_inventory(listing_id):
     return []
 
 def sync_produits_etsy(shop_id):
-    listings = get_all_listings(shop_id)
+    listings_actifs = get_all_listings(shop_id, state="active")
+    listings_inactifs = get_all_listings(shop_id, state="inactive")
+    listings = listings_actifs + listings_inactifs
     total_listings = 0
     total_variations = 0
 
@@ -43,6 +46,7 @@ def sync_produits_etsy(shop_id):
 
     for listing in listings:
         listing_id = listing.get("listing_id")
+        listing_active = listing.get("state") == "active"
         prix = listing.get("price", {})
         divisor = prix.get("divisor", 100) or 100
 
@@ -71,7 +75,8 @@ def sync_produits_etsy(shop_id):
                 prix_var = offering.get("price", {})
                 divisor_var = prix_var.get("divisor", 100) or 100
                 stock_etsy = offering.get("quantity", 0)
-                is_enabled = offering.get("is_enabled", False)
+                # Si le listing est inactif, aucune variation n'est active
+                is_enabled = listing_active and offering.get("is_enabled", False)
 
                 variation_valeur = ""
                 prop_values = product.get("property_values", [])
@@ -102,7 +107,7 @@ def sync_produits_etsy(shop_id):
             skus_listing = listing.get("skus", [])
             for sku in skus_listing:
                 stock_wizishop = sku_stock_map.get(sku, 0)
-                is_enabled = listing.get("state") == "active"
+                is_enabled = listing_active
                 alerte = is_enabled and stock_wizishop == 0
 
                 upsert("produits_etsy_variations", [{
