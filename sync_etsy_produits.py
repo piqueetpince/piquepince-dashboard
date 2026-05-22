@@ -37,11 +37,11 @@ def get_listing_inventory(listing_id):
 def sync_produits_etsy(shop_id):
     listings_actifs = get_all_listings(shop_id, state="active")
     listings_inactifs = get_all_listings(shop_id, state="inactive")
-    print(f"[DEBUG] listings actifs : {len(listings_actifs)}")
-    print(f"[DEBUG] listings inactifs : {len(listings_inactifs)}")
+    st.write(f"**[DEBUG]** Listings actifs : {len(listings_actifs)} — Listings inactifs : {len(listings_inactifs)}")
     if listings_inactifs:
-        exemple = listings_inactifs[0]
-        print(f"[DEBUG] exemple listing inactif : id={exemple.get('listing_id')} state={exemple.get('state')} has_variations={exemple.get('has_variations')} skus={exemple.get('skus')}")
+        st.write("**[DEBUG] Listings inactifs :**")
+        for l in listings_inactifs:
+            st.write(f"- listing_id={l.get('listing_id')} | state={l.get('state')}")
     listings = listings_actifs + listings_inactifs
     total_listings = 0
     total_variations = 0
