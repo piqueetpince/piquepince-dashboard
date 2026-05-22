@@ -1108,6 +1108,8 @@ elif page == "🔍 Vérification Etsy":
 elif page == "🔗 Connexion Faire":
     st.subheader("🔗 Connexion Faire")
 
+    st.write("**[DEBUG] Query params reçus :**", dict(st.query_params))
+
     FAIRE_AUTH_URL = (
         "https://faire.com/oauth2/authorize"
         "?applicationId=apa_82qgm4c87e"
