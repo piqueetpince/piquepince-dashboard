@@ -6,7 +6,8 @@ FAIRE_API_URL = "https://www.faire.com/external-api/v2"
 FAIRE_APP_ID = "apa_82qgm4c87e"
 
 
-def _get_headers():
+def _get_headers_oauth():
+    """Mode OAuth : token Brand Portal utilisé comme OAuth token + app credentials en Base64."""
     credentials = base64.b64encode(
         f"{FAIRE_APP_ID}:{st.secrets['FAIRE_SECRET']}".encode()
     ).decode()
@@ -17,10 +18,18 @@ def _get_headers():
     }
 
 
+def _get_headers_token():
+    """Mode token direct V1/V2 : token Brand Portal seul via X-FAIRE-ACCESS-TOKEN."""
+    return {
+        "X-FAIRE-ACCESS-TOKEN": st.secrets["FAIRE_TOKEN"],
+        "Content-Type": "application/json"
+    }
+
+
 def api_get(endpoint, params=None):
     return requests.get(
         f"{FAIRE_API_URL}{endpoint}",
-        headers=_get_headers(),
+        headers=_get_headers_token(),
         params=params or {}
     )
 
