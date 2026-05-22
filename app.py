@@ -1111,10 +1111,23 @@ elif page == "🔗 Connexion Faire":
     if st.button("Tester la connexion Faire"):
         with st.spinner("Test de connexion..."):
             try:
+                import base64
+                app_id = "apa_82qgm4c87e"
+                secret = st.secrets.get("FAIRE_SECRET", "")
+                token = st.secrets.get("FAIRE_TOKEN", "")
+                credentials = base64.b64encode(f"{app_id}:{secret}".encode()).decode()
+
+                st.write("**[DEBUG] Headers envoyés :**")
+                st.write(f"- `X-FAIRE-APP-CREDENTIALS` : `{credentials[:10]}...{credentials[-6:]}`")
+                st.write(f"- `X-FAIRE-OAUTH-ACCESS-TOKEN` : `{token[:10]}...{token[-6:]}`")
+                st.write(f"- FAIRE_SECRET présent : `{'oui' if secret else 'NON — clé manquante'}`")
+                st.write(f"- FAIRE_TOKEN présent : `{'oui' if token else 'NON — clé manquante'}`")
+
                 r = faire_api_get("/orders", params={"limit": 1})
+                st.write(f"**[DEBUG] Réponse HTTP :** `{r.status_code}`")
                 if r.status_code == 200:
                     st.success("✅ Connexion Faire fonctionnelle")
                 else:
-                    st.error(f"Erreur {r.status_code} : {r.text}")
+                    st.error(f"Erreur {r.status_code} : {r.text[:500]}")
             except Exception as e:
                 st.error(f"Erreur : {e}")
