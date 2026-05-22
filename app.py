@@ -42,6 +42,7 @@ with st.sidebar:
         "🚨 Réapprovisionnement",
         "🏭 Stock & Fournisseurs",
         "🏷️ Catalogue Etsy",
+        "📊 Gestion stock Etsy",
         "🔎 Produits manquants sur Etsy",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
@@ -742,6 +743,129 @@ elif page == "🏷️ Catalogue Etsy":
             csv = df_show.to_csv(index=False).encode("utf-8")
             st.download_button("📥 Télécharger liste à corriger",
                               csv, "skus_a_corriger_etsy.csv", "text/csv")
+    else:
+        st.info("Aucune donnée. Lance d'abord la sync 6️⃣ Produits Etsy.")
+
+elif page == "📊 Gestion stock Etsy":
+    st.subheader("📊 Gestion stock Etsy")
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période ventes (mois)", min_value=1, max_value=12, value=3)
+        seuil_jours = st.slider("Seuil alerte jours de stock", min_value=7, max_value=90, value=30)
+        alerte_filtre = st.selectbox("Filtre alerte", [
+            "Toutes", "🔴 Urgent uniquement", "🔴 + 🟡 Attention"
+        ])
+        statut_filtre = st.selectbox("Statut listing", [
+            "Tous", "Actifs uniquement", "Inactifs uniquement"
+        ])
+
+    variations = select("produits_etsy_variations",
+        "select=sku,stock_etsy,stock_wizishop,is_enabled,variation_valeur,listing_id")
+    listings = select("produits_etsy", "select=listing_id,titre")
+    skus_data = select("skus", "select=sku,stock")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    commandes_valides = select("commandes",
+        f"select=id_wizi,source&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+
+    if variations:
+        listing_map = {l["listing_id"]: l["titre"] for l in listings} if listings else {}
+        sku_stock_wizi = {s["sku"]: int(s["stock"] or 0) for s in skus_data} if skus_data else {}
+        nb_jours = nb_mois * 30
+
+        ventes_wizi = {}
+        ventes_etsy = {}
+        if commandes_valides:
+            source_map = {str(c["id_wizi"]): c["source"] for c in commandes_valides}
+            ids_str = ",".join(str(c["id_wizi"]) for c in commandes_valides)
+            lignes = select("lignes_commande",
+                f"select=sku,sku_variation,quantite,id_commande&id_commande=in.({ids_str})",
+                limit=50000)
+            if lignes:
+                for ligne in lignes:
+                    sku_key = ligne.get("sku_variation") or ligne.get("sku")
+                    if not sku_key:
+                        continue
+                    source = source_map.get(str(ligne.get("id_commande")), "wizishop")
+                    qty = ligne.get("quantite") or 0
+                    if source == "wizishop":
+                        ventes_wizi[sku_key] = ventes_wizi.get(sku_key, 0) + qty
+                    else:
+                        ventes_etsy[sku_key] = ventes_etsy.get(sku_key, 0) + qty
+
+        rows = []
+        for v in variations:
+            sku = v.get("sku") or ""
+            listing_id = v.get("listing_id")
+            titre = (listing_map.get(listing_id, "") or "")[:60]
+            variation_valeur = v.get("variation_valeur") or "—"
+            is_enabled = v.get("is_enabled", False)
+            stock_etsy = int(v.get("stock_etsy") or 0)
+            stock_wizi = sku_stock_wizi.get(sku, 0)
+            ecart = stock_wizi - stock_etsy
+
+            total_ventes = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0)
+            v_wizi = round(ventes_wizi.get(sku, 0) / nb_mois, 1)
+            v_etsy = round(ventes_etsy.get(sku, 0) / nb_mois, 1)
+            v_total = round(total_ventes / nb_mois, 1)
+            jours_stock = round(stock_wizi / (total_ventes / nb_jours)) if total_ventes > 0 else 999
+
+            if stock_etsy > stock_wizi or (stock_wizi == 0 and is_enabled):
+                alerte = "🔴 URGENT"
+                priorite = 1
+            elif jours_stock < seuil_jours or ecart > 5:
+                alerte = "🟡 ATTENTION"
+                priorite = 2
+            else:
+                alerte = "🟢 OK"
+                priorite = 3
+
+            rows.append({
+                "SKU": sku,
+                "Produit": titre,
+                "Variation": variation_valeur,
+                "Stock Wizishop": stock_wizi,
+                "Stock Etsy": stock_etsy,
+                "Écart": ecart,
+                "Ventes/mois Wizi": v_wizi,
+                "Ventes/mois Etsy": v_etsy,
+                "Ventes/mois Total": v_total,
+                "Jours de stock": jours_stock,
+                "Actif": "✅" if is_enabled else "⏸️",
+                "Alerte": alerte,
+                "_priorite": priorite
+            })
+
+        df = pd.DataFrame(rows)
+
+        nb_urgent = len(df[df["Alerte"] == "🔴 URGENT"])
+        nb_attention = len(df[df["Alerte"] == "🟡 ATTENTION"])
+        nb_total = len(df)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🔴 Alertes urgentes", nb_urgent)
+        with col2:
+            st.metric("🟡 Alertes attention", nb_attention)
+        with col3:
+            st.metric("Variations Etsy totales", nb_total)
+
+        if statut_filtre == "Actifs uniquement":
+            df = df[df["Actif"] == "✅"]
+        elif statut_filtre == "Inactifs uniquement":
+            df = df[df["Actif"] == "⏸️"]
+
+        if alerte_filtre == "🔴 Urgent uniquement":
+            df = df[df["Alerte"] == "🔴 URGENT"]
+        elif alerte_filtre == "🔴 + 🟡 Attention":
+            df = df[df["Alerte"].isin(["🔴 URGENT", "🟡 ATTENTION"])]
+
+        df = df.sort_values("_priorite").drop(columns=["_priorite"]).reset_index(drop=True)
+
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv, "gestion_stock_etsy.csv", "text/csv")
     else:
         st.info("Aucune donnée. Lance d'abord la sync 6️⃣ Produits Etsy.")
 
