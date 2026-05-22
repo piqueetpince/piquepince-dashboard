@@ -8,6 +8,7 @@ from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 import time
 import requests
+import urllib.parse
 from datetime import datetime, timezone
 
 st.set_page_config(
@@ -1110,14 +1111,14 @@ elif page == "🔗 Connexion Faire":
 
     st.write("**[DEBUG] Query params reçus :**", dict(st.query_params))
 
+    FAIRE_REDIRECT_URL = "https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
     FAIRE_AUTH_URL = (
         "https://faire.com/oauth2/authorize"
-        "?applicationId=apa_82qgm4c87e"
-        "&scope=READ_ORDERS,READ_PRODUCTS,READ_INVENTORIES"
-        "&state=piquepince2026"
-        "&redirectUrl=https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
+        f"?applicationId=apa_82qgm4c87e"
+        f"&scope=READ_ORDERS%2CREAD_PRODUCTS%2CREAD_INVENTORIES"
+        f"&state=piquepince2026"
+        f"&redirectUrl={urllib.parse.quote(FAIRE_REDIRECT_URL, safe='')}"
     )
-    FAIRE_REDIRECT_URL = "https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
 
     if st.session_state.get("faire_token"):
         st.success("✅ Connecté à Faire")
