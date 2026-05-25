@@ -1337,17 +1337,17 @@ elif page == "💰 Vérification prix Faire":
             sku = v["sku"]
             prod_wizi = get_prod_parent(sku, prod_map)
             nom = prod_wizi.get("nom", "") or v.get("nom", "") or sku
-            prix_wizi_ht = float(prod_wizi.get("prix_vente_ht") or 0)
+            prix_wizi_ttc = round(float(prod_wizi.get("prix_vente_ht") or 0) * 1.20, 2)
             prix_conseille = float(v.get("prix_vente_conseille") or 0)
             prix_grossiste = float(v.get("prix_grossiste") or 0)
-            ecart_prix = round(prix_conseille - prix_wizi_ht, 2)
+            ecart_prix = round(prix_conseille - prix_wizi_ttc, 2)
             coeff = round(prix_conseille / prix_grossiste, 2) if prix_grossiste else 0
             ecart_coeff = round(coeff - COEFF_CIBLE, 2) if coeff else 0
 
             rows.append({
                 "SKU": sku,
                 "Produit": nom,
-                "Prix vente Wizi HT": prix_wizi_ht,
+                "Prix vente Wizi TTC": prix_wizi_ttc,
                 "Prix conseillé Faire": prix_conseille,
                 "Écart prix vente": ecart_prix,
                 "Prix revendeur Faire": prix_grossiste,
