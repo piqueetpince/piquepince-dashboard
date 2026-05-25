@@ -41,6 +41,12 @@ def sync_faire_commandes():
 
     for order in orders:
         order_id = order.get("id")
+
+        if total < 3:
+            print(f"\n--- DEBUG commande {total + 1} : {order_id} ---")
+            print(f"payout_costs: {order.get('payout_costs')}")
+            print(f"faire_covered_shipping_cost: {order.get('faire_covered_shipping_cost')}")
+
         statut_brut = order.get("state", "")
         statut_code = STATUT_MAP.get(statut_brut, 10)
 
