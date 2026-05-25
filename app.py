@@ -51,6 +51,7 @@ with st.sidebar:
         "🔍 Vérification Wizishop",
         "🔍 Vérification Etsy",
         "🔍 Vérification Faire",
+        "📒 Réconciliation Faire",
         "🔗 Connexion Faire",
         "🔄 Synchronisation"
     ])
@@ -1258,6 +1259,133 @@ elif page == "🔍 Vérification Faire":
             st.info("Aucune ligne de commande trouvée.")
     else:
         st.info("Aucune commande Faire trouvée.")
+
+elif page == "📒 Réconciliation Faire":
+    st.subheader("📒 Réconciliation Faire")
+
+    with st.sidebar:
+        st.divider()
+        annee = st.selectbox("Année", [2026, 2025, 2024], index=0)
+
+    commandes_faire = select("commandes",
+        f"select=id_faire,date_commande,nom_facturation,prenom_facturation,"
+        f"montant_ttc,frais_port,tva_client,montant_net_recu,frais_expedition_faire,commission_faire"
+        f"&source=eq.faire&statut_code=not.in.(0,45,50)"
+        f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01"
+        f"&order=date_commande.desc")
+
+    if not commandes_faire:
+        st.info("Aucune commande Faire pour cette année.")
+    else:
+        df_cmd = pd.DataFrame(commandes_faire)
+        for col in ["montant_ttc", "frais_port", "tva_client",
+                    "montant_net_recu", "frais_expedition_faire", "commission_faire"]:
+            df_cmd[col] = pd.to_numeric(df_cmd[col], errors="coerce").fillna(0)
+
+        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+        ids_str = ",".join(ids_faire)
+
+        lignes = select("lignes_commande",
+            f"select=id_commande,sku,quantite&id_commande=in.({ids_str})",
+            limit=50000)
+
+        produits_data = select("produits", "select=sku,prix_achat_ht")
+        prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+        cout_achat_par_cmd = {}
+        prix_achat_ok_par_cmd = {}
+
+        if lignes:
+            for ligne in lignes:
+                id_cmd = str(ligne.get("id_commande", ""))
+                sku = ligne.get("sku") or ""
+                qty = float(ligne.get("quantite") or 0)
+                prod_info = get_prod_parent(sku, prod_map_achat)
+                prix = float(prod_info.get("prix_achat_ht") or 0)
+
+                if id_cmd not in cout_achat_par_cmd:
+                    cout_achat_par_cmd[id_cmd] = 0.0
+                    prix_achat_ok_par_cmd[id_cmd] = True
+
+                cout_achat_par_cmd[id_cmd] += prix * qty
+                if prix <= 0:
+                    prix_achat_ok_par_cmd[id_cmd] = False
+
+        rows = []
+        for _, row in df_cmd.iterrows():
+            id_faire = str(row["id_faire"])
+            try:
+                date = pd.to_datetime(row["date_commande"]).strftime("%d/%m/%Y")
+            except Exception:
+                date = ""
+            client = f"{row.get('nom_facturation', '')} {row.get('prenom_facturation', '')}".strip()
+            ca_ht = float(row["montant_ttc"])
+            frais_port = float(row["frais_port"])
+            tva = float(row["tva_client"])
+            total_ttc = round(ca_ht + frais_port + tva, 2)
+            commission = float(row["commission_faire"])
+            frais_exp = float(row["frais_expedition_faire"])
+            net_recu = float(row["montant_net_recu"])
+            cout_achat = round(cout_achat_par_cmd.get(id_faire, 0), 2)
+            marge_nette = round(ca_ht - cout_achat - commission, 2)
+            marge_pct = round(marge_nette / ca_ht * 100, 1) if ca_ht else 0
+
+            ecart = round(total_ttc - commission - frais_exp - net_recu, 2)
+            equilibre = "✅" if abs(ecart) <= 0.02 else f"⚠️ {ecart:+.2f}€"
+
+            if id_faire in prix_achat_ok_par_cmd:
+                prix_achat_statut = "✅" if prix_achat_ok_par_cmd[id_faire] else "⚠️ prix achat manquant"
+            else:
+                prix_achat_statut = "⚠️ prix achat manquant"
+
+            rows.append({
+                "Date": date,
+                "Client": client,
+                "CA HT articles": ca_ht,
+                "Frais port": frais_port,
+                "TVA": tva,
+                "Total TTC calculé": total_ttc,
+                "Commission Faire": commission,
+                "Frais expéd. Faire": frais_exp,
+                "Net reçu": net_recu,
+                "Coût achat HT": cout_achat,
+                "Marge nette": marge_nette,
+                "Marge %": marge_pct,
+                "Équilibre": equilibre,
+                "Prix achat": prix_achat_statut,
+            })
+
+        df_table = pd.DataFrame(rows)
+
+        ca_total = df_table["CA HT articles"].sum()
+        commission_total = df_table["Commission Faire"].sum()
+        cout_total = df_table["Coût achat HT"].sum()
+        marge_totale = df_table["Marge nette"].sum()
+        marge_pct_moy = round(marge_totale / ca_total * 100, 1) if ca_total else 0
+        nb_desequilibre = len(df_table[df_table["Équilibre"] != "✅"])
+        nb_prix_manquant = len(df_table[df_table["Prix achat"] != "✅"])
+
+        col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+        with col1:
+            st.metric("CA HT total", f"{ca_total:.0f} €")
+        with col2:
+            st.metric("Commission Faire", f"{commission_total:.0f} €")
+        with col3:
+            st.metric("Coût achat total", f"{cout_total:.0f} €")
+        with col4:
+            st.metric("Marge nette", f"{marge_totale:.0f} €")
+        with col5:
+            st.metric("Marge %", f"{marge_pct_moy:.1f} %")
+        with col6:
+            st.metric("⚠️ Déséquilibrées", nb_desequilibre)
+        with col7:
+            st.metric("⚠️ Prix achat manquant", nb_prix_manquant)
+
+        st.divider()
+        st.dataframe(df_table, use_container_width=True, hide_index=True)
+        csv = df_table.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv,
+                           f"reconciliation_faire_{annee}.csv", "text/csv")
 
 elif page == "🔗 Connexion Faire":
     st.subheader("🔗 Connexion Faire")
