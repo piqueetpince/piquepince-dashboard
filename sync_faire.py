@@ -1,6 +1,6 @@
 import time
 from faire_api import get_orders, get_products
-from supabase_api import upsert, insert
+from supabase_api import upsert, insert, delete
 from sync_database import get_zone_tva
 
 STATUT_MAP = {
@@ -99,6 +99,7 @@ def sync_faire_commandes():
             })
 
         if lignes:
+            delete("lignes_commande", f"id_commande=eq.{order_id}")
             insert("lignes_commande", lignes)
 
         total += 1
