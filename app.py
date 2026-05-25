@@ -52,6 +52,7 @@ with st.sidebar:
         "🔍 Vérification Etsy",
         "🔍 Vérification Faire",
         "📒 Réconciliation Faire",
+        "📊 Gestion stock Faire",
         "🔗 Connexion Faire",
         "🔄 Synchronisation"
     ])
@@ -1386,6 +1387,129 @@ elif page == "📒 Réconciliation Faire":
         csv = df_table.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Télécharger en CSV", csv,
                            f"reconciliation_faire_{annee}.csv", "text/csv")
+
+elif page == "📊 Gestion stock Faire":
+    st.subheader("📊 Gestion stock Faire")
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période ventes (mois)", min_value=1, max_value=24, value=12)
+        seuil_jours = st.slider("Seuil alerte jours de stock", min_value=7, max_value=90, value=30)
+        seuil_ecart_jours = st.slider("Seuil écart significatif (jours)", min_value=5, max_value=60, value=15)
+        alerte_filtre = st.selectbox("Filtre alerte", [
+            "Toutes", "🔴 Urgent uniquement", "🔴 + 🟡 Attention"
+        ])
+        statut_filtre = st.selectbox("Statut listing", [
+            "Tous", "Actifs uniquement", "Inactifs uniquement"
+        ])
+
+    faire_variants = select("produits_faire_variants",
+        "select=sku,nom,available_quantity,sale_state,lifecycle_state")
+    skus_data = select("skus", "select=sku,stock")
+    produits_data = select("produits", "select=sku,nom")
+    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    commandes_faire = select("commandes",
+        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+
+    if faire_variants:
+        sku_stock_wizi = {s["sku"]: int(s["stock"] or 0) for s in skus_data} if skus_data else {}
+
+        ventes_faire = {}
+        if commandes_faire:
+            ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+            ids_str = ",".join(ids_faire)
+            lignes = select("lignes_commande",
+                f"select=sku,quantite&id_commande=in.({ids_str})",
+                limit=50000)
+            if lignes:
+                for ligne in lignes:
+                    sku_key = ligne.get("sku") or ""
+                    if sku_key:
+                        ventes_faire[sku_key] = ventes_faire.get(sku_key, 0) + (ligne.get("quantite") or 0)
+
+        rows = []
+        for v in faire_variants:
+            sku = v.get("sku") or ""
+            if not sku:
+                continue
+            nom_produit = get_prod_parent(sku, prod_map).get("nom", "") or v.get("nom", "") or sku
+            is_active = v.get("sale_state") == "FOR_SALE" and v.get("lifecycle_state") == "PUBLISHED"
+            stock_faire = int(v.get("available_quantity") or 0)
+            stock_wizi = sku_stock_wizi.get(sku, 0)
+            ecart = stock_wizi - stock_faire
+
+            v_faire = round(ventes_faire.get(sku, 0) / nb_mois, 1)
+            ventes_par_jour = v_faire / 30
+            jours_stock = round(stock_wizi / ventes_par_jour) if ventes_par_jour > 0 else 999
+
+            if is_active and ((stock_wizi == 0 and stock_faire > 0 and v_faire > 0) or
+                               (jours_stock < seuil_jours and v_faire > 0)):
+                alerte = "🔴 URGENT"
+                priorite = 1
+            elif is_active and ((stock_faire > stock_wizi and v_faire > 0) or
+                                 (ventes_par_jour > 0 and ecart > 0 and
+                                  (ecart / ventes_par_jour) > seuil_ecart_jours)):
+                alerte = "🟡 ATTENTION"
+                priorite = 2
+            elif not is_active and jours_stock > seuil_jours and v_faire > 0:
+                alerte = "🟡 ATTENTION"
+                priorite = 2
+            elif stock_faire > stock_wizi and v_faire == 0:
+                alerte = "⚪ INFO"
+                priorite = 3
+            else:
+                alerte = "🟢 OK"
+                priorite = 4
+
+            rows.append({
+                "SKU": sku,
+                "Produit": nom_produit,
+                "Stock Wizishop": stock_wizi,
+                "Stock Faire": stock_faire,
+                "Écart": ecart,
+                "Ventes/mois Faire": v_faire,
+                "Jours de stock": jours_stock,
+                "Actif": "✅" if is_active else "⏸️",
+                "Alerte": alerte,
+                "_priorite": priorite
+            })
+
+        df = pd.DataFrame(rows)
+        df = df[~((df["Stock Wizishop"] == 0) & (df["Stock Faire"] == 0))]
+
+        nb_urgent = len(df[df["Alerte"] == "🔴 URGENT"])
+        nb_attention = len(df[df["Alerte"] == "🟡 ATTENTION"])
+        nb_info = len(df[df["Alerte"] == "⚪ INFO"])
+        nb_ok = len(df[df["Alerte"] == "🟢 OK"])
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("🔴 Urgent", nb_urgent)
+        with col2:
+            st.metric("🟡 Attention", nb_attention)
+        with col3:
+            st.metric("⚪ Info", nb_info)
+        with col4:
+            st.metric("🟢 OK", nb_ok)
+
+        if statut_filtre == "Actifs uniquement":
+            df = df[df["Actif"] == "✅"]
+        elif statut_filtre == "Inactifs uniquement":
+            df = df[df["Actif"] == "⏸️"]
+
+        if alerte_filtre == "🔴 Urgent uniquement":
+            df = df[df["Alerte"] == "🔴 URGENT"]
+        elif alerte_filtre == "🔴 + 🟡 Attention":
+            df = df[df["Alerte"].isin(["🔴 URGENT", "🟡 ATTENTION"])]
+
+        df = df.sort_values("_priorite").drop(columns=["_priorite"]).reset_index(drop=True)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv, "gestion_stock_faire.csv", "text/csv")
+    else:
+        st.info("Aucune donnée. Lance d'abord la sync 8️⃣ Produits Faire.")
 
 elif page == "🔗 Connexion Faire":
     st.subheader("🔗 Connexion Faire")
