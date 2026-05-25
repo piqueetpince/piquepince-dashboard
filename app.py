@@ -48,6 +48,7 @@ with st.sidebar:
         "🔎 Produits manquants sur Etsy",
         "🔎 Produits manquants sur Faire",
         "✏️ Correction SKUs Faire",
+        "💰 Vérification prix Faire",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
         "🔍 Vérification Etsy",
@@ -1307,6 +1308,88 @@ elif page == "✏️ Correction SKUs Faire":
                 if succes > 0:
                     st.info("💡 Relance la **8️⃣ Sync Produits Faire** depuis la page "
                             "🔄 Synchronisation pour mettre à jour la base.")
+
+elif page == "💰 Vérification prix Faire":
+    st.subheader("💰 Vérification prix Faire")
+
+    with st.sidebar:
+        st.divider()
+        filtre = st.selectbox("Filtre", [
+            "Tous",
+            "Écart prix vente",
+            "Coefficient anormal",
+            "Sans prix conseillé"
+        ])
+
+    faire_variants = select("produits_faire_variants",
+        "select=id_faire,sku,nom,prix_grossiste,prix_vente_conseille,sale_state,lifecycle_state")
+    produits_data = select("produits", "select=sku,nom,prix_vente_ht")
+    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+    variants_avec_sku = [v for v in faire_variants if v.get("sku")] if faire_variants else []
+
+    if not variants_avec_sku:
+        st.info("Aucun variant avec SKU. Lance d'abord la sync 8️⃣ Produits Faire.")
+    else:
+        COEFF_CIBLE = 2.50
+        rows = []
+        for v in variants_avec_sku:
+            sku = v["sku"]
+            prod_wizi = get_prod_parent(sku, prod_map)
+            nom = prod_wizi.get("nom", "") or v.get("nom", "") or sku
+            prix_wizi_ht = float(prod_wizi.get("prix_vente_ht") or 0)
+            prix_conseille = float(v.get("prix_vente_conseille") or 0)
+            prix_grossiste = float(v.get("prix_grossiste") or 0)
+            ecart_prix = round(prix_conseille - prix_wizi_ht, 2)
+            coeff = round(prix_conseille / prix_grossiste, 2) if prix_grossiste else 0
+            ecart_coeff = round(coeff - COEFF_CIBLE, 2) if coeff else 0
+
+            rows.append({
+                "SKU": sku,
+                "Produit": nom,
+                "Prix vente Wizi HT": prix_wizi_ht,
+                "Prix conseillé Faire": prix_conseille,
+                "Écart prix vente": ecart_prix,
+                "Prix revendeur Faire": prix_grossiste,
+                "Coefficient": coeff,
+                "Coefficient cible": COEFF_CIBLE,
+                "Écart coefficient": ecart_coeff,
+            })
+
+        df = pd.DataFrame(rows).sort_values("SKU").reset_index(drop=True)
+
+        nb_ecart_prix = len(df[df["Écart prix vente"].abs() > 0.05])
+        nb_coeff_anormal = len(df[(df["Coefficient"] > 0) & ((df["Coefficient"] < 2.40) | (df["Coefficient"] > 2.60))])
+        nb_sans_prix = len(df[df["Prix conseillé Faire"] == 0])
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Écart prix vente > 0.05€", nb_ecart_prix)
+        with col2:
+            st.metric("Coefficient anormal (< 2.40 ou > 2.60)", nb_coeff_anormal)
+        with col3:
+            st.metric("Sans prix conseillé", nb_sans_prix)
+
+        if filtre == "Écart prix vente":
+            df = df[df["Écart prix vente"].abs() > 0.05]
+        elif filtre == "Coefficient anormal":
+            df = df[(df["Coefficient"] > 0) & ((df["Coefficient"] < 2.40) | (df["Coefficient"] > 2.60))]
+        elif filtre == "Sans prix conseillé":
+            df = df[df["Prix conseillé Faire"] == 0]
+
+        def color_ecart_prix(val):
+            return "color: red" if abs(val) > 0.05 else ""
+
+        def color_ecart_coeff(val):
+            return "color: red" if val != 0 and (val < -0.10 or val > 0.10) else ""
+
+        st.divider()
+        styled = df.style.map(color_ecart_prix, subset=["Écart prix vente"]) \
+                         .map(color_ecart_coeff, subset=["Écart coefficient"])
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv, "verification_prix_faire.csv", "text/csv")
 
 elif page == "🔍 Vérification Faire":
     st.subheader("🔍 Vérification des ventes Faire")
