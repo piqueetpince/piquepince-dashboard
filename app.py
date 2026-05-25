@@ -1215,8 +1215,8 @@ elif page == "✏️ Correction SKUs Faire":
     faire_variants = select("produits_faire_variants",
         "select=id_faire,id_produit_faire,sku,nom")
     skus_data = select("skus", "select=sku&statut=eq.visible")
-    produits_data = select("produits", "select=sku,nom")
-    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+    produits_faire_data = select("produits_faire", "select=id_faire,nom")
+    produits_faire_map = {p["id_faire"]: p["nom"] for p in produits_faire_data} if produits_faire_data else {}
     skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
 
     if not faire_variants:
@@ -1241,8 +1241,7 @@ elif page == "✏️ Correction SKUs Faire":
             df_edit = pd.DataFrame([{
                 "ID Faire": v.get("id_faire", ""),
                 "ID Produit Faire": v.get("id_produit_faire", ""),
-                "Produit parent": (get_prod_parent(v.get("sku", ""), prod_map).get("nom", "")
-                                   or v.get("nom", "")),
+                "Produit parent": produits_faire_map.get(v.get("id_produit_faire", ""), v.get("nom", "")),
                 "Nom variant": v.get("nom", ""),
                 "SKU actuel": v.get("sku", ""),
                 "Nouveau SKU": "",
