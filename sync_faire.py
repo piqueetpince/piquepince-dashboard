@@ -1,4 +1,5 @@
 import time
+import streamlit as st
 from faire_api import get_orders, get_products
 from supabase_api import upsert, insert
 from sync_database import get_zone_tva
@@ -43,9 +44,9 @@ def sync_faire_commandes():
         order_id = order.get("id")
 
         if total < 3:
-            print(f"\n--- DEBUG commande {total + 1} : {order_id} ---")
-            print(f"payout_costs: {order.get('payout_costs')}")
-            print(f"faire_covered_shipping_cost: {order.get('faire_covered_shipping_cost')}")
+            st.write(f"**DEBUG commande {total + 1} : {order_id}**")
+            st.write("payout_costs :", order.get("payout_costs"))
+            st.write("faire_covered_shipping_cost :", order.get("faire_covered_shipping_cost"))
 
         statut_brut = order.get("state", "")
         statut_code = STATUT_MAP.get(statut_brut, 10)
