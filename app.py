@@ -9,7 +9,7 @@ from etsy_api import get_shop_id
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 import time
 from datetime import datetime, timezone
-from faire_api import api_get as faire_api_get, test_write_permission
+from faire_api import api_get as faire_api_get, test_write_permission, api_patch as faire_api_patch
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -47,6 +47,7 @@ with st.sidebar:
         "📊 Gestion stock Etsy",
         "🔎 Produits manquants sur Etsy",
         "🔎 Produits manquants sur Faire",
+        "✏️ Correction SKUs Faire",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
         "🔍 Vérification Etsy",
@@ -1207,6 +1208,95 @@ elif page == "🔎 Produits manquants sur Faire":
                     else "Tous les SKUs Wizishop sont présents sur Faire.")
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation.")
+
+elif page == "✏️ Correction SKUs Faire":
+    st.subheader("✏️ Correction SKUs Faire")
+
+    faire_variants = select("produits_faire_variants",
+        "select=id_faire,id_produit_faire,sku,nom")
+    skus_data = select("skus", "select=sku&statut=eq.visible")
+    skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
+
+    if not faire_variants:
+        st.info("Aucun variant Faire trouvé. Lance d'abord la sync 8️⃣ Produits Faire.")
+    else:
+        incorrects = [
+            v for v in faire_variants
+            if not v.get("sku") or v.get("sku") not in skus_valides
+        ]
+        nb_total = len(incorrects)
+        nb_vides = len([v for v in incorrects if not v.get("sku")])
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("SKUs incorrects sur Faire", nb_total)
+        with col2:
+            st.metric("SKUs vides (NULL ou vide)", nb_vides)
+
+        if not incorrects:
+            st.success("✅ Tous les SKUs Faire correspondent à des SKUs Wizishop valides !")
+        else:
+            df_edit = pd.DataFrame([{
+                "ID Faire": v.get("id_faire", ""),
+                "ID Produit Faire": v.get("id_produit_faire", ""),
+                "Nom variant": v.get("nom", ""),
+                "SKU actuel": v.get("sku", ""),
+                "Nouveau SKU": "",
+            } for v in incorrects])
+
+            df_result = st.data_editor(
+                df_edit,
+                column_config={
+                    "ID Faire": st.column_config.TextColumn("ID Faire", disabled=True),
+                    "ID Produit Faire": st.column_config.TextColumn("ID Produit Faire", disabled=True),
+                    "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
+                    "SKU actuel": st.column_config.TextColumn("SKU actuel", disabled=True),
+                    "Nouveau SKU": st.column_config.TextColumn("Nouveau SKU"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="editor_sku_faire"
+            )
+
+            lignes_a_corriger = df_result[
+                df_result["Nouveau SKU"].notna() & (df_result["Nouveau SKU"].str.strip() != "")
+            ]
+            st.caption(f"{len(lignes_a_corriger)} correction(s) à appliquer.")
+
+            if st.button("Mettre à jour sur Faire", type="primary",
+                         disabled=len(lignes_a_corriger) == 0):
+                progress = st.progress(0)
+                total = len(lignes_a_corriger)
+                succes = 0
+                erreurs = 0
+
+                for i, (_, row) in enumerate(lignes_a_corriger.iterrows()):
+                    product_id = row["ID Produit Faire"]
+                    variant_id = row["ID Faire"]
+                    nouveau_sku = row["Nouveau SKU"].strip()
+                    try:
+                        r = faire_api_patch(
+                            f"/products/{product_id}/variants/{variant_id}",
+                            {"sku": nouveau_sku}
+                        )
+                        if r.status_code == 200:
+                            succes += 1
+                        else:
+                            erreurs += 1
+                            st.error(f"❌ {row['SKU actuel'] or '(vide)'} → {nouveau_sku} : "
+                                     f"{r.status_code} — {r.text[:200]}")
+                    except Exception as e:
+                        erreurs += 1
+                        st.error(f"❌ {row['SKU actuel'] or '(vide)'} → {nouveau_sku} : {e}")
+                    progress.progress((i + 1) / total)
+
+                if succes > 0:
+                    st.success(f"✅ {succes} correction(s) réussie(s).")
+                if erreurs > 0:
+                    st.warning(f"⚠️ {erreurs} erreur(s).")
+                if succes > 0:
+                    st.info("💡 Relance la **8️⃣ Sync Produits Faire** depuis la page "
+                            "🔄 Synchronisation pour mettre à jour la base.")
 
 elif page == "🔍 Vérification Faire":
     st.subheader("🔍 Vérification des ventes Faire")
