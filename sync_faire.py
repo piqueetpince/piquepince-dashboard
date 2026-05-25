@@ -128,9 +128,17 @@ def sync_faire_produits():
         for variant in product.get("variants", []):
             prices = variant.get("prices") or []
             prix_grossiste = 0
+            prix_vente_conseille = 0
             if prices:
-                wp = prices[0].get("wholesale_price") or {}
-                prix_grossiste = (wp.get("amount_minor") or 0) / 100
+                eu_price = next(
+                    (p for p in prices
+                     if (p.get("geo_constraint") or {}).get("country_group") == "EUROPEAN_UNION"),
+                    prices[0]
+                )
+                prix_grossiste = (
+                    (eu_price.get("wholesale_price") or {}).get("amount_minor") or 0) / 100
+                prix_vente_conseille = (
+                    (eu_price.get("retail_price") or {}).get("amount_minor") or 0) / 100
 
             upsert("produits_faire_variants", [{
                 "id_faire": variant.get("id"),
@@ -140,7 +148,8 @@ def sync_faire_produits():
                 "available_quantity": variant.get("available_quantity"),
                 "sale_state": variant.get("sale_state"),
                 "lifecycle_state": variant.get("lifecycle_state"),
-                "prix_grossiste": prix_grossiste
+                "prix_grossiste": prix_grossiste,
+                "prix_vente_conseille": prix_vente_conseille
             }], "id_faire")
             total_variants += 1
 
