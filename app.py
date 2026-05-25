@@ -9,7 +9,7 @@ from etsy_api import get_shop_id
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 import time
 from datetime import datetime, timezone
-from faire_api import api_get as faire_api_get
+from faire_api import api_get as faire_api_get, test_write_permission
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -1522,5 +1522,17 @@ elif page == "🔗 Connexion Faire":
                     st.success("✅ Connexion Faire fonctionnelle")
                 else:
                     st.error(f"Erreur {r.status_code} : {r.text[:300]}")
+            except Exception as e:
+                st.error(f"Erreur : {e}")
+
+    if st.button("Tester les permissions d'écriture Faire"):
+        with st.spinner("Test en cours..."):
+            try:
+                status, body = test_write_permission()
+                if status is None:
+                    st.warning(f"Impossible de tester : {body}")
+                else:
+                    st.write(f"**Status code :** {status}")
+                    st.write(f"**Réponse :** {body}")
             except Exception as e:
                 st.error(f"Erreur : {e}")

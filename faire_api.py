@@ -1,6 +1,7 @@
 import base64
 import requests
 import streamlit as st
+from supabase_api import select
 
 FAIRE_API_URL = "https://www.faire.com/external-api/v2"
 FAIRE_APP_ID = "apa_82qgm4c87e"
@@ -19,6 +20,31 @@ def api_get(endpoint, params=None):
         headers=_get_headers_token(),
         params=params or {}
     )
+
+
+def api_patch(endpoint, body=None):
+    return requests.patch(
+        f"{FAIRE_API_URL}{endpoint}",
+        headers=_get_headers_token(),
+        json=body or {}
+    )
+
+
+def test_write_permission():
+    variants = select("produits_faire_variants",
+        "select=id_faire,id_produit_faire&limit=1")
+    if not variants:
+        return None, "Aucun variant trouvé dans produits_faire_variants"
+
+    variant = variants[0]
+    product_id = variant.get("id_produit_faire")
+    variant_id = variant.get("id_faire")
+
+    if not product_id or not variant_id:
+        return None, "IDs manquants dans le variant"
+
+    r = api_patch(f"/products/{product_id}/variants/{variant_id}", {})
+    return r.status_code, r.text[:300]
 
 
 def get_orders(since=None):
