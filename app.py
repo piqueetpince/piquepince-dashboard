@@ -1215,6 +1215,8 @@ elif page == "✏️ Correction SKUs Faire":
     faire_variants = select("produits_faire_variants",
         "select=id_faire,id_produit_faire,sku,nom")
     skus_data = select("skus", "select=sku&statut=eq.visible")
+    produits_data = select("produits", "select=sku,nom")
+    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
     skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
 
     if not faire_variants:
@@ -1239,6 +1241,8 @@ elif page == "✏️ Correction SKUs Faire":
             df_edit = pd.DataFrame([{
                 "ID Faire": v.get("id_faire", ""),
                 "ID Produit Faire": v.get("id_produit_faire", ""),
+                "Produit parent": (get_prod_parent(v.get("sku", ""), prod_map).get("nom", "")
+                                   or v.get("nom", "")),
                 "Nom variant": v.get("nom", ""),
                 "SKU actuel": v.get("sku", ""),
                 "Nouveau SKU": "",
@@ -1249,6 +1253,7 @@ elif page == "✏️ Correction SKUs Faire":
                 column_config={
                     "ID Faire": st.column_config.TextColumn("ID Faire", disabled=True),
                     "ID Produit Faire": st.column_config.TextColumn("ID Produit Faire", disabled=True),
+                    "Produit parent": st.column_config.TextColumn("Produit parent", disabled=True),
                     "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
                     "SKU actuel": st.column_config.TextColumn("SKU actuel", disabled=True),
                     "Nouveau SKU": st.column_config.TextColumn("Nouveau SKU"),
@@ -1261,39 +1266,45 @@ elif page == "✏️ Correction SKUs Faire":
             lignes_a_corriger = df_result[
                 df_result["Nouveau SKU"].notna() & (df_result["Nouveau SKU"].str.strip() != "")
             ]
-            st.caption(f"{len(lignes_a_corriger)} correction(s) à appliquer.")
+            st.caption(f"{len(lignes_a_corriger)} correction(s) à appliquer "
+                       f"sur {lignes_a_corriger['ID Produit Faire'].nunique()} produit(s).")
 
             if st.button("Mettre à jour sur Faire", type="primary",
                          disabled=len(lignes_a_corriger) == 0):
                 progress = st.progress(0)
-                total = len(lignes_a_corriger)
+                # Grouper par produit pour éviter les 429
+                groupes = lignes_a_corriger.groupby("ID Produit Faire")
+                nb_produits = len(groupes)
                 succes = 0
                 erreurs = 0
 
-                for i, (_, row) in enumerate(lignes_a_corriger.iterrows()):
-                    product_id = row["ID Produit Faire"]
-                    variant_id = row["ID Faire"]
-                    nouveau_sku = row["Nouveau SKU"].strip()
+                for i, (product_id, groupe) in enumerate(groupes):
+                    variants_payload = [
+                        {"id": row["ID Faire"], "sku": row["Nouveau SKU"].strip()}
+                        for _, row in groupe.iterrows()
+                    ]
                     try:
                         r = faire_api_patch(
-                            f"/products/{product_id}/variants/{variant_id}",
-                            {"sku": nouveau_sku}
+                            f"/products/{product_id}",
+                            {"variants": variants_payload}
                         )
                         if r.status_code == 200:
-                            succes += 1
+                            succes += len(variants_payload)
                         else:
-                            erreurs += 1
-                            st.error(f"❌ {row['SKU actuel'] or '(vide)'} → {nouveau_sku} : "
+                            erreurs += len(variants_payload)
+                            skus_concernes = ", ".join(
+                                row["SKU actuel"] or "(vide)" for _, row in groupe.iterrows())
+                            st.error(f"❌ Produit {product_id} ({skus_concernes}) : "
                                      f"{r.status_code} — {r.text[:200]}")
                     except Exception as e:
-                        erreurs += 1
-                        st.error(f"❌ {row['SKU actuel'] or '(vide)'} → {nouveau_sku} : {e}")
-                    progress.progress((i + 1) / total)
+                        erreurs += len(variants_payload)
+                        st.error(f"❌ Produit {product_id} : {e}")
+                    progress.progress((i + 1) / nb_produits)
 
                 if succes > 0:
-                    st.success(f"✅ {succes} correction(s) réussie(s).")
+                    st.success(f"✅ {succes} variant(s) corrigé(s).")
                 if erreurs > 0:
-                    st.warning(f"⚠️ {erreurs} erreur(s).")
+                    st.warning(f"⚠️ {erreurs} variant(s) en erreur.")
                 if succes > 0:
                     st.info("💡 Relance la **8️⃣ Sync Produits Faire** depuis la page "
                             "🔄 Synchronisation pour mettre à jour la base.")
