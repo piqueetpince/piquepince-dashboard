@@ -31,17 +31,6 @@ def sync_etsy_commandes(shop_id):
     receipts = get_all_receipts(shop_id)
     total = 0
 
-    # --- DEBUG temporaire ---
-    if receipts:
-        dates_debug = [
-            datetime.fromtimestamp(r["create_timestamp"], tz=timezone.utc)
-            for r in receipts if r.get("create_timestamp")
-        ]
-        date_max_api = max(dates_debug).isoformat() if dates_debug else "N/A"
-    else:
-        date_max_api = "N/A"
-    st.write(f"🐛 DEBUG Etsy — receipts récupérés : **{len(receipts)}** | date la plus récente : **{date_max_api}** | seuil filtre : **{seuil.isoformat() if seuil else 'aucun (1ère sync)'}**")
-    # --- FIN DEBUG ---
 
     for receipt in receipts:
         id_etsy = receipt.get("receipt_id")
