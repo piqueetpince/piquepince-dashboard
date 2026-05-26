@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase_api import select, upsert, insert
+from supabase_api import select, upsert, insert, update
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_produits, log_sync)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
@@ -49,6 +49,7 @@ with st.sidebar:
         "🔎 Produits manquants sur Faire",
         "✏️ Correction SKUs Faire",
         "🔗 Mapping SKUs Faire",
+        "🔧 Correction lignes commandes Faire",
         "💰 Vérification prix Faire",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
@@ -1431,6 +1432,116 @@ elif page == "🔗 Mapping SKUs Faire":
                 st.rerun()
             else:
                 st.error("Erreur lors de la mise à jour.")
+
+elif page == "🔧 Correction lignes commandes Faire":
+    st.subheader("🔧 Correction lignes commandes Faire")
+
+    commandes_faire = select("commandes",
+        "select=id_faire,date_commande,nom_facturation,montant_ttc"
+        "&source=eq.faire&statut_code=not.in.(0,45,50)"
+        "&date_commande=gte.2026-01-01&order=date_commande.desc")
+    skus_data = select("skus", "select=sku&statut=eq.visible")
+    skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
+
+    if not commandes_faire:
+        st.info("Aucune commande Faire depuis le 1er janvier 2026.")
+    else:
+        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+        ids_str = ",".join(ids_faire)
+
+        all_lignes = select("lignes_commande",
+            f"select=id_commande,sku&id_commande=in.({ids_str})", limit=50000)
+
+        cmds_avec_probleme = set()
+        nb_lignes_a_corriger = 0
+        if all_lignes:
+            for ligne in all_lignes:
+                sku = ligne.get("sku") or ""
+                id_cmd = str(ligne.get("id_commande", ""))
+                if not sku or sku not in skus_valides:
+                    cmds_avec_probleme.add(id_cmd)
+                    nb_lignes_a_corriger += 1
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Commandes avec lignes à corriger", len(cmds_avec_probleme))
+        with col2:
+            st.metric("Total lignes à corriger", nb_lignes_a_corriger)
+
+        st.divider()
+
+        def format_cmd(id_faire):
+            if not id_faire:
+                return "Choisir une commande..."
+            cmd = next((c for c in commandes_faire if c["id_faire"] == id_faire), {})
+            try:
+                date = pd.to_datetime(cmd.get("date_commande", "")).strftime("%d/%m/%Y")
+            except Exception:
+                date = "?"
+            client = cmd.get("nom_facturation", "")
+            montant = float(cmd.get("montant_ttc") or 0)
+            alerte = "⚠️ " if id_faire in cmds_avec_probleme else ""
+            return f"{alerte}{date} — {client} — {montant:.2f}€"
+
+        commande_choisie = st.selectbox(
+            "Commande",
+            options=[""] + ids_faire,
+            format_func=format_cmd
+        )
+
+        if commande_choisie:
+            lignes_cmd = select("lignes_commande",
+                f"select=id,nom_produit,quantite,prix_unitaire_ttc,sku"
+                f"&id_commande=eq.{commande_choisie}")
+
+            if lignes_cmd:
+                ids_lignes = [row["id"] for row in lignes_cmd]
+                orig_skus = [row.get("sku") or "" for row in lignes_cmd]
+
+                df_edit = pd.DataFrame([{
+                    "Statut SKU": ("✅" if (row.get("sku") and row["sku"] in skus_valides)
+                                   else ("❌" if not row.get("sku") else "⚠️")),
+                    "Produit": row.get("nom_produit", ""),
+                    "Qté": row.get("quantite", 0),
+                    "Prix TTC": float(row.get("prix_unitaire_ttc") or 0),
+                    "SKU": row.get("sku") or "",
+                } for row in lignes_cmd])
+
+                df_result = st.data_editor(
+                    df_edit,
+                    column_config={
+                        "Statut SKU": st.column_config.TextColumn("Statut", disabled=True),
+                        "Produit": st.column_config.TextColumn("Produit", disabled=True),
+                        "Qté": st.column_config.NumberColumn("Qté", disabled=True),
+                        "Prix TTC": st.column_config.NumberColumn("Prix TTC", disabled=True),
+                        "SKU": st.column_config.TextColumn("SKU"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key=f"editor_lignes_{commande_choisie}"
+                )
+
+                edit_skus = df_result["SKU"].tolist()
+                lignes_modifiees = [
+                    {"id": ids_lignes[i], "sku": edit_skus[i]}
+                    for i in range(len(ids_lignes))
+                    if orig_skus[i] != edit_skus[i]
+                ]
+                st.caption(f"{len(lignes_modifiees)} ligne(s) modifiée(s).")
+
+                if st.button("Enregistrer les corrections", type="primary",
+                             disabled=len(lignes_modifiees) == 0):
+                    succes = 0
+                    for ligne in lignes_modifiees:
+                        ok = update("lignes_commande",
+                                    f"id=eq.{ligne['id']}",
+                                    {"sku": ligne["sku"] or None})
+                        if ok:
+                            succes += 1
+                    st.success(f"✅ {succes} ligne(s) corrigée(s).")
+                    st.rerun()
+            else:
+                st.info("Aucune ligne pour cette commande.")
 
 elif page == "💰 Vérification prix Faire":
     st.subheader("💰 Vérification prix Faire")
