@@ -463,35 +463,68 @@ elif page == "🚨 Réapprovisionnement":
     skus_en_commande = {c["sku"] for c in en_commande} if en_commande else set()
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    commandes_valides = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+
+    cmds_wizi = select("commandes",
+        f"select=id_wizi&source=eq.wizishop&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+    cmds_etsy = select("commandes",
+        f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+    cmds_faire = select("commandes",
+        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
 
     skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
     produits_data = select("produits",
         "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur,prix_achat_ht")
     prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+    mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+    sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
 
-    if commandes_valides and skus_data:
-        ids_valides = [str(c["id_wizi"]) for c in commandes_valides]
-        ids_str = ",".join(ids_valides)
-
-        lignes = select("lignes_commande",
-            f"select=sku,sku_variation,quantite,nom_produit,id_commande&id_commande=in.({ids_str})",
-            limit=50000)
-
+    if skus_data:
         nom_par_sku = {}
-        if lignes:
-            for ligne in lignes:
-                sku = ligne.get("sku")
-                if sku and sku not in nom_par_sku:
-                    nom_par_sku[sku] = ligne.get("nom_produit", "")
+        ventes_wizi = {}
+        ventes_etsy = {}
+        ventes_faire = {}
 
-        ventes_par_sku = {}
-        if lignes:
-            for ligne in lignes:
-                sku_key = ligne.get("sku_variation") or ligne.get("sku")
-                if sku_key:
-                    ventes_par_sku[sku_key] = ventes_par_sku.get(sku_key, 0) + (ligne.get("quantite") or 0)
+        if cmds_wizi:
+            ids_str = ",".join(str(c["id_wizi"]) for c in cmds_wizi if c.get("id_wizi"))
+            lignes_wizi = select("lignes_commande",
+                f"select=sku,sku_variation,quantite,nom_produit&id_commande=in.({ids_str})",
+                limit=50000)
+            if lignes_wizi:
+                for l in lignes_wizi:
+                    sku = l.get("sku")
+                    if sku and sku not in nom_par_sku:
+                        nom_par_sku[sku] = l.get("nom_produit", "")
+                    sku_key = l.get("sku_variation") or sku
+                    if sku_key:
+                        ventes_wizi[sku_key] = ventes_wizi.get(sku_key, 0) + (l.get("quantite") or 0)
+
+        if cmds_etsy:
+            ids_str = ",".join(str(c["id_wizi"]) for c in cmds_etsy if c.get("id_wizi"))
+            lignes_etsy = select("lignes_commande",
+                f"select=sku,sku_variation,quantite,nom_produit&id_commande=in.({ids_str})",
+                limit=50000)
+            if lignes_etsy:
+                for l in lignes_etsy:
+                    sku = l.get("sku")
+                    if sku and sku not in nom_par_sku:
+                        nom_par_sku[sku] = l.get("nom_produit", "")
+                    sku_key = l.get("sku_variation") or sku
+                    if sku_key:
+                        ventes_etsy[sku_key] = ventes_etsy.get(sku_key, 0) + (l.get("quantite") or 0)
+
+        if cmds_faire:
+            ids_str = ",".join(str(c["id_faire"]) for c in cmds_faire if c.get("id_faire"))
+            lignes_faire = select("lignes_commande",
+                f"select=sku,quantite,nom_produit&id_commande=in.({ids_str})",
+                limit=50000)
+            if lignes_faire:
+                for l in lignes_faire:
+                    sku = l.get("sku") or ""
+                    sku_resolu = sku_mapping.get(sku, sku) if sku else ""
+                    if sku_resolu and sku_resolu not in nom_par_sku:
+                        nom_par_sku[sku_resolu] = l.get("nom_produit", "")
+                    if sku_resolu:
+                        ventes_faire[sku_resolu] = ventes_faire.get(sku_resolu, 0) + (l.get("quantite") or 0)
 
         rows = []
         for sku_item in skus_data:
@@ -506,16 +539,11 @@ elif page == "🚨 Réapprovisionnement":
             prix_achat = prod.get("prix_achat_ht") or 0
             categorie = prod.get("nom_categorie") or ""
 
-            prod_exact = prod_map.get(sku, {})
-            if not prod_exact and prod:
-                parent_sku = prod.get("sku", "")
-                variation = sku[len(parent_sku):] if parent_sku and sku.startswith(parent_sku) else ""
-            else:
-                variation = ""
-
-            ventes = ventes_par_sku.get(sku, 0)
-            moy_mois = round(ventes / nb_mois, 1)
-            mois_stock = round(stock / moy_mois, 1) if moy_mois > 0 else 99
+            v_wizi = round(ventes_wizi.get(sku, 0) / nb_mois, 1)
+            v_etsy = round(ventes_etsy.get(sku, 0) / nb_mois, 1)
+            v_faire = round(ventes_faire.get(sku, 0) / nb_mois, 1)
+            v_total = round((ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)) / nb_mois, 1)
+            mois_stock = round(stock / v_total, 1) if v_total > 0 else 99
 
             if mois_stock <= 3:
                 alerte = "🔴 Commander"
@@ -527,13 +555,15 @@ elif page == "🚨 Réapprovisionnement":
             rows.append({
                 "sku": sku,
                 "Produit": nom,
-                "Variation": variation,
                 "Catégorie": categorie,
                 "Fournisseur": fournisseur,
                 "Réf. fournisseur": ref_fourn,
                 "Prix achat HT": f"{float(prix_achat):.2f} €" if prix_achat else "",
                 "Stock": stock,
-                "Ventes/mois": moy_mois,
+                "Ventes/mois Wizi": v_wizi,
+                "Ventes/mois Etsy": v_etsy,
+                "Ventes/mois Faire": v_faire,
+                "Ventes/mois Total": v_total,
                 "Mois de stock": mois_stock,
                 "Alerte": alerte
             })
@@ -565,9 +595,10 @@ elif page == "🚨 Réapprovisionnement":
         st.subheader("📋 Produits à réapprovisionner")
 
         if not df_reap.empty:
-            cols_affich = ["sku", "Produit", "Variation", "Catégorie", "Fournisseur",
+            cols_affich = ["sku", "Produit", "Catégorie", "Fournisseur",
                           "Réf. fournisseur", "Prix achat HT", "Stock",
-                          "Ventes/mois", "Mois de stock", "Alerte"]
+                          "Ventes/mois Wizi", "Ventes/mois Etsy", "Ventes/mois Faire",
+                          "Ventes/mois Total", "Mois de stock", "Alerte"]
             df_show = df_reap[cols_affich].copy()
             df_show = df_show.rename(columns={"sku": "SKU"})
             st.dataframe(df_show, use_container_width=True, hide_index=True)
