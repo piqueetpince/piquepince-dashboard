@@ -1,6 +1,6 @@
 import time
 from faire_api import get_orders, get_products
-from supabase_api import upsert, insert, delete
+from supabase_api import upsert
 from sync_database import get_zone_tva
 
 STATUT_MAP = {
@@ -90,6 +90,7 @@ def sync_faire_commandes():
             price_obj = item.get("price") or {}
             prix_ttc = (price_obj.get("amount_minor") or 0) / 100
             lignes.append({
+                "id_faire": item.get("id"),
                 "id_commande": order_id,
                 "sku": item.get("sku"),
                 "nom_produit": item.get("product_name"),
@@ -100,8 +101,7 @@ def sync_faire_commandes():
             })
 
         if lignes:
-            delete("lignes_commande", f"id_commande=eq.{order_id}")
-            insert("lignes_commande", lignes)
+            upsert("lignes_commande", lignes, "id_faire")
 
         total += 1
         time.sleep(0.05)
