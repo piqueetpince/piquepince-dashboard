@@ -1,6 +1,6 @@
 import time
 from faire_api import get_orders, get_products
-from supabase_api import upsert
+from supabase_api import upsert, upsert_ignore
 from sync_database import get_zone_tva
 
 STATUT_MAP = {
@@ -101,7 +101,7 @@ def sync_faire_commandes():
             })
 
         if lignes:
-            upsert("lignes_commande", lignes, "id_faire")
+            upsert_ignore("lignes_commande", lignes, "id_faire")
 
         total += 1
         time.sleep(0.05)
