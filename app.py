@@ -48,6 +48,7 @@ with st.sidebar:
         "🔎 Produits manquants sur Etsy",
         "🔎 Produits manquants sur Faire",
         "✏️ Correction SKUs Faire",
+        "🔗 Mapping SKUs Faire",
         "💰 Vérification prix Faire",
         "🌍 Comptabilité TVA",
         "🔍 Vérification Wizishop",
@@ -1308,6 +1309,118 @@ elif page == "✏️ Correction SKUs Faire":
                 if succes > 0:
                     st.info("💡 Relance la **8️⃣ Sync Produits Faire** depuis la page "
                             "🔄 Synchronisation pour mettre à jour la base.")
+
+elif page == "🔗 Mapping SKUs Faire":
+    st.subheader("🔗 Mapping SKUs Faire")
+    st.caption("Associe les anciens SKUs Faire aux SKUs Wizishop corrects pour la réconciliation.")
+
+    # Commandes Faire depuis le 1er janvier 2026
+    commandes_faire = select("commandes",
+        "select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)"
+        "&date_commande=gte.2026-01-01")
+    skus_data = select("skus", "select=sku&statut=eq.visible")
+    mapping_existant = select("sku_mapping_faire", "select=id,sku_faire,sku_wizishop&order=sku_faire.asc")
+
+    skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
+    mapping_connu = {m["sku_faire"] for m in mapping_existant} if mapping_existant else set()
+
+    skus_inconnus = {}  # sku_faire → nb occurrences
+    if commandes_faire:
+        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+        ids_str = ",".join(ids_faire)
+        lignes = select("lignes_commande",
+            f"select=sku&id_commande=in.({ids_str})", limit=50000)
+        if lignes:
+            for ligne in lignes:
+                sku = ligne.get("sku") or ""
+                if sku and sku not in skus_valides:
+                    skus_inconnus[sku] = skus_inconnus.get(sku, 0) + 1
+
+    # Exclure les SKUs déjà mappés
+    skus_a_mapper = {sku: nb for sku, nb in skus_inconnus.items() if sku not in mapping_connu}
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("SKUs inconnus depuis 2026", len(skus_inconnus))
+    with col2:
+        st.metric("Déjà mappés", len(mapping_connu))
+    with col3:
+        st.metric("Restant à mapper", len(skus_a_mapper))
+
+    if skus_a_mapper:
+        st.divider()
+        st.subheader("SKUs à mapper")
+
+        df_edit = pd.DataFrame([{
+            "SKU Faire": sku,
+            "Nb commandes": nb,
+            "Nouveau SKU Wizishop": "",
+        } for sku, nb in sorted(skus_a_mapper.items(), key=lambda x: -x[1])])
+
+        df_result = st.data_editor(
+            df_edit,
+            column_config={
+                "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
+                "Nb commandes": st.column_config.NumberColumn("Nb commandes", disabled=True),
+                "Nouveau SKU Wizishop": st.column_config.TextColumn("Nouveau SKU Wizishop"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="editor_mapping_faire"
+        )
+
+        lignes_remplies = df_result[
+            df_result["Nouveau SKU Wizishop"].notna() &
+            (df_result["Nouveau SKU Wizishop"].str.strip() != "")
+        ]
+        st.caption(f"{len(lignes_remplies)} mapping(s) à enregistrer.")
+
+        if st.button("Enregistrer le mapping", type="primary",
+                     disabled=len(lignes_remplies) == 0):
+            payload = [
+                {"sku_faire": row["SKU Faire"], "sku_wizishop": row["Nouveau SKU Wizishop"].strip()}
+                for _, row in lignes_remplies.iterrows()
+            ]
+            ok = upsert("sku_mapping_faire", payload, "sku_faire")
+            if ok:
+                st.success(f"✅ {len(payload)} mapping(s) enregistré(s).")
+                st.rerun()
+            else:
+                st.error("Erreur lors de l'enregistrement.")
+    else:
+        st.success("✅ Tous les SKUs inconnus depuis 2026 sont déjà mappés.")
+
+    if mapping_existant:
+        st.divider()
+        st.subheader("Mappings enregistrés")
+
+        df_mapping = pd.DataFrame(mapping_existant)
+        df_mapping_edit = st.data_editor(
+            df_mapping[["sku_faire", "sku_wizishop"]].rename(columns={
+                "sku_faire": "SKU Faire",
+                "sku_wizishop": "SKU Wizishop"
+            }),
+            column_config={
+                "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
+                "SKU Wizishop": st.column_config.TextColumn("SKU Wizishop"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="editor_mapping_existant"
+        )
+
+        if st.button("Mettre à jour les mappings", type="secondary"):
+            payload = [
+                {"sku_faire": row["SKU Faire"], "sku_wizishop": row["SKU Wizishop"].strip()}
+                for _, row in df_mapping_edit.iterrows()
+                if row["SKU Wizishop"].strip()
+            ]
+            ok = upsert("sku_mapping_faire", payload, "sku_faire")
+            if ok:
+                st.success(f"✅ {len(payload)} mapping(s) mis à jour.")
+                st.rerun()
+            else:
+                st.error("Erreur lors de la mise à jour.")
 
 elif page == "💰 Vérification prix Faire":
     st.subheader("💰 Vérification prix Faire")
