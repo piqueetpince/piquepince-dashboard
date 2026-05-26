@@ -1648,20 +1648,23 @@ elif page == "🔍 Vérification Faire":
 
         produits_data = select("produits", "select=sku,nom,nom_categorie")
         prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+        mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+        sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
 
         if lignes:
             df = pd.DataFrame(lignes)
             df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
             df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
             df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
-            df["nom_affiche"] = df["sku"].map(
+            df["sku_resolu"] = df["sku"].map(lambda x: sku_mapping.get(x, x) if x else x)
+            df["nom_affiche"] = df["sku_resolu"].map(
                 lambda x: get_prod_parent(x, prod_map).get("nom", "") or "")
             df["nom_affiche"] = df.apply(
                 lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
-            df["categorie"] = df["sku"].map(
+            df["categorie"] = df["sku_resolu"].map(
                 lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
 
-            result = df.groupby(["sku", "nom_affiche", "categorie"]).agg(
+            result = df.groupby(["sku_resolu", "nom_affiche", "categorie"]).agg(
                 unites_vendues=("quantite", "sum"),
                 ca_total=("ca", "sum"),
                 nb_commandes=("id_commande", "nunique")
@@ -1711,6 +1714,8 @@ elif page == "📒 Réconciliation Faire":
 
         produits_data = select("produits", "select=sku,prix_achat_ht")
         prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
+        mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+        sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
 
         cout_achat_par_cmd = {}
         prix_achat_ok_par_cmd = {}
@@ -1720,7 +1725,8 @@ elif page == "📒 Réconciliation Faire":
                 id_cmd = str(ligne.get("id_commande", ""))
                 sku = ligne.get("sku") or ""
                 qty = float(ligne.get("quantite") or 0)
-                prod_info = get_prod_parent(sku, prod_map_achat)
+                sku_resolu = sku_mapping.get(sku, sku)
+                prod_info = get_prod_parent(sku_resolu, prod_map_achat)
                 prix = float(prod_info.get("prix_achat_ht") or 0)
 
                 if id_cmd not in cout_achat_par_cmd:
