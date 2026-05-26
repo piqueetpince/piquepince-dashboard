@@ -1,5 +1,6 @@
 import streamlit as st
 import time
+from datetime import datetime, timezone, timedelta
 from supabase_api import upsert, select, insert
 
 
@@ -16,16 +17,17 @@ def get_zone_tva(country_iso):
     return "hors_ue"
 
 
-def get_max_etsy_commande_id():
-    results = select("commandes", "select=id_wizi&order=id_wizi.desc&limit=1&source=eq.etsy")
-    if results:
-        return results[0].get("id_wizi", 0)
-    return 0
+def get_max_etsy_date():
+    results = select("commandes", "select=date_commande&order=date_commande.desc&limit=1&source=eq.etsy")
+    if results and results[0].get("date_commande"):
+        return datetime.fromisoformat(results[0]["date_commande"].replace("Z", "+00:00"))
+    return None
 
 
 def sync_etsy_commandes(shop_id):
     from etsy_api import get_all_receipts
-    depuis_id = get_max_etsy_commande_id()
+    depuis_date = get_max_etsy_date()
+    seuil = (depuis_date - timedelta(days=2)) if depuis_date else None
     receipts = get_all_receipts(shop_id)
     total = 0
 
@@ -33,16 +35,16 @@ def sync_etsy_commandes(shop_id):
         id_etsy = receipt.get("receipt_id")
         if not id_etsy:
             continue
-        if depuis_id and id_etsy <= depuis_id:
+
+        create_ts = receipt.get("create_timestamp")
+        date_commande_dt = datetime.fromtimestamp(create_ts, tz=timezone.utc) if create_ts else None
+        date_commande = date_commande_dt.isoformat() if date_commande_dt else None
+
+        if seuil and date_commande_dt and date_commande_dt < seuil:
             continue
 
         country_iso = receipt.get("country_iso")
         zone = get_zone_tva(country_iso)
-
-        from datetime import datetime, timezone
-        create_ts = receipt.get("create_timestamp")
-        date_commande = datetime.fromtimestamp(
-            create_ts, tz=timezone.utc).isoformat() if create_ts else None
 
         grandtotal = receipt.get("grandtotal", {})
         subtotal = receipt.get("subtotal", {})
