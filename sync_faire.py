@@ -93,6 +93,7 @@ def sync_faire_commandes():
                 "id_commande": order_id,
                 "sku": item.get("sku"),
                 "nom_produit": item.get("product_name"),
+                "libelle_variation": item.get("variant_name"),
                 "quantite": item.get("quantity"),
                 "prix_unitaire_ttc": prix_ttc,
                 "source": "faire"
