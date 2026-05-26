@@ -1,6 +1,7 @@
 import requests
 import streamlit as st
 import time
+from datetime import datetime, timezone, timedelta
 from supabase_api import upsert, select, insert
 
 WIZISHOP_API_URL = "https://api.wizishop.com"
@@ -239,21 +240,12 @@ def get_max_commande_id():
         return results[0].get("id_wizi", 0)
     return 0
 
-def sync_commandes(token, shop_id):
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    depuis_id = get_max_commande_id()
+def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
     page, total = 1, 0
     while True:
-        params = {
-            "page": page,
-            "limit": 100,
-            "sort": "id",
-            "start_date": "2024-01-01T00:00:00+00:00"
-        }
-        if depuis_id:
-            params["id_greater_than"] = depuis_id
+        params = {"page": page, "limit": 100, "sort": "id", **extra_params}
         r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
-                        headers=headers, params=params)
+                         headers=headers, params=params)
         if r.status_code != 200:
             break
         data = r.json()
@@ -381,7 +373,7 @@ def sync_commandes(token, shop_id):
                         "source": "wizishop"
                     })
 
-            if lignes:
+            if lignes and insert_lignes:
                 insert("lignes_commande", lignes)
 
             total += 1
@@ -390,6 +382,22 @@ def sync_commandes(token, shop_id):
         if page >= data.get("pages", 1):
             break
         page += 1
+    return total
+
+
+def sync_commandes(token, shop_id):
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    total = 0
+
+    depuis_id = get_max_commande_id()
+    params_new = {"start_date": "2024-01-01T00:00:00+00:00"}
+    if depuis_id:
+        params_new["id_greater_than"] = depuis_id
+    total += _sync_commandes_paginated(headers, shop_id, params_new, insert_lignes=True)
+
+    date_30j = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00+00:00")
+    total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_30j}, insert_lignes=False)
+
     return total
 
 def log_sync(table, source, nb, statut, message, duree):
