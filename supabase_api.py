@@ -69,6 +69,17 @@ def insert(table, data):
         return False
     return True
 
+def upsert_ignore(table, data, on_conflict):
+    headers = get_headers()
+    headers["Prefer"] = "resolution=ignore-duplicates,return=minimal"
+    url = f"{get_url(table)}?on_conflict={on_conflict}"
+    payload = data if isinstance(data, list) else [data]
+    r = requests.post(url, headers=headers, json=payload)
+    if r.status_code not in [200, 201, 204]:
+        st.warning(f"Erreur upsert_ignore {table}: {r.status_code} — {r.text[:200]}")
+        return False
+    return True
+
 def update(table, query, data):
     headers = get_headers()
     headers["Prefer"] = "return=minimal"
