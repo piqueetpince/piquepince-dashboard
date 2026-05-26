@@ -1784,8 +1784,7 @@ elif page == "📒 Réconciliation Faire":
             frais_exp = float(row["frais_expedition_faire"])
             net_recu = float(row["montant_net_recu"])
             cout_achat = round(cout_achat_par_cmd.get(id_faire, 0), 2)
-            base_marge = net_recu if net_recu else (ca_ht - commission)
-            marge_nette = round(base_marge - cout_achat, 2)
+            marge_nette = round(ca_ht - commission - cout_achat, 2)
             marge_pct = round(marge_nette / ca_ht * 100, 1) if ca_ht else 0
 
             ecart = round(total_ttc - commission - frais_exp - net_recu, 2)
