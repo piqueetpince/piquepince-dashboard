@@ -605,18 +605,16 @@ elif page == "🚨 Réapprovisionnement":
 
             st.divider()
             df_reap_unique = df_reap.drop_duplicates(subset=["sku"])
-            # --- DEBUG temporaire ---
-            mask_debug = df_reap["sku"].str.contains("ST066EC", na=False)
-            st.write(f"🐛 DEBUG ST066EC — occurrences dans df_reap (avant drop_duplicates) : {mask_debug.sum()}")
-            st.dataframe(df_reap[mask_debug], use_container_width=True, hide_index=True)
-            # --- FIN DEBUG ---
+            sku_label_map = {
+                row["sku"]: f"{row['sku']} — {row['Produit']} ({row['Fournisseur'] or 'sans fournisseur'})"
+                for _, row in df_reap_unique.iterrows()
+            }
             col_cmd1, col_cmd2 = st.columns([3, 1])
             with col_cmd1:
                 sku_selectionne = st.selectbox(
                     "Sélectionner un SKU à marquer en commande",
                     options=[""] + df_reap_unique["sku"].tolist(),
-                    format_func=lambda x: f"{x} — {df_reap_unique[df_reap_unique['sku']==x]['Produit'].iloc[0]}"
-                    if x else "Choisir un SKU..."
+                    format_func=lambda x: sku_label_map.get(x, x) if x else "Choisir un SKU..."
                 )
             with col_cmd2:
                 st.write("")
