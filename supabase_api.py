@@ -71,7 +71,8 @@ def insert(table, data):
 
 def delete(table, query):
     headers = get_headers()
-    headers["Prefer"] = "return=minimal"
+    headers["Prefer"] = "return=representation"
+    headers["Content-Type"] = "application/json"
     r = requests.delete(f"{get_url(table)}?{query}", headers=headers)
     if r.status_code not in [200, 204]:
         st.warning(f"Erreur delete {table}: {r.status_code} — {r.text[:200]}")
