@@ -1320,6 +1320,11 @@ elif page == "🔗 Mapping SKUs Faire":
         "&date_commande=gte.2026-01-01")
     skus_data = select("skus", "select=sku&statut=eq.visible")
     mapping_existant = select("sku_mapping_faire", "select=id,sku_faire,sku_wizishop&order=sku_faire.asc")
+    faire_variants_data = select("produits_faire_variants", "select=sku,nom,id_produit_faire")
+    produits_faire_data = select("produits_faire", "select=id_faire,nom")
+
+    variant_map = {v["sku"]: v for v in faire_variants_data if v.get("sku")} if faire_variants_data else {}
+    produits_faire_map = {p["id_faire"]: p["nom"] for p in produits_faire_data} if produits_faire_data else {}
 
     skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
     mapping_connu = {m["sku_faire"] for m in mapping_existant} if mapping_existant else set()
@@ -1354,6 +1359,9 @@ elif page == "🔗 Mapping SKUs Faire":
         df_edit = pd.DataFrame([{
             "SKU Faire": sku,
             "Nb commandes": nb,
+            "Nom produit": produits_faire_map.get(
+                (variant_map.get(sku) or {}).get("id_produit_faire", ""), ""),
+            "Nom variant": (variant_map.get(sku) or {}).get("nom", ""),
             "Nouveau SKU Wizishop": "",
         } for sku, nb in sorted(skus_a_mapper.items(), key=lambda x: -x[1])])
 
@@ -1362,6 +1370,8 @@ elif page == "🔗 Mapping SKUs Faire":
             column_config={
                 "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
                 "Nb commandes": st.column_config.NumberColumn("Nb commandes", disabled=True),
+                "Nom produit": st.column_config.TextColumn("Nom produit", disabled=True),
+                "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
                 "Nouveau SKU Wizishop": st.column_config.TextColumn("Nouveau SKU Wizishop"),
             },
             hide_index=True,
