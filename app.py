@@ -604,26 +604,27 @@ elif page == "🚨 Réapprovisionnement":
             st.dataframe(df_show, use_container_width=True, hide_index=True)
 
             st.divider()
+            df_reap_unique = df_reap.drop_duplicates(subset=["sku"])
             col_cmd1, col_cmd2 = st.columns([3, 1])
             with col_cmd1:
                 sku_selectionne = st.selectbox(
                     "Sélectionner un SKU à marquer en commande",
-                    options=[""] + df_reap["sku"].tolist(),
-                    format_func=lambda x: f"{x} — {df_reap[df_reap['sku']==x]['Produit'].iloc[0]}"
+                    options=[""] + df_reap_unique["sku"].tolist(),
+                    format_func=lambda x: f"{x} — {df_reap_unique[df_reap_unique['sku']==x]['Produit'].iloc[0]}"
                     if x else "Choisir un SKU..."
                 )
             with col_cmd2:
                 st.write("")
                 st.write("")
                 if sku_selectionne and st.button("📦 Marquer en commande", type="primary"):
-                    row = df_reap[df_reap["sku"] == sku_selectionne].iloc[0]
-                    insert("commandes_fournisseur", [{
+                    row = df_reap_unique[df_reap_unique["sku"] == sku_selectionne].iloc[0]
+                    upsert("commandes_fournisseur", [{
                         "sku": sku_selectionne,
                         "nom_produit": row["Produit"],
                         "fournisseur": row["Fournisseur"],
                         "date_commande": datetime.now(timezone.utc).isoformat(),
                         "statut": "en_commande"
-                    }])
+                    }], "sku")
                     st.success(f"✓ {sku_selectionne} marqué en commande !")
                     st.rerun()
 
