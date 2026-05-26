@@ -1845,6 +1845,40 @@ elif page == "📒 Réconciliation Faire":
         st.download_button("📥 Télécharger en CSV", csv,
                            f"reconciliation_faire_{annee}.csv", "text/csv")
 
+        # --- DEBUG temporaire : commande avec la marge la plus haute ---
+        st.divider()
+        st.markdown("### 🐛 DEBUG — Commande marge max")
+        if rows:
+            idx_max = max(range(len(rows)), key=lambda i: rows[i]["Marge nette"])
+            row_max = rows[idx_max]
+            id_faire_debug = list(df_cmd["id_faire"])[idx_max]
+            cmd_src = commandes_faire[idx_max]
+            st.write(f"**ID Faire :** `{id_faire_debug}`")
+            st.write(f"**montant_ttc (CA HT articles) :** {cmd_src.get('montant_ttc')} €")
+            st.write(f"**commission_faire :** {cmd_src.get('commission_faire')} €")
+            st.write(f"**montant_net_recu :** {cmd_src.get('montant_net_recu')} €")
+            st.write(f"**cout_achat calculé :** {row_max['Coût achat HT']} €")
+            st.write(f"**marge_nette :** {row_max['Marge nette']} €")
+
+            st.markdown("**Lignes de commande :**")
+            lignes_debug = [l for l in (lignes or []) if str(l.get("id_commande", "")) == str(id_faire_debug)]
+            debug_rows = []
+            for l in lignes_debug:
+                sku_l = l.get("sku") or ""
+                sku_r = sku_mapping.get(sku_l, sku_l)
+                qty_l = float(l.get("quantite") or 0)
+                prod_l = get_prod_parent(sku_r, prod_map_achat)
+                prix_l = float(prod_l.get("prix_achat_ht") or 0)
+                debug_rows.append({
+                    "sku": sku_l,
+                    "sku_resolu": sku_r,
+                    "quantite": qty_l,
+                    "prix_achat_ht": prix_l,
+                    "sous-total coût": round(prix_l * qty_l, 2),
+                })
+            st.dataframe(pd.DataFrame(debug_rows), use_container_width=True, hide_index=True)
+        # --- FIN DEBUG ---
+
 elif page == "📊 Gestion stock Faire":
     st.subheader("📊 Gestion stock Faire")
 
