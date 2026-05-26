@@ -1,5 +1,4 @@
 import time
-import streamlit as st
 from faire_api import get_orders, get_products
 from supabase_api import upsert, insert, delete
 from sync_database import get_zone_tva
@@ -100,8 +99,7 @@ def sync_faire_commandes():
             })
 
         if lignes:
-            ok = delete("lignes_commande", f"id_commande=eq.{order_id}")
-            st.write(f"DEBUG delete {order_id} : {'✅ OK' if ok else '❌ ERREUR'}")
+            delete("lignes_commande", f"id_commande=eq.{order_id}")
             insert("lignes_commande", lignes)
 
         total += 1
