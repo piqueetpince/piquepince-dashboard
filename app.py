@@ -605,6 +605,11 @@ elif page == "🚨 Réapprovisionnement":
 
             st.divider()
             df_reap_unique = df_reap.drop_duplicates(subset=["sku"])
+            # --- DEBUG temporaire ---
+            mask_debug = df_reap["sku"].str.contains("ST066EC", na=False)
+            st.write(f"🐛 DEBUG ST066EC — occurrences dans df_reap (avant drop_duplicates) : {mask_debug.sum()}")
+            st.dataframe(df_reap[mask_debug], use_container_width=True, hide_index=True)
+            # --- FIN DEBUG ---
             col_cmd1, col_cmd2 = st.columns([3, 1])
             with col_cmd1:
                 sku_selectionne = st.selectbox(
