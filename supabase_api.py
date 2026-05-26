@@ -69,6 +69,15 @@ def insert(table, data):
         return False
     return True
 
+def update(table, query, data):
+    headers = get_headers()
+    headers["Prefer"] = "return=minimal"
+    r = requests.patch(f"{get_url(table)}?{query}", headers=headers, json=data)
+    if r.status_code not in [200, 204]:
+        st.warning(f"Erreur update {table}: {r.status_code} — {r.text[:200]}")
+        return False
+    return True
+
 def delete(table, query):
     headers = get_headers()
     headers["Prefer"] = "return=representation"
