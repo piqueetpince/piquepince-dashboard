@@ -1849,7 +1849,7 @@ elif page == "📒 Réconciliation Faire":
         st.divider()
         st.markdown("### 🐛 DEBUG — Commande marge max")
         if rows:
-            idx_max = max(range(len(rows)), key=lambda i: rows[i]["Marge nette"])
+            idx_max = max(range(len(rows)), key=lambda i: rows[i]["Marge %"])
             row_max = rows[idx_max]
             id_faire_debug = list(df_cmd["id_faire"])[idx_max]
             cmd_src = commandes_faire[idx_max]
