@@ -1491,7 +1491,7 @@ elif page == "🔧 Correction lignes commandes Faire":
 
         if commande_choisie:
             lignes_cmd = select("lignes_commande",
-                f"select=id,nom_produit,quantite,prix_unitaire_ttc,sku"
+                f"select=id,nom_produit,libelle_variation,quantite,prix_unitaire_ttc,sku"
                 f"&id_commande=eq.{commande_choisie}")
 
             if lignes_cmd:
@@ -1502,6 +1502,7 @@ elif page == "🔧 Correction lignes commandes Faire":
                     "Statut SKU": ("✅" if (row.get("sku") and row["sku"] in skus_valides)
                                    else ("❌" if not row.get("sku") else "⚠️")),
                     "Produit": row.get("nom_produit", ""),
+                    "Variation": row.get("libelle_variation", "") or "",
                     "Qté": row.get("quantite", 0),
                     "Prix TTC": float(row.get("prix_unitaire_ttc") or 0),
                     "SKU": row.get("sku") or "",
@@ -1512,6 +1513,7 @@ elif page == "🔧 Correction lignes commandes Faire":
                     column_config={
                         "Statut SKU": st.column_config.TextColumn("Statut", disabled=True),
                         "Produit": st.column_config.TextColumn("Produit", disabled=True),
+                        "Variation": st.column_config.TextColumn("Variation", disabled=True),
                         "Qté": st.column_config.NumberColumn("Qté", disabled=True),
                         "Prix TTC": st.column_config.NumberColumn("Prix TTC", disabled=True),
                         "SKU": st.column_config.TextColumn("SKU"),
