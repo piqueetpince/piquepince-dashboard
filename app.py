@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase_api import select, upsert, insert, update
+from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_produits, log_sync)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
@@ -462,6 +462,9 @@ elif page == "🚨 Réapprovisionnement":
         "select=id,sku,nom_produit,fournisseur,date_commande&statut=eq.en_commande")
     skus_en_commande = {c["sku"] for c in en_commande} if en_commande else set()
 
+    ignores_data = select("skus_ignores", "select=sku,nom_produit,fournisseur,raison,created_at&order=created_at.desc")
+    skus_ignores_set = {r["sku"] for r in ignores_data} if ignores_data else set()
+
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
     cmds_wizi = select("commandes",
@@ -478,6 +481,7 @@ elif page == "🚨 Réapprovisionnement":
     mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
     sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
 
+    rows = []
     if skus_data:
         nom_par_sku = {}
         ventes_wizi = {}
@@ -529,7 +533,7 @@ elif page == "🚨 Réapprovisionnement":
         rows = []
         for sku_item in skus_data:
             sku = sku_item.get("sku")
-            if sku in skus_en_commande:
+            if sku in skus_en_commande or sku in skus_ignores_set:
                 continue
             stock = int(sku_item.get("stock") or 0)
             prod = get_prod_parent(sku, prod_map)
@@ -678,6 +682,72 @@ elif page == "🚨 Réapprovisionnement":
                 st.rerun()
     else:
         st.info("Aucun produit en commande actuellement.")
+
+    st.divider()
+    st.subheader("🚫 Ignorer un produit")
+    if skus_data:
+        df_reap_all = pd.DataFrame(rows) if rows else pd.DataFrame()
+        df_reap_all_unique = df_reap_all.drop_duplicates(subset=["sku"]) if not df_reap_all.empty else pd.DataFrame()
+        sku_ignorer_options = df_reap_all_unique["sku"].tolist() if not df_reap_all_unique.empty else []
+        sku_ignorer_label_map = {
+            row["sku"]: f"{row['sku']} — {row['Produit']} ({row['Fournisseur'] or 'sans fournisseur'})"
+            for _, row in df_reap_all_unique.iterrows()
+        } if not df_reap_all_unique.empty else {}
+
+        col_ign1, col_ign2 = st.columns([3, 1])
+        with col_ign1:
+            sku_a_ignorer = st.selectbox(
+                "Sélectionner un produit à ignorer",
+                options=[""] + sku_ignorer_options,
+                format_func=lambda x: sku_ignorer_label_map.get(x, x) if x else "Choisir un SKU...",
+                key="selectbox_ignorer"
+            )
+            raison_ignorer = st.text_input("Raison (optionnel)", key="raison_ignorer")
+        with col_ign2:
+            st.write("")
+            st.write("")
+            st.write("")
+            if sku_a_ignorer and st.button("🚫 Ignorer ce produit", type="secondary"):
+                row_ign = df_reap_all_unique[df_reap_all_unique["sku"] == sku_a_ignorer].iloc[0]
+                upsert("skus_ignores", [{
+                    "sku": sku_a_ignorer,
+                    "nom_produit": row_ign["Produit"],
+                    "fournisseur": row_ign["Fournisseur"],
+                    "raison": raison_ignorer or None,
+                }], "sku")
+                st.success(f"✓ {sku_a_ignorer} ignoré !")
+                st.rerun()
+    else:
+        st.info("Aucun produit disponible.")
+
+    st.divider()
+    st.subheader("🚫 Produits ignorés")
+    if ignores_data:
+        df_ign = pd.DataFrame(ignores_data)
+        df_ign["created_at"] = pd.to_datetime(df_ign["created_at"]).dt.strftime("%d/%m/%Y")
+        df_ign_show = df_ign[["sku", "nom_produit", "fournisseur", "raison", "created_at"]].copy()
+        df_ign_show.columns = ["SKU", "Produit", "Fournisseur", "Raison", "Date"]
+        st.dataframe(df_ign_show, use_container_width=True, hide_index=True)
+
+        st.divider()
+        col_ret1, col_ret2 = st.columns([3, 1])
+        with col_ret1:
+            sku_retirer = st.selectbox(
+                "Sélectionner un SKU à remettre en suivi",
+                options=[""] + df_ign["sku"].tolist(),
+                format_func=lambda x: f"{x} — {df_ign[df_ign['sku']==x]['nom_produit'].iloc[0]}"
+                if x else "Choisir un SKU...",
+                key="selectbox_retirer"
+            )
+        with col_ret2:
+            st.write("")
+            st.write("")
+            if sku_retirer and st.button("↩️ Remettre en suivi", type="secondary"):
+                delete("skus_ignores", f"sku=eq.{sku_retirer}")
+                st.success(f"✓ {sku_retirer} remis en suivi !")
+                st.rerun()
+    else:
+        st.info("Aucun produit ignoré.")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
