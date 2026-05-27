@@ -33,6 +33,77 @@ def get_prod_parent(sku, prod_map):
     return {}
 
 
+@st.cache_data(ttl=300)
+def _get_produits_reap():
+    produits_data = select("produits",
+        "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur,prix_achat_ht")
+    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+    mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+    sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
+    return prod_map, sku_mapping
+
+
+@st.cache_data(ttl=300)
+def _get_ventes_reap(date_limite):
+    cmds_wizi = select("commandes",
+        f"select=id_wizi&source=eq.wizishop&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+    cmds_etsy = select("commandes",
+        f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+    cmds_faire = select("commandes",
+        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+
+    nom_par_sku = {}
+    ventes_wizi = {}
+    ventes_etsy = {}
+    ventes_faire = {}
+
+    if cmds_wizi:
+        ids_str = ",".join(str(c["id_wizi"]) for c in cmds_wizi if c.get("id_wizi"))
+        lignes = select("lignes_commande",
+            f"select=sku,sku_variation,quantite,nom_produit&id_commande=in.({ids_str})",
+            limit=50000)
+        if lignes:
+            for l in lignes:
+                sku = l.get("sku")
+                if sku and sku not in nom_par_sku:
+                    nom_par_sku[sku] = l.get("nom_produit", "")
+                sku_key = l.get("sku_variation") or sku
+                if sku_key:
+                    ventes_wizi[sku_key] = ventes_wizi.get(sku_key, 0) + (l.get("quantite") or 0)
+
+    if cmds_etsy:
+        ids_str = ",".join(str(c["id_wizi"]) for c in cmds_etsy if c.get("id_wizi"))
+        lignes = select("lignes_commande",
+            f"select=sku,sku_variation,quantite,nom_produit&id_commande=in.({ids_str})",
+            limit=50000)
+        if lignes:
+            for l in lignes:
+                sku = l.get("sku")
+                if sku and sku not in nom_par_sku:
+                    nom_par_sku[sku] = l.get("nom_produit", "")
+                sku_key = l.get("sku_variation") or sku
+                if sku_key:
+                    ventes_etsy[sku_key] = ventes_etsy.get(sku_key, 0) + (l.get("quantite") or 0)
+
+    if cmds_faire:
+        ids_str = ",".join(str(c["id_faire"]) for c in cmds_faire if c.get("id_faire"))
+        lignes = select("lignes_commande",
+            f"select=sku,quantite,nom_produit&id_commande=in.({ids_str})",
+            limit=50000)
+        if lignes:
+            mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+            sku_mapping_local = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
+            for l in lignes:
+                sku = l.get("sku") or ""
+                sku_resolu = sku_mapping_local.get(sku, sku) if sku else ""
+                if sku_resolu and sku_resolu not in nom_par_sku:
+                    nom_par_sku[sku_resolu] = l.get("nom_produit", "")
+                if sku_resolu:
+                    ventes_faire[sku_resolu] = ventes_faire.get(sku_resolu, 0) + (l.get("quantite") or 0)
+
+    return ventes_wizi, ventes_etsy, ventes_faire, nom_par_sku
+
+
 st.title("Pique&Pince — Dashboard ventes")
 
 with st.sidebar:
@@ -481,71 +552,13 @@ elif page == "🚨 Réapprovisionnement":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    cmds_wizi = select("commandes",
-        f"select=id_wizi&source=eq.wizishop&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
-    cmds_etsy = select("commandes",
-        f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
-    cmds_faire = select("commandes",
-        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
-
     skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
-    produits_data = select("produits",
-        "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur,prix_achat_ht")
-    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
-    mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
-    sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
+    prod_map, sku_mapping = _get_produits_reap()
+    ventes_wizi, ventes_etsy, ventes_faire, nom_par_sku = _get_ventes_reap(date_limite)
 
+    qty_attendue_map = {}
     rows = []
     if skus_data:
-        nom_par_sku = {}
-        ventes_wizi = {}
-        ventes_etsy = {}
-        ventes_faire = {}
-
-        if cmds_wizi:
-            ids_str = ",".join(str(c["id_wizi"]) for c in cmds_wizi if c.get("id_wizi"))
-            lignes_wizi = select("lignes_commande",
-                f"select=sku,sku_variation,quantite,nom_produit&id_commande=in.({ids_str})",
-                limit=50000)
-            if lignes_wizi:
-                for l in lignes_wizi:
-                    sku = l.get("sku")
-                    if sku and sku not in nom_par_sku:
-                        nom_par_sku[sku] = l.get("nom_produit", "")
-                    sku_key = l.get("sku_variation") or sku
-                    if sku_key:
-                        ventes_wizi[sku_key] = ventes_wizi.get(sku_key, 0) + (l.get("quantite") or 0)
-
-        if cmds_etsy:
-            ids_str = ",".join(str(c["id_wizi"]) for c in cmds_etsy if c.get("id_wizi"))
-            lignes_etsy = select("lignes_commande",
-                f"select=sku,sku_variation,quantite,nom_produit&id_commande=in.({ids_str})",
-                limit=50000)
-            if lignes_etsy:
-                for l in lignes_etsy:
-                    sku = l.get("sku")
-                    if sku and sku not in nom_par_sku:
-                        nom_par_sku[sku] = l.get("nom_produit", "")
-                    sku_key = l.get("sku_variation") or sku
-                    if sku_key:
-                        ventes_etsy[sku_key] = ventes_etsy.get(sku_key, 0) + (l.get("quantite") or 0)
-
-        if cmds_faire:
-            ids_str = ",".join(str(c["id_faire"]) for c in cmds_faire if c.get("id_faire"))
-            lignes_faire = select("lignes_commande",
-                f"select=sku,quantite,nom_produit&id_commande=in.({ids_str})",
-                limit=50000)
-            if lignes_faire:
-                for l in lignes_faire:
-                    sku = l.get("sku") or ""
-                    sku_resolu = sku_mapping.get(sku, sku) if sku else ""
-                    if sku_resolu and sku_resolu not in nom_par_sku:
-                        nom_par_sku[sku_resolu] = l.get("nom_produit", "")
-                    if sku_resolu:
-                        ventes_faire[sku_resolu] = ventes_faire.get(sku_resolu, 0) + (l.get("quantite") or 0)
-
-        qty_attendue_map = {}
-        rows = []
         for sku_item in skus_data:
             sku = sku_item.get("sku")
             if sku in skus_exclu or sku in skus_ignores_set:
@@ -658,7 +671,7 @@ elif page == "🚨 Réapprovisionnement":
                 st.write("")
                 st.write("")
                 st.write("")
-                if sku_selectionne and st.button("📦 Marquer en commande", type="primary"):
+                if sku_selectionne and st.button("📦 Marquer en commande", type="primary", key="btn_marquer_commande"):
                     row = df_reap_unique[df_reap_unique["sku"] == sku_selectionne].iloc[0]
                     upsert("commandes_fournisseur", [{
                         "sku": sku_selectionne,
