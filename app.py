@@ -568,12 +568,20 @@ elif page == "🚨 Réapprovisionnement":
 
             if sku in skus_partiels:
                 alerte = "⚠️ Commande partielle"
-            elif mois_stock <= 3:
-                alerte = "🔴 Commander"
-            elif mois_stock <= 5:
-                alerte = "🟡 Surveiller"
+                cmd_partielle = skus_partiels[sku]
+                qty_commandee_partiel = int(cmd_partielle.get("quantite_commandee") or 0)
+                qty_attendue_partiel = int(cmd_partielle.get("quantite_attendue") or 0)
+                qty_a_commander = max(0, qty_attendue_partiel - qty_commandee_partiel)
+                en_commande_label = f"📦 {qty_commandee_partiel} unités commandées"
             else:
-                alerte = "🟢 OK"
+                qty_a_commander = qty_attendue_map[sku]
+                en_commande_label = ""
+                if mois_stock <= 3:
+                    alerte = "🔴 Commander"
+                elif mois_stock <= 5:
+                    alerte = "🟡 Surveiller"
+                else:
+                    alerte = "🟢 OK"
 
             rows.append({
                 "sku": sku,
@@ -583,7 +591,8 @@ elif page == "🚨 Réapprovisionnement":
                 "Réf. fournisseur": ref_fourn,
                 "Prix achat HT": f"{float(prix_achat):.2f} €" if prix_achat else "",
                 "Stock": stock,
-                "Qté à commander": qty_attendue_map[sku],
+                "En commande": en_commande_label,
+                "Qté à commander": qty_a_commander,
                 "Ventes/mois Wizi": v_wizi,
                 "Ventes/mois Etsy": v_etsy,
                 "Ventes/mois Faire": v_faire,
@@ -620,9 +629,9 @@ elif page == "🚨 Réapprovisionnement":
 
         if not df_reap.empty:
             cols_affich = ["sku", "Produit", "Catégorie", "Fournisseur",
-                          "Réf. fournisseur", "Prix achat HT", "Stock", "Qté à commander",
-                          "Ventes/mois Wizi", "Ventes/mois Etsy", "Ventes/mois Faire",
-                          "Ventes/mois Total", "Mois de stock", "Alerte"]
+                          "Réf. fournisseur", "Prix achat HT", "Stock", "En commande",
+                          "Qté à commander", "Ventes/mois Wizi", "Ventes/mois Etsy",
+                          "Ventes/mois Faire", "Ventes/mois Total", "Mois de stock", "Alerte"]
             df_show = df_reap[cols_affich].copy()
             df_show = df_show.rename(columns={"sku": "SKU"})
             st.dataframe(df_show, use_container_width=True, hide_index=True)
