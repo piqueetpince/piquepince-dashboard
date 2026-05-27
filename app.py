@@ -583,6 +583,7 @@ elif page == "🚨 Réapprovisionnement":
                 "Réf. fournisseur": ref_fourn,
                 "Prix achat HT": f"{float(prix_achat):.2f} €" if prix_achat else "",
                 "Stock": stock,
+                "Qté à commander": qty_attendue_map[sku],
                 "Ventes/mois Wizi": v_wizi,
                 "Ventes/mois Etsy": v_etsy,
                 "Ventes/mois Faire": v_faire,
@@ -619,7 +620,7 @@ elif page == "🚨 Réapprovisionnement":
 
         if not df_reap.empty:
             cols_affich = ["sku", "Produit", "Catégorie", "Fournisseur",
-                          "Réf. fournisseur", "Prix achat HT", "Stock",
+                          "Réf. fournisseur", "Prix achat HT", "Stock", "Qté à commander",
                           "Ventes/mois Wizi", "Ventes/mois Etsy", "Ventes/mois Faire",
                           "Ventes/mois Total", "Mois de stock", "Alerte"]
             df_show = df_reap[cols_affich].copy()
