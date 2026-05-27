@@ -550,6 +550,11 @@ elif page == "🚨 Réapprovisionnement":
     ignores_data = select("skus_ignores", "select=sku,nom_produit,fournisseur,raison,created_at&order=created_at.desc")
     skus_ignores_set = {r["sku"] for r in ignores_data} if ignores_data else set()
 
+    if "reap_sku_selectionne" not in st.session_state:
+        st.session_state["reap_sku_selectionne"] = ""
+    if "reap_quantite" not in st.session_state:
+        st.session_state["reap_quantite"] = 0
+
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
     skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
@@ -655,16 +660,28 @@ elif page == "🚨 Réapprovisionnement":
                 row["sku"]: f"{row['sku']} — {row['Produit']} ({row['Fournisseur'] or 'sans fournisseur'})"
                 for _, row in df_reap_unique.iterrows()
             }
+            options_cmd = [""] + df_reap_unique["sku"].tolist()
+            saved_sku = st.session_state["reap_sku_selectionne"]
+            idx_cmd = options_cmd.index(saved_sku) if saved_sku in options_cmd else 0
+
             col_cmd1, col_cmd2 = st.columns([3, 1])
             with col_cmd1:
                 sku_selectionne = st.selectbox(
                     "Sélectionner un SKU à marquer en commande",
-                    options=[""] + df_reap_unique["sku"].tolist(),
-                    format_func=lambda x: sku_label_map.get(x, x) if x else "Choisir un SKU..."
+                    options=options_cmd,
+                    index=idx_cmd,
+                    format_func=lambda x: sku_label_map.get(x, x) if x else "Choisir un SKU...",
+                    key="selectbox_marquer_commande"
                 )
+                if sku_selectionne != st.session_state["reap_sku_selectionne"]:
+                    st.session_state["reap_sku_selectionne"] = sku_selectionne
+                    st.session_state["reap_quantite"] = int(qty_attendue_map.get(sku_selectionne, 0))
+
                 qty_attendue_defaut = int(qty_attendue_map.get(sku_selectionne, 0)) if sku_selectionne else 0
                 qty_cmd_input = st.number_input(
-                    "Quantité commandée", min_value=0, value=qty_attendue_defaut, step=1, key="qty_cmd"
+                    "Quantité commandée", min_value=0,
+                    value=st.session_state["reap_quantite"] if sku_selectionne else 0,
+                    step=1, key="qty_cmd"
                 )
             with col_cmd2:
                 st.write("")
@@ -683,6 +700,8 @@ elif page == "🚨 Réapprovisionnement":
                         "quantite_attendue": qty_attendue_defaut,
                     }], "sku")
                     st.success(f"✓ {sku_selectionne} marqué en commande ({int(qty_cmd_input)} unités) !")
+                    st.session_state["reap_sku_selectionne"] = ""
+                    st.session_state["reap_quantite"] = 0
                     st.rerun()
 
             st.divider()
