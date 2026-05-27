@@ -707,7 +707,7 @@ elif page == "🚨 Réapprovisionnement":
             sku_recu = st.selectbox(
                 "Sélectionner un SKU reçu",
                 options=[""] + df_cmd["sku"].tolist(),
-                format_func=lambda x: f"{x} — {df_cmd[df_cmd['sku']==x]['Produit'].iloc[0]}"
+                format_func=lambda x: f"{x} — {df_cmd[df_cmd['sku']==x]['nom_produit'].iloc[0]}"
                 if x else "Choisir un SKU..."
             )
             if sku_recu:
@@ -715,7 +715,7 @@ elif page == "🚨 Réapprovisionnement":
                 qty_recue_input = st.number_input(
                     "Quantité reçue",
                     min_value=0,
-                    value=int(row_recu_ref["Qté commandée"]),
+                    value=int(row_recu_ref["quantite_commandee"]),
                     step=1,
                     key="qty_recue"
                 )
