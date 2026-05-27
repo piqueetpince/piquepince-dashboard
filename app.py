@@ -459,8 +459,22 @@ elif page == "🚨 Réapprovisionnement":
     st.info(f"Calcul basé sur les ventes des {nb_mois} derniers mois. Délai fournisseur : 2 mois.")
 
     en_commande = select("commandes_fournisseur",
-        "select=id,sku,nom_produit,fournisseur,date_commande&statut=eq.en_commande")
-    skus_en_commande = {c["sku"] for c in en_commande} if en_commande else set()
+        "select=id,sku,nom_produit,fournisseur,date_commande,quantite_commandee,quantite_attendue,quantite_recue"
+        "&statut=in.(en_commande,recu_partiel)&order=date_commande.desc")
+
+    skus_exclu = set()
+    skus_partiels = {}
+    commandes_par_sku = {}
+    if en_commande:
+        for c in en_commande:
+            sku_c = c["sku"]
+            qty_cmd = int(c.get("quantite_commandee") or 0)
+            qty_att = int(c.get("quantite_attendue") or 0)
+            commandes_par_sku[sku_c] = c
+            if qty_att == 0 or qty_cmd >= qty_att:
+                skus_exclu.add(sku_c)
+            else:
+                skus_partiels[sku_c] = c
 
     ignores_data = select("skus_ignores", "select=sku,nom_produit,fournisseur,raison,created_at&order=created_at.desc")
     skus_ignores_set = {r["sku"] for r in ignores_data} if ignores_data else set()
@@ -530,10 +544,11 @@ elif page == "🚨 Réapprovisionnement":
                     if sku_resolu:
                         ventes_faire[sku_resolu] = ventes_faire.get(sku_resolu, 0) + (l.get("quantite") or 0)
 
+        qty_attendue_map = {}
         rows = []
         for sku_item in skus_data:
             sku = sku_item.get("sku")
-            if sku in skus_en_commande or sku in skus_ignores_set:
+            if sku in skus_exclu or sku in skus_ignores_set:
                 continue
             stock = int(sku_item.get("stock") or 0)
             prod = get_prod_parent(sku, prod_map)
@@ -549,7 +564,11 @@ elif page == "🚨 Réapprovisionnement":
             v_total = round((ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)) / nb_mois, 1)
             mois_stock = round(stock / v_total, 1) if v_total > 0 else 99
 
-            if mois_stock <= 3:
+            qty_attendue_map[sku] = max(0, round(v_total * 4) - stock) if v_total > 0 else 0
+
+            if sku in skus_partiels:
+                alerte = "⚠️ Commande partielle"
+            elif mois_stock <= 3:
                 alerte = "🔴 Commander"
             elif mois_stock <= 5:
                 alerte = "🟡 Surveiller"
@@ -620,7 +639,13 @@ elif page == "🚨 Réapprovisionnement":
                     options=[""] + df_reap_unique["sku"].tolist(),
                     format_func=lambda x: sku_label_map.get(x, x) if x else "Choisir un SKU..."
                 )
+                qty_attendue_defaut = int(qty_attendue_map.get(sku_selectionne, 0)) if sku_selectionne else 0
+                qty_cmd_input = st.number_input(
+                    "Quantité commandée", min_value=0, value=qty_attendue_defaut, step=1, key="qty_cmd"
+                )
             with col_cmd2:
+                st.write("")
+                st.write("")
                 st.write("")
                 st.write("")
                 if sku_selectionne and st.button("📦 Marquer en commande", type="primary"):
@@ -630,9 +655,11 @@ elif page == "🚨 Réapprovisionnement":
                         "nom_produit": row["Produit"],
                         "fournisseur": row["Fournisseur"],
                         "date_commande": datetime.now(timezone.utc).isoformat(),
-                        "statut": "en_commande"
+                        "statut": "en_commande",
+                        "quantite_commandee": int(qty_cmd_input),
+                        "quantite_attendue": qty_attendue_defaut,
                     }], "sku")
-                    st.success(f"✓ {sku_selectionne} marqué en commande !")
+                    st.success(f"✓ {sku_selectionne} marqué en commande ({int(qty_cmd_input)} unités) !")
                     st.rerun()
 
             st.divider()
@@ -649,36 +676,55 @@ elif page == "🚨 Réapprovisionnement":
     st.divider()
     st.subheader("📦 Produits en commande chez le fournisseur")
 
-    en_commande_affich = select("commandes_fournisseur",
-        "select=id,sku,nom_produit,fournisseur,date_commande&statut=eq.en_commande&order=date_commande.desc")
-
-    if en_commande_affich:
-        df_cmd = pd.DataFrame(en_commande_affich)
-        df_cmd["date_commande"] = pd.to_datetime(
-            df_cmd["date_commande"]).dt.strftime("%d/%m/%Y")
-        df_show_cmd = df_cmd[["sku", "nom_produit", "fournisseur", "date_commande"]].copy()
-        df_show_cmd.columns = ["SKU", "Produit", "Fournisseur", "Date commande"]
+    if en_commande:
+        df_cmd = pd.DataFrame(en_commande)
+        for col_qty in ["quantite_commandee", "quantite_attendue", "quantite_recue"]:
+            df_cmd[col_qty] = pd.to_numeric(df_cmd[col_qty], errors="coerce").fillna(0).astype(int)
+        df_cmd["date_commande"] = pd.to_datetime(df_cmd["date_commande"]).dt.strftime("%d/%m/%Y")
+        df_cmd["Statut"] = df_cmd.apply(
+            lambda r: "⚠️ Partielle" if r["quantite_commandee"] < r["quantite_attendue"] else "✅ Complète", axis=1
+        )
+        df_show_cmd = df_cmd[["sku", "nom_produit", "fournisseur", "date_commande",
+                               "quantite_commandee", "quantite_attendue", "Statut"]].copy()
+        df_show_cmd.columns = ["SKU", "Produit", "Fournisseur", "Date commande",
+                                "Qté commandée", "Qté attendue", "Statut"]
         st.dataframe(df_show_cmd, use_container_width=True, hide_index=True)
 
         st.divider()
+        qty_recue_input = 0
         col_r1, col_r2 = st.columns([3, 1])
         with col_r1:
             sku_recu = st.selectbox(
                 "Sélectionner un SKU reçu",
                 options=[""] + df_cmd["sku"].tolist(),
-                format_func=lambda x: f"{x} — {df_cmd[df_cmd['sku']==x]['nom_produit'].iloc[0]}"
+                format_func=lambda x: f"{x} — {df_cmd[df_cmd['sku']==x]['Produit'].iloc[0]}"
                 if x else "Choisir un SKU..."
             )
+            if sku_recu:
+                row_recu_ref = df_cmd[df_cmd["sku"] == sku_recu].iloc[0]
+                qty_recue_input = st.number_input(
+                    "Quantité reçue",
+                    min_value=0,
+                    value=int(row_recu_ref["Qté commandée"]),
+                    step=1,
+                    key="qty_recue"
+                )
         with col_r2:
+            st.write("")
+            st.write("")
             st.write("")
             st.write("")
             if sku_recu and st.button("✅ Marquer comme reçu", type="primary"):
                 row_cmd = df_cmd[df_cmd["sku"] == sku_recu].iloc[0]
+                qty_cmd_val = int(row_cmd["Qté commandée"])
+                new_statut = "recu" if qty_recue_input >= qty_cmd_val else "recu_partiel"
                 upsert("commandes_fournisseur", [{
                     "id": int(row_cmd["id"]),
-                    "statut": "recu"
+                    "statut": new_statut,
+                    "quantite_recue": int(qty_recue_input),
                 }], "id")
-                st.success(f"✓ {sku_recu} marqué comme reçu !")
+                msg = "reçu" if new_statut == "recu" else f"reçu partiellement ({qty_recue_input}/{qty_cmd_val})"
+                st.success(f"✓ {sku_recu} marqué comme {msg} !")
                 st.rerun()
     else:
         st.info("Aucun produit en commande actuellement.")
