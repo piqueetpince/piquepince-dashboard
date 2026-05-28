@@ -240,8 +240,12 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
     Retourne nb_commandes.
     """
     nb_commandes = 0
+    nb_pages = 0
     cursor = None
     query_filter = f"created_at:>={since_date}"
+
+    # DEBUG — filtre utilisé
+    st.write(f"[DEBUG] Filtre GraphQL : `{query_filter}`")
 
     while True:
         variables = {"cursor": cursor, "queryFilter": query_filter}
@@ -257,6 +261,14 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
 
         data = body.get("data", {}).get("orders", {})
         nodes = data.get("nodes", [])
+        nb_pages += 1
+
+        # DEBUG — infos de la page courante
+        page_info = data.get("pageInfo", {})
+        total_count = data.get("totalCount")  # non standard, présent sur certaines versions
+        st.write(f"[DEBUG] Page {nb_pages} — {len(nodes)} commandes | "
+                 f"hasNextPage={page_info.get('hasNextPage')} | "
+                 f"totalCount={total_count}")
 
         for order in nodes:
             order_id = order["id"]
@@ -324,11 +336,13 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
 
             nb_commandes += 1
 
-        page_info = data.get("pageInfo", {})
         if not page_info.get("hasNextPage"):
             break
         cursor = page_info.get("endCursor")
         time.sleep(0.3)
+
+    # DEBUG — bilan
+    st.write(f"[DEBUG] Total : {nb_commandes} commandes en {nb_pages} page(s)")
 
     return nb_commandes
 
