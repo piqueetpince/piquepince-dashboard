@@ -2148,57 +2148,22 @@ elif page == "🔗 Connexion Faire":
     st.divider()
     st.subheader("🛍️ Connexion Shopify Foulard Frenchy")
 
-    try:
-        _shopify_shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
-        _shopify_client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
-        _shopify_client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
-        _shopify_secrets_ok = True
-    except Exception:
-        _shopify_secrets_ok = False
-
-    if not _shopify_secrets_ok:
-        st.warning("Secrets SHOPIFY_FOULARD_FRENCHY_SHOP, CLIENT_ID ou CLIENT_SECRET manquants.")
-    else:
-        if st.button("🔑 Obtenir le token Shopify"):
-            with st.spinner("Demande du token..."):
-                try:
-                    _resp = requests.post(
-                        f"https://{_shopify_shop}/admin/oauth/access_token",
-                        data={
-                            "grant_type": "client_credentials",
-                            "client_id": _shopify_client_id,
-                            "client_secret": _shopify_client_secret,
-                        },
-                        headers={"Content-Type": "application/x-www-form-urlencoded"}
-                    )
-                    if _resp.status_code == 200:
-                        _token = _resp.json().get("access_token", "")
-                        st.success("✅ Token obtenu !")
-                        st.info("Copie cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` :")
-                        st.code(_token)
+    if st.button("Tester la connexion Shopify"):
+        with st.spinner("Obtention du token et test de connexion..."):
+            try:
+                shop, token = get_shopify_credentials()
+                status, result = shopify_test_connection(shop, token)
+                if status == 200:
+                    shop_info = result.get("shop", {})
+                    errors = result.get("errors")
+                    if errors:
+                        st.error(f"Erreur GraphQL : {errors}")
                     else:
-                        st.error(f"Erreur {_resp.status_code} : {_resp.text[:300]}")
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
-
-        if "SHOPIFY_FOULARD_FRENCHY_TOKEN" in st.secrets:
-            st.success("✅ Shopify Foulard Frenchy connecté (token configuré dans les secrets)")
-            if st.button("Tester la connexion Shopify"):
-                with st.spinner("Test de connexion..."):
-                    try:
-                        shop, token = get_shopify_credentials()
-                        status, result = shopify_test_connection(shop, token)
-                        if status == 200:
-                            shop_info = result.get("shop", {})
-                            errors = result.get("errors")
-                            if errors:
-                                st.error(f"Erreur GraphQL : {errors}")
-                            else:
-                                st.success("✅ Connexion Shopify fonctionnelle")
-                                st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
-                                st.write(f"**Email :** {shop_info.get('email')}")
-                                st.write(f"**Plan :** {shop_info.get('plan_name')}")
-                        else:
-                            st.error(f"Erreur {status} : {result}")
-                    except Exception as e:
-                        st.error(f"Erreur : {e}")
+                        st.success("✅ Connexion Shopify fonctionnelle")
+                        st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
+                        st.write(f"**Email :** {shop_info.get('email')}")
+                        st.write(f"**Plan :** {shop_info.get('plan_name')}")
+                else:
+                    st.error(f"Erreur {status} : {result}")
+            except Exception as e:
+                st.error(f"Erreur : {e}")

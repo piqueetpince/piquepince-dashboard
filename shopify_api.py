@@ -105,5 +105,16 @@ def test_connection(shop, token):
     return r.status_code, r.text[:300]
 
 
+@st.cache_data(ttl=82800)
 def get_shopify_credentials():
-    return st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"], st.secrets["SHOPIFY_FOULARD_FRENCHY_TOKEN"]
+    shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
+    client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
+    client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
+    r = requests.post(
+        f"https://{shop}/admin/oauth/access_token",
+        data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
+        headers={"Content-Type": "application/x-www-form-urlencoded"}
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Erreur token Shopify {r.status_code} : {r.text[:300]}")
+    return shop, r.json()["access_token"]
