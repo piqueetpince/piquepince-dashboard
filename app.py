@@ -8,6 +8,7 @@ from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
+from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
 import time
 from datetime import datetime, timezone
 from faire_api import api_get as faire_api_get, test_write_permission, api_patch as faire_api_patch
@@ -189,7 +190,7 @@ with st.sidebar:
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
         st.subheader("🛍️ Wizishop")
@@ -313,6 +314,64 @@ if page == "🔄 Synchronisation":
                     log_sync_faire("produits_faire", nb_prod, "success",
                                    f"{nb_prod} produits, {nb_var} variants", duree)
                     st.success(f"✓ {nb_prod} produits et {nb_var} variants en {duree:.1f}s")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+    with col4:
+        st.subheader("🧣 Foulard Frenchy")
+
+        if st.button("9️⃣ Sync Produits Foulard Frenchy", use_container_width=True):
+            with st.spinner("Synchronisation produits Shopify Foulard Frenchy..."):
+                debut = time.time()
+                try:
+                    shop_ff, token_ff = get_shopify_token()
+                    nb_prod, nb_var = sync_shopify_produits("foulard_frenchy", shop_ff, token_ff)
+                    duree = time.time() - debut
+                    log_sync_shopify("foulard_frenchy", "produits_shopify", nb_prod, "success",
+                                     f"{nb_prod} produits, {nb_var} variants", duree)
+                    st.success(f"✓ {nb_prod} produits et {nb_var} variants en {duree:.1f}s")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+        if st.button("🔟 Sync Commandes Foulard Frenchy", use_container_width=True):
+            with st.spinner("Synchronisation commandes Shopify Foulard Frenchy..."):
+                debut = time.time()
+                try:
+                    shop_ff, token_ff = get_shopify_token()
+                    nb = sync_shopify_commandes("foulard_frenchy", shop_ff, token_ff, since_date="2025-01-01")
+                    duree = time.time() - debut
+                    log_sync_shopify("foulard_frenchy", "commandes_shopify", nb, "success",
+                                     f"{nb} commandes", duree)
+                    st.success(f"✓ {nb} commandes en {duree:.1f}s")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+    with col5:
+        st.subheader("🧸 Montessori")
+
+        if st.button("1️⃣1️⃣ Sync Produits Montessori", use_container_width=True):
+            with st.spinner("Synchronisation produits Shopify Montessori..."):
+                debut = time.time()
+                try:
+                    shop_m, token_m = get_shopify_token_montessori()
+                    nb_prod, nb_var = sync_shopify_produits("montessori", shop_m, token_m)
+                    duree = time.time() - debut
+                    log_sync_shopify("montessori", "produits_shopify", nb_prod, "success",
+                                     f"{nb_prod} produits, {nb_var} variants", duree)
+                    st.success(f"✓ {nb_prod} produits et {nb_var} variants en {duree:.1f}s")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+        if st.button("1️⃣2️⃣ Sync Commandes Montessori", use_container_width=True):
+            with st.spinner("Synchronisation commandes Shopify Montessori..."):
+                debut = time.time()
+                try:
+                    shop_m, token_m = get_shopify_token_montessori()
+                    nb = sync_shopify_commandes("montessori", shop_m, token_m, since_date="2025-01-01")
+                    duree = time.time() - debut
+                    log_sync_shopify("montessori", "commandes_shopify", nb, "success",
+                                     f"{nb} commandes", duree)
+                    st.success(f"✓ {nb} commandes en {duree:.1f}s")
                 except Exception as e:
                     st.error(f"Erreur : {e}")
 
