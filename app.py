@@ -786,6 +786,7 @@ elif page == "🚨 Réapprovisionnement":
                     new_statut = "recu" if qty_recue_val >= qty_cmd_val else "recu_partiel"
                     upsert("commandes_fournisseur", [{
                         "id": int(row_orig["id"]),
+                        "sku": sku_r,
                         "statut": new_statut,
                         "quantite_recue": qty_recue_val,
                     }], "id")
