@@ -32,10 +32,16 @@ if _oauth_code_init and _oauth_state_init == "piquepince_shopify" and "shopify_f
         _shop_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
         _cid_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
         _csec_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
+        _post_url = f"https://{_shop_init}/admin/oauth/access_token"
+        _post_body = {"client_id": _cid_init, "client_secret": "***", "code": _oauth_code_init}
         _resp_init = requests.post(
-            f"https://{_shop_init}/admin/oauth/access_token",
-            json={"client_id": _cid_init, "client_secret": _csec_init, "code": _oauth_code_init}
+            _post_url,
+            data={"client_id": _cid_init, "client_secret": _csec_init, "code": _oauth_code_init},
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
         )
+        st.write(f"🐛 DEBUG OAuth POST — URL : `{_post_url}`")
+        st.write(f"🐛 DEBUG OAuth POST — Body : {_post_body}")
+        st.write(f"🐛 DEBUG OAuth POST — Status : {_resp_init.status_code} | Réponse : {_resp_init.text[:300]}")
         if _resp_init.status_code == 200:
             st.session_state["shopify_ff_token"] = _resp_init.json().get("access_token", "")
         else:
