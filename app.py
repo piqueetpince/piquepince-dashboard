@@ -14,6 +14,7 @@ from faire_api import api_get as faire_api_get, test_write_permission, api_patch
 from shopify_api import (
     test_connection as shopify_test_connection,
     get_shopify_token,
+    get_shopify_token_montessori,
     get_auth_url as shopify_get_auth_url,
     verify_hmac as shopify_verify_hmac,
     exchange_code_for_token as shopify_exchange_code,
@@ -30,29 +31,45 @@ st.set_page_config(
 # Doit s'exécuter avant la navigation sidebar, car Shopify redirige vers la
 # racine de l'app avec ?code=...&hmac=...&state=...&shop=...&timestamp=...
 _qp = dict(st.query_params)
-if "code" in _qp and "hmac" in _qp and _qp.get("state", "").startswith("shopify_ff_"):
-    try:
-        _client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
-        _client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
-        _shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
-
-        # Vérification HMAC
-        _hmac_ok = shopify_verify_hmac(_qp, _client_secret)
-
-        if not _hmac_ok:
-            st.session_state["shopify_ff_error"] = "HMAC invalide — callback rejeté."
-        else:
-            _status, _result = shopify_exchange_code(_shop, _client_id, _client_secret, _qp["code"])
-            if _status == 200:
-                st.session_state["shopify_ff_token_obtained"] = _result.get("access_token", "")
-                st.session_state["shopify_ff_scope_obtained"] = _result.get("scope", "")
+if "code" in _qp and "hmac" in _qp:
+    _state = _qp.get("state", "")
+    if _state.startswith("shopify_ff_"):
+        try:
+            _client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
+            _client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
+            _shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
+            _hmac_ok = shopify_verify_hmac(_qp, _client_secret)
+            if not _hmac_ok:
+                st.session_state["shopify_ff_error"] = "HMAC invalide — callback rejeté."
             else:
-                st.session_state["shopify_ff_error"] = f"Échange token échoué {_status} : {_result}"
+                _status, _result = shopify_exchange_code(_shop, _client_id, _client_secret, _qp["code"])
+                if _status == 200:
+                    st.session_state["shopify_ff_token_obtained"] = _result.get("access_token", "")
+                    st.session_state["shopify_ff_scope_obtained"] = _result.get("scope", "")
+                else:
+                    st.session_state["shopify_ff_error"] = f"Échange token échoué {_status} : {_result}"
+        except Exception as _e:
+            st.session_state["shopify_ff_error"] = str(_e)
+        st.query_params.clear()
 
-    except Exception as _e:
-        st.session_state["shopify_ff_error"] = str(_e)
-
-    st.query_params.clear()
+    elif _state.startswith("shopify_montessori_"):
+        try:
+            _client_secret = st.secrets["SHOPIFY_BOUTIQUE2_CLIENT_SECRET"]
+            _client_id = st.secrets["SHOPIFY_BOUTIQUE2_CLIENT_ID"]
+            _shop = st.secrets["SHOPIFY_BOUTIQUE2_SHOP"]
+            _hmac_ok = shopify_verify_hmac(_qp, _client_secret)
+            if not _hmac_ok:
+                st.session_state["shopify_montessori_error"] = "HMAC invalide — callback rejeté."
+            else:
+                _status, _result = shopify_exchange_code(_shop, _client_id, _client_secret, _qp["code"])
+                if _status == 200:
+                    st.session_state["shopify_montessori_token_obtained"] = _result.get("access_token", "")
+                    st.session_state["shopify_montessori_scope_obtained"] = _result.get("scope", "")
+                else:
+                    st.session_state["shopify_montessori_error"] = f"Échange token échoué {_status} : {_result}"
+        except Exception as _e:
+            st.session_state["shopify_montessori_error"] = str(_e)
+        st.query_params.clear()
 # ── Fin interception OAuth ───────────────────────────────────────────────────
 
 
@@ -2228,6 +2245,57 @@ elif page == "🔗 Connexion Faire":
         st.session_state["shopify_ff_nonce"] = _nonce
         _auth_url = shopify_get_auth_url(_shop_ff, _cid_ff, _nonce)
         st.link_button("🔐 Autoriser l'app sur Shopify Foulard Frenchy", _auth_url)
+        st.caption(f"redirect_uri enregistrée : `https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app`")
+    except KeyError as e:
+        st.warning(f"Secret manquant : {e}")
+
+    st.divider()
+    st.subheader("🧸 Connexion Shopify Montessori")
+
+    # Résultat de l'échange OAuth (si callback vient d'être traité)
+    if "shopify_montessori_error" in st.session_state:
+        st.error(f"Erreur OAuth : {st.session_state.pop('shopify_montessori_error')}")
+
+    if "shopify_montessori_token_obtained" in st.session_state:
+        st.success("✅ Token Shopify obtenu !")
+        st.write(f"**Scopes accordés :** `{st.session_state['shopify_montessori_scope_obtained']}`")
+        st.info("Ajoute cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_BOUTIQUE2_TOKEN` puis redémarre l'app :")
+        st.code(st.session_state["shopify_montessori_token_obtained"])
+
+    # Token déjà configuré → bouton de test
+    _token_montessori_pret = "SHOPIFY_BOUTIQUE2_TOKEN" in st.secrets
+    if _token_montessori_pret:
+        st.success("✅ Token configuré dans les secrets")
+        if st.button("Tester la connexion Shopify Montessori"):
+            with st.spinner("Test en cours..."):
+                try:
+                    shop, token = get_shopify_token_montessori()
+                    status, result = shopify_test_connection(shop, token)
+                    if status == 200:
+                        errors = result.get("errors")
+                        if errors:
+                            st.error(f"Erreur GraphQL : {errors}")
+                        else:
+                            shop_info = result["shop"]
+                            st.success("✅ Connexion Shopify Montessori fonctionnelle")
+                            st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
+                            st.write(f"**Email :** {shop_info.get('email')}")
+                            st.write(f"**Plan :** {shop_info.get('plan_name')}")
+                    else:
+                        st.error(f"Erreur {status} : {result}")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+    # Flux OAuth — bouton d'installation
+    st.divider()
+    st.markdown("**Installer / réinstaller l'app pour obtenir un nouveau token :**")
+    try:
+        _shop_m = st.secrets["SHOPIFY_BOUTIQUE2_SHOP"]
+        _cid_m = st.secrets["SHOPIFY_BOUTIQUE2_CLIENT_ID"]
+        _nonce_m = f"shopify_montessori_{shopify_generate_nonce()}"
+        st.session_state["shopify_montessori_nonce"] = _nonce_m
+        _auth_url_m = shopify_get_auth_url(_shop_m, _cid_m, _nonce_m)
+        st.link_button("🔐 Autoriser l'app sur Shopify Montessori", _auth_url_m)
         st.caption(f"redirect_uri enregistrée : `https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app`")
     except KeyError as e:
         st.warning(f"Secret manquant : {e}")
