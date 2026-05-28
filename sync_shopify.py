@@ -101,9 +101,9 @@ query GetOrders($cursor: String, $queryFilter: String) {
           quantity
           sku
           taxable
-          originalUnitPrice { amount }
-          discountedUnitPrice { amount }
-          totalDiscount { amount }
+          originalUnitPrice
+          discountedUnitPrice
+          totalDiscount
           variant { id }
         }
       }
@@ -313,9 +313,9 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
                     "sku":                    item.get("sku"),
                     "titre":                  item.get("title"),
                     "quantite":               item.get("quantity"),
-                    "prix_unitaire_original": _money(item.get("originalUnitPrice")),
-                    "prix_unitaire_remise":   _money(item.get("discountedUnitPrice")),
-                    "total_remise":           _money(item.get("totalDiscount")),
+                    "prix_unitaire_original": float(item["originalUnitPrice"]) if item.get("originalUnitPrice") else None,
+                    "prix_unitaire_remise":   float(item["discountedUnitPrice"]) if item.get("discountedUnitPrice") else None,
+                    "total_remise":           float(item["totalDiscount"]) if item.get("totalDiscount") else None,
                     "taxable":                item.get("taxable"),
                 })
 
