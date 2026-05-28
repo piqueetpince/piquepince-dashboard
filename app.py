@@ -19,37 +19,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- DEBUG temporaire ---
-if st.query_params:
-    st.write("🐛 DEBUG query_params reçus au chargement :", dict(st.query_params))
-# --- FIN DEBUG ---
-
-# Interception OAuth Shopify — doit s'exécuter avant la navigation
-_oauth_code_init = st.query_params.get("code")
-_oauth_state_init = st.query_params.get("state")
-if _oauth_code_init and _oauth_state_init == "piquepince_shopify" and "shopify_ff_token" not in st.session_state:
-    try:
-        _shop_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
-        _cid_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
-        _csec_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
-        _post_url = f"https://{_shop_init}/admin/oauth/access_token"
-        _post_body = {"client_id": _cid_init, "client_secret": "***", "code": _oauth_code_init}
-        _resp_init = requests.post(
-            _post_url,
-            data={"client_id": _cid_init, "client_secret": _csec_init, "code": _oauth_code_init},
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
-        )
-        st.write(f"🐛 DEBUG OAuth POST — URL : `{_post_url}`")
-        st.write(f"🐛 DEBUG OAuth POST — Body : {_post_body}")
-        st.write(f"🐛 DEBUG OAuth POST — Status : {_resp_init.status_code} | Réponse : {_resp_init.text[:300]}")
-        if _resp_init.status_code == 200:
-            st.session_state["shopify_ff_token"] = _resp_init.json().get("access_token", "")
-        else:
-            st.session_state["shopify_ff_oauth_error"] = f"{_resp_init.status_code} — {_resp_init.text[:300]}"
-    except Exception as _e_init:
-        st.session_state["shopify_ff_oauth_error"] = str(_e_init)
-    st.query_params.clear()
-
 
 def get_prod_parent(sku, prod_map):
     if not sku:
@@ -2183,7 +2152,6 @@ elif page == "🔗 Connexion Faire":
         _shopify_shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
         _shopify_client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
         _shopify_client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
-        _shopify_redirect_uri = "https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
         _shopify_secrets_ok = True
     except Exception:
         _shopify_secrets_ok = False
@@ -2191,28 +2159,29 @@ elif page == "🔗 Connexion Faire":
     if not _shopify_secrets_ok:
         st.warning("Secrets SHOPIFY_FOULARD_FRENCHY_SHOP, CLIENT_ID ou CLIENT_SECRET manquants.")
     else:
-        # Affichage du token si échange OAuth déjà effectué au chargement
-        if "shopify_ff_oauth_error" in st.session_state:
-            st.error(f"Erreur échange OAuth : {st.session_state['shopify_ff_oauth_error']}")
+        if st.button("🔑 Obtenir le token Shopify"):
+            with st.spinner("Demande du token..."):
+                try:
+                    _resp = requests.post(
+                        f"https://{_shopify_shop}/admin/oauth/access_token",
+                        data={
+                            "grant_type": "client_credentials",
+                            "client_id": _shopify_client_id,
+                            "client_secret": _shopify_client_secret,
+                        },
+                        headers={"Content-Type": "application/x-www-form-urlencoded"}
+                    )
+                    if _resp.status_code == 200:
+                        _token = _resp.json().get("access_token", "")
+                        st.success("✅ Token obtenu !")
+                        st.info("Copie cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` :")
+                        st.code(_token)
+                    else:
+                        st.error(f"Erreur {_resp.status_code} : {_resp.text[:300]}")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
 
-        if "shopify_ff_token" in st.session_state:
-            st.success("✅ Token Shopify obtenu !")
-            st.info("Copie cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` :")
-            st.code(st.session_state["shopify_ff_token"])
-
-        # Bouton de connexion OAuth
-        _auth_url = (
-            f"https://{_shopify_shop}/admin/oauth/authorize"
-            f"?client_id={_shopify_client_id}"
-            f"&scope=read_orders,read_products,read_inventory,read_customers"
-            f"&redirect_uri={_shopify_redirect_uri}"
-            f"&state=piquepince_shopify"
-        )
-        st.link_button("🔐 Se connecter à Shopify Foulard Frenchy", _auth_url)
-
-        # Section test si token déjà configuré
-        _token_configured = "SHOPIFY_FOULARD_FRENCHY_TOKEN" in st.secrets
-        if _token_configured:
+        if "SHOPIFY_FOULARD_FRENCHY_TOKEN" in st.secrets:
             st.success("✅ Shopify Foulard Frenchy connecté (token configuré dans les secrets)")
             if st.button("Tester la connexion Shopify"):
                 with st.spinner("Test de connexion..."):
