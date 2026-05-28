@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import requests
 from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_produits, log_sync)
@@ -2147,18 +2148,75 @@ elif page == "🔗 Connexion Faire":
     st.divider()
     st.subheader("🛍️ Connexion Shopify Foulard Frenchy")
 
-    if st.button("Tester la connexion Shopify"):
-        with st.spinner("Test de connexion..."):
-            try:
-                shop, token = get_shopify_credentials()
-                status, result = shopify_test_connection(shop, token)
-                if status == 200:
-                    shop_info = result.get("shop", {})
-                    st.success(f"✅ Connexion Shopify fonctionnelle")
-                    st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
-                    st.write(f"**Email :** {shop_info.get('email')}")
-                    st.write(f"**Plan :** {shop_info.get('plan_name')}")
-                else:
-                    st.error(f"Erreur {status} : {result}")
-            except Exception as e:
-                st.error(f"Erreur : {e}")
+    try:
+        _shopify_shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
+        _shopify_client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
+        _shopify_client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
+        _shopify_redirect_uri = "https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
+        _shopify_secrets_ok = True
+    except Exception:
+        _shopify_secrets_ok = False
+
+    if not _shopify_secrets_ok:
+        st.warning("Secrets SHOPIFY_FOULARD_FRENCHY_SHOP, CLIENT_ID ou CLIENT_SECRET manquants.")
+    else:
+        # Échange du code OAuth si callback reçu
+        _oauth_code = st.query_params.get("code")
+        _oauth_state = st.query_params.get("state")
+        if _oauth_code and _oauth_state == "piquepince_shopify":
+            if "shopify_ff_token" not in st.session_state:
+                with st.spinner("Échange du code OAuth..."):
+                    try:
+                        resp = requests.post(
+                            f"https://{_shopify_shop}/admin/oauth/access_token",
+                            json={
+                                "client_id": _shopify_client_id,
+                                "client_secret": _shopify_client_secret,
+                                "code": _oauth_code,
+                            }
+                        )
+                        if resp.status_code == 200:
+                            st.session_state["shopify_ff_token"] = resp.json().get("access_token", "")
+                        else:
+                            st.error(f"Erreur échange token : {resp.status_code} — {resp.text[:300]}")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            if "shopify_ff_token" in st.session_state:
+                st.success("✅ Token Shopify obtenu !")
+                st.info("Copie cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` :")
+                st.code(st.session_state["shopify_ff_token"])
+
+        # Bouton de connexion OAuth
+        _auth_url = (
+            f"https://{_shopify_shop}/admin/oauth/authorize"
+            f"?client_id={_shopify_client_id}"
+            f"&scope=read_orders,read_products,read_inventory,read_customers"
+            f"&redirect_uri={_shopify_redirect_uri}"
+            f"&state=piquepince_shopify"
+        )
+        st.link_button("🔐 Se connecter à Shopify Foulard Frenchy", _auth_url)
+
+        # Section test si token déjà configuré
+        _token_configured = "SHOPIFY_FOULARD_FRENCHY_TOKEN" in st.secrets
+        if _token_configured:
+            st.success("✅ Shopify Foulard Frenchy connecté (token configuré dans les secrets)")
+            if st.button("Tester la connexion Shopify"):
+                with st.spinner("Test de connexion..."):
+                    try:
+                        shop, token = get_shopify_credentials()
+                        status, result = shopify_test_connection(shop, token)
+                        if status == 200:
+                            shop_info = result.get("shop", {})
+                            errors = result.get("errors")
+                            if errors:
+                                st.error(f"Erreur GraphQL : {errors}")
+                            else:
+                                st.success("✅ Connexion Shopify fonctionnelle")
+                                st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
+                                st.write(f"**Email :** {shop_info.get('email')}")
+                                st.write(f"**Plan :** {shop_info.get('plan_name')}")
+                        else:
+                            st.error(f"Erreur {status} : {result}")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
