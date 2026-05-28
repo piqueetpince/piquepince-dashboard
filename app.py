@@ -10,6 +10,7 @@ from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 import time
 from datetime import datetime, timezone
 from faire_api import api_get as faire_api_get, test_write_permission, api_patch as faire_api_patch
+from shopify_api import test_connection as shopify_test_connection, get_shopify_credentials
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
@@ -2140,5 +2141,24 @@ elif page == "🔗 Connexion Faire":
                 else:
                     st.write(f"**Status code :** {status}")
                     st.write(f"**Réponse :** {body}")
+            except Exception as e:
+                st.error(f"Erreur : {e}")
+
+    st.divider()
+    st.subheader("🛍️ Connexion Shopify Foulard Frenchy")
+
+    if st.button("Tester la connexion Shopify"):
+        with st.spinner("Test de connexion..."):
+            try:
+                shop, token = get_shopify_credentials()
+                status, result = shopify_test_connection(shop, token)
+                if status == 200:
+                    shop_info = result.get("shop", {})
+                    st.success(f"✅ Connexion Shopify fonctionnelle")
+                    st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
+                    st.write(f"**Email :** {shop_info.get('email')}")
+                    st.write(f"**Plan :** {shop_info.get('plan_name')}")
+                else:
+                    st.error(f"Erreur {status} : {result}")
             except Exception as e:
                 st.error(f"Erreur : {e}")
