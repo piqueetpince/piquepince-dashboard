@@ -44,6 +44,7 @@ if "code" in _qp and "hmac" in _qp and _qp.get("state", "").startswith("shopify_
         st.write("🐛 **DEBUG OAuth callback**")
         st.write(f"**query_params reçus :** {_qp}")
         st.write(f"**message HMAC (params triés sans hmac) :** `{_msg_debug}`")
+        st.write(f"**Clé HMAC utilisée (8 premiers chars) :** `{_client_secret[:8]}...` (longueur : {len(_client_secret)})")
         st.write(f"**HMAC calculé :** `{_digest_debug}`")
         st.write(f"**HMAC reçu :** `{_qp.get('hmac', '')}`")
         st.write(f"**Correspondance :** {_digest_debug == _qp.get('hmac', '')}")
