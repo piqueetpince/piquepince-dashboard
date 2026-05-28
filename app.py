@@ -50,17 +50,11 @@ if "code" in _qp and "hmac" in _qp and _qp.get("state", "").startswith("shopify_
         st.write(f"**Correspondance :** {_digest_debug == _qp.get('hmac', '')}")
         # --- FIN DEBUG ---
 
-        # Vérification nonce CSRF
-        _expected_nonce = st.session_state.get("shopify_ff_nonce", "")
-        _nonce_ok = (_expected_nonce and _qp.get("state") == _expected_nonce)
-
         # Vérification HMAC
         _hmac_ok = shopify_verify_hmac(_qp, _client_secret)
 
         if not _hmac_ok:
             st.session_state["shopify_ff_error"] = "HMAC invalide — callback rejeté."
-        elif not _nonce_ok:
-            st.session_state["shopify_ff_error"] = "Nonce invalide — possible attaque CSRF."
         else:
             _status, _result = shopify_exchange_code(_shop, _client_id, _client_secret, _qp["code"])
             if _status == 200:
