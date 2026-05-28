@@ -36,20 +36,6 @@ if "code" in _qp and "hmac" in _qp and _qp.get("state", "").startswith("shopify_
         _client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
         _shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
 
-        # --- DEBUG temporaire ---
-        import hashlib, hmac as _hmac_mod
-        _filtered_debug = {k: v for k, v in _qp.items() if k != "hmac"}
-        _msg_debug = "&".join(f"{k}={v}" for k, v in sorted(_filtered_debug.items()))
-        _digest_debug = _hmac_mod.new(_client_secret.encode(), _msg_debug.encode(), hashlib.sha256).hexdigest()
-        st.write("🐛 **DEBUG OAuth callback**")
-        st.write(f"**query_params reçus :** {_qp}")
-        st.write(f"**message HMAC (params triés sans hmac) :** `{_msg_debug}`")
-        st.write(f"**Clé HMAC utilisée (8 premiers chars) :** `{_client_secret[:8]}...` (longueur : {len(_client_secret)})")
-        st.write(f"**HMAC calculé :** `{_digest_debug}`")
-        st.write(f"**HMAC reçu :** `{_qp.get('hmac', '')}`")
-        st.write(f"**Correspondance :** {_digest_debug == _qp.get('hmac', '')}")
-        # --- FIN DEBUG ---
-
         # Vérification HMAC
         _hmac_ok = shopify_verify_hmac(_qp, _client_secret)
 
