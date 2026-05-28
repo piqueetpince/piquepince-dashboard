@@ -657,6 +657,7 @@ elif page == "🚨 Réapprovisionnement":
                            "Qté à commander", "Ventes/mois Total", "Mois de stock", "Alerte", "En commande"]
             df_editor = df_show_csv[cols_editor].copy()
             df_editor["Qté commandée"] = 0
+            df_editor["Ignorer ?"] = False
 
             with st.form("form_reap"):
                 edited = st.data_editor(
@@ -673,14 +674,17 @@ elif page == "🚨 Réapprovisionnement":
                         "Mois de stock": st.column_config.NumberColumn(disabled=True),
                         "Alerte": st.column_config.TextColumn(disabled=True),
                         "En commande": st.column_config.TextColumn(disabled=True),
-                        "Qté commandée": st.column_config.NumberColumn(
-                            "Qté commandée", min_value=0, step=1
-                        ),
+                        "Qté commandée": st.column_config.NumberColumn(min_value=0, step=1),
+                        "Ignorer ?": st.column_config.CheckboxColumn(),
                     }
                 )
-                submitted = st.form_submit_button("📦 Marquer en commande", type="primary")
+                col_sub1, col_sub2 = st.columns(2)
+                with col_sub1:
+                    submitted_cmd = st.form_submit_button("📦 Marquer en commande", type="primary")
+                with col_sub2:
+                    submitted_ign = st.form_submit_button("🚫 Ignorer les produits sélectionnés", type="secondary")
 
-            if submitted:
+            if submitted_cmd:
                 a_commander = edited[edited["Qté commandée"] > 0]
                 if a_commander.empty:
                     st.warning("Aucune quantité saisie.")
@@ -700,6 +704,23 @@ elif page == "🚨 Réapprovisionnement":
                         }], "sku")
                         nb_ok += 1
                     st.success(f"✓ {nb_ok} produit(s) marqué(s) en commande !")
+                    st.rerun()
+
+            if submitted_ign:
+                a_ignorer = edited[edited["Ignorer ?"] == True]
+                if a_ignorer.empty:
+                    st.warning("Aucun produit sélectionné.")
+                else:
+                    nb_ign = 0
+                    for _, r in a_ignorer.iterrows():
+                        upsert("skus_ignores", [{
+                            "sku": r["SKU"],
+                            "nom_produit": r["Produit"],
+                            "fournisseur": r["Fournisseur"],
+                            "raison": None,
+                        }], "sku")
+                        nb_ign += 1
+                    st.success(f"✓ {nb_ign} produit(s) ignoré(s) !")
                     st.rerun()
 
             st.divider()
@@ -728,83 +749,51 @@ elif page == "🚨 Réapprovisionnement":
                                "quantite_commandee", "quantite_attendue", "Statut"]].copy()
         df_show_cmd.columns = ["SKU", "Produit", "Fournisseur", "Date commande",
                                 "Qté commandée", "Qté attendue", "Statut"]
-        st.dataframe(df_show_cmd, use_container_width=True, hide_index=True)
+        df_recu_editor = df_show_cmd.copy()
+        df_recu_editor["Reçu ?"] = False
+        df_recu_editor["Qté reçue"] = df_recu_editor["Qté commandée"]
 
-        st.divider()
-        qty_recue_input = 0
-        col_r1, col_r2 = st.columns([3, 1])
-        with col_r1:
-            sku_recu = st.selectbox(
-                "Sélectionner un SKU reçu",
-                options=[""] + df_cmd["sku"].tolist(),
-                format_func=lambda x: f"{x} — {df_cmd[df_cmd['sku']==x]['nom_produit'].iloc[0]}"
-                if x else "Choisir un SKU..."
+        with st.form("form_recu"):
+            edited_recu = st.data_editor(
+                df_recu_editor,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "SKU": st.column_config.TextColumn(disabled=True),
+                    "Produit": st.column_config.TextColumn(disabled=True),
+                    "Fournisseur": st.column_config.TextColumn(disabled=True),
+                    "Date commande": st.column_config.TextColumn(disabled=True),
+                    "Qté commandée": st.column_config.NumberColumn(disabled=True),
+                    "Qté attendue": st.column_config.NumberColumn(disabled=True),
+                    "Statut": st.column_config.TextColumn(disabled=True),
+                    "Reçu ?": st.column_config.CheckboxColumn(),
+                    "Qté reçue": st.column_config.NumberColumn(min_value=0, step=1),
+                }
             )
-            if sku_recu:
-                row_recu_ref = df_cmd[df_cmd["sku"] == sku_recu].iloc[0]
-                qty_recue_input = st.number_input(
-                    "Quantité reçue",
-                    min_value=0,
-                    value=int(row_recu_ref["quantite_commandee"]),
-                    step=1,
-                    key="qty_recue"
-                )
-        with col_r2:
-            st.write("")
-            st.write("")
-            st.write("")
-            st.write("")
-            if sku_recu and st.button("✅ Marquer comme reçu", type="primary"):
-                row_cmd = df_cmd[df_cmd["sku"] == sku_recu].iloc[0]
-                qty_cmd_val = int(row_cmd["Qté commandée"])
-                new_statut = "recu" if qty_recue_input >= qty_cmd_val else "recu_partiel"
-                upsert("commandes_fournisseur", [{
-                    "id": int(row_cmd["id"]),
-                    "statut": new_statut,
-                    "quantite_recue": int(qty_recue_input),
-                }], "id")
-                msg = "reçu" if new_statut == "recu" else f"reçu partiellement ({qty_recue_input}/{qty_cmd_val})"
-                st.success(f"✓ {sku_recu} marqué comme {msg} !")
+            submitted_recu = st.form_submit_button("✅ Marquer comme reçu", type="primary")
+
+        if submitted_recu:
+            a_recevoir = edited_recu[edited_recu["Reçu ?"] == True]
+            if a_recevoir.empty:
+                st.warning("Aucune ligne sélectionnée.")
+            else:
+                nb_recu = 0
+                for _, r in a_recevoir.iterrows():
+                    sku_r = r["SKU"]
+                    row_orig = df_cmd[df_cmd["sku"] == sku_r].iloc[0]
+                    qty_cmd_val = int(row_orig["quantite_commandee"])
+                    qty_recue_val = int(r["Qté reçue"])
+                    new_statut = "recu" if qty_recue_val >= qty_cmd_val else "recu_partiel"
+                    upsert("commandes_fournisseur", [{
+                        "id": int(row_orig["id"]),
+                        "statut": new_statut,
+                        "quantite_recue": qty_recue_val,
+                    }], "id")
+                    nb_recu += 1
+                st.success(f"✓ {nb_recu} produit(s) mis à jour !")
                 st.rerun()
     else:
         st.info("Aucun produit en commande actuellement.")
-
-    st.divider()
-    st.subheader("🚫 Ignorer un produit")
-    if skus_data:
-        df_reap_all = pd.DataFrame(rows) if rows else pd.DataFrame()
-        df_reap_all_unique = df_reap_all.drop_duplicates(subset=["sku"]) if not df_reap_all.empty else pd.DataFrame()
-        sku_ignorer_options = df_reap_all_unique["sku"].tolist() if not df_reap_all_unique.empty else []
-        sku_ignorer_label_map = {
-            row["sku"]: f"{row['sku']} — {row['Produit']} ({row['Fournisseur'] or 'sans fournisseur'})"
-            for _, row in df_reap_all_unique.iterrows()
-        } if not df_reap_all_unique.empty else {}
-
-        col_ign1, col_ign2 = st.columns([3, 1])
-        with col_ign1:
-            sku_a_ignorer = st.selectbox(
-                "Sélectionner un produit à ignorer",
-                options=[""] + sku_ignorer_options,
-                format_func=lambda x: sku_ignorer_label_map.get(x, x) if x else "Choisir un SKU...",
-                key="selectbox_ignorer"
-            )
-            raison_ignorer = st.text_input("Raison (optionnel)", key="raison_ignorer")
-        with col_ign2:
-            st.write("")
-            st.write("")
-            st.write("")
-            if sku_a_ignorer and st.button("🚫 Ignorer ce produit", type="secondary"):
-                row_ign = df_reap_all_unique[df_reap_all_unique["sku"] == sku_a_ignorer].iloc[0]
-                upsert("skus_ignores", [{
-                    "sku": sku_a_ignorer,
-                    "nom_produit": row_ign["Produit"],
-                    "fournisseur": row_ign["Fournisseur"],
-                    "raison": raison_ignorer or None,
-                }], "sku")
-                st.success(f"✓ {sku_a_ignorer} ignoré !")
-                st.rerun()
-    else:
-        st.info("Aucun produit disponible.")
 
     st.divider()
     st.subheader("🚫 Produits ignorés")
