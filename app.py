@@ -11,13 +11,55 @@ from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 import time
 from datetime import datetime, timezone
 from faire_api import api_get as faire_api_get, test_write_permission, api_patch as faire_api_patch
-from shopify_api import test_connection as shopify_test_connection, get_shopify_credentials
+from shopify_api import (
+    test_connection as shopify_test_connection,
+    get_shopify_token,
+    get_auth_url as shopify_get_auth_url,
+    verify_hmac as shopify_verify_hmac,
+    exchange_code_for_token as shopify_exchange_code,
+    generate_nonce as shopify_generate_nonce,
+)
 
 st.set_page_config(
     page_title="Pique&Pince — Dashboard",
     page_icon="📊",
     layout="wide"
 )
+
+# ── Interception callback OAuth Shopify ──────────────────────────────────────
+# Doit s'exécuter avant la navigation sidebar, car Shopify redirige vers la
+# racine de l'app avec ?code=...&hmac=...&state=...&shop=...&timestamp=...
+_qp = dict(st.query_params)
+if "code" in _qp and "hmac" in _qp and _qp.get("state", "").startswith("shopify_ff_"):
+    try:
+        _client_secret = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
+        _client_id = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
+        _shop = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
+
+        # Vérification nonce CSRF
+        _expected_nonce = st.session_state.get("shopify_ff_nonce", "")
+        _nonce_ok = (_expected_nonce and _qp.get("state") == _expected_nonce)
+
+        # Vérification HMAC
+        _hmac_ok = shopify_verify_hmac(_qp, _client_secret)
+
+        if not _hmac_ok:
+            st.session_state["shopify_ff_error"] = "HMAC invalide — callback rejeté."
+        elif not _nonce_ok:
+            st.session_state["shopify_ff_error"] = "Nonce invalide — possible attaque CSRF."
+        else:
+            _status, _result = shopify_exchange_code(_shop, _client_id, _client_secret, _qp["code"])
+            if _status == 200:
+                st.session_state["shopify_ff_token_obtained"] = _result.get("access_token", "")
+                st.session_state["shopify_ff_scope_obtained"] = _result.get("scope", "")
+            else:
+                st.session_state["shopify_ff_error"] = f"Échange token échoué {_status} : {_result}"
+
+    except Exception as _e:
+        st.session_state["shopify_ff_error"] = str(_e)
+
+    st.query_params.clear()
+# ── Fin interception OAuth ───────────────────────────────────────────────────
 
 
 def get_prod_parent(sku, prod_map):
@@ -2148,22 +2190,50 @@ elif page == "🔗 Connexion Faire":
     st.divider()
     st.subheader("🛍️ Connexion Shopify Foulard Frenchy")
 
-    if st.button("Tester la connexion Shopify"):
-        with st.spinner("Obtention du token et test de connexion..."):
-            try:
-                shop, token = get_shopify_credentials()
-                status, result = shopify_test_connection(shop, token)
-                if status == 200:
-                    shop_info = result.get("shop", {})
-                    errors = result.get("errors")
-                    if errors:
-                        st.error(f"Erreur GraphQL : {errors}")
+    # Résultat de l'échange OAuth (si callback vient d'être traité)
+    if "shopify_ff_error" in st.session_state:
+        st.error(f"Erreur OAuth : {st.session_state.pop('shopify_ff_error')}")
+
+    if "shopify_ff_token_obtained" in st.session_state:
+        st.success("✅ Token Shopify obtenu !")
+        st.write(f"**Scopes accordés :** `{st.session_state['shopify_ff_scope_obtained']}`")
+        st.info("Ajoute cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` puis redémarre l'app :")
+        st.code(st.session_state["shopify_ff_token_obtained"])
+
+    # Token déjà configuré → bouton de test
+    _token_pret = "SHOPIFY_FOULARD_FRENCHY_TOKEN" in st.secrets
+    if _token_pret:
+        st.success("✅ Token configuré dans les secrets")
+        if st.button("Tester la connexion Shopify"):
+            with st.spinner("Test en cours..."):
+                try:
+                    shop, token = get_shopify_token()
+                    status, result = shopify_test_connection(shop, token)
+                    if status == 200:
+                        errors = result.get("errors")
+                        if errors:
+                            st.error(f"Erreur GraphQL : {errors}")
+                        else:
+                            shop_info = result["shop"]
+                            st.success("✅ Connexion Shopify fonctionnelle")
+                            st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
+                            st.write(f"**Email :** {shop_info.get('email')}")
+                            st.write(f"**Plan :** {shop_info.get('plan_name')}")
                     else:
-                        st.success("✅ Connexion Shopify fonctionnelle")
-                        st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
-                        st.write(f"**Email :** {shop_info.get('email')}")
-                        st.write(f"**Plan :** {shop_info.get('plan_name')}")
-                else:
-                    st.error(f"Erreur {status} : {result}")
-            except Exception as e:
-                st.error(f"Erreur : {e}")
+                        st.error(f"Erreur {status} : {result}")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+    # Flux OAuth — bouton d'installation
+    st.divider()
+    st.markdown("**Installer / réinstaller l'app pour obtenir un nouveau token :**")
+    try:
+        _shop_ff = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
+        _cid_ff = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
+        _nonce = f"shopify_ff_{shopify_generate_nonce()}"
+        st.session_state["shopify_ff_nonce"] = _nonce
+        _auth_url = shopify_get_auth_url(_shop_ff, _cid_ff, _nonce)
+        st.link_button("🔐 Autoriser l'app sur Shopify Foulard Frenchy", _auth_url)
+        st.caption(f"redirect_uri enregistrée : `https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app`")
+    except KeyError as e:
+        st.warning(f"Secret manquant : {e}")
