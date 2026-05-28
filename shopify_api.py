@@ -82,9 +82,27 @@ def get_products(shop, token):
     return all_products
 
 
+def graphql_query(shop, token, query):
+    url = f"https://{shop}/admin/api/{SHOPIFY_API_VERSION}/graphql.json"
+    r = requests.post(url, headers=_get_headers(token), json={"query": query})
+    return r
+
+
 def test_connection(shop, token):
-    r = api_get(shop, token, "shop.json")
-    return r.status_code, r.json() if r.status_code == 200 else r.text[:300]
+    query = "{ shop { name email myshopifyDomain plan { displayName } } }"
+    r = graphql_query(shop, token, query)
+    if r.status_code == 200:
+        data = r.json()
+        errors = data.get("errors")
+        if errors:
+            return 200, {"errors": errors}
+        return 200, {"shop": {
+            "name": data["data"]["shop"]["name"],
+            "email": data["data"]["shop"]["email"],
+            "domain": data["data"]["shop"]["myshopifyDomain"],
+            "plan_name": data["data"]["shop"]["plan"]["displayName"],
+        }}
+    return r.status_code, r.text[:300]
 
 
 def get_shopify_credentials():
