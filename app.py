@@ -19,6 +19,11 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- DEBUG temporaire ---
+if st.query_params:
+    st.write("🐛 DEBUG query_params reçus au chargement :", dict(st.query_params))
+# --- FIN DEBUG ---
+
 # Interception OAuth Shopify — doit s'exécuter avant la navigation
 _oauth_code_init = st.query_params.get("code")
 _oauth_state_init = st.query_params.get("state")
