@@ -115,6 +115,10 @@ def get_shopify_credentials():
         data={"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret},
         headers={"Content-Type": "application/x-www-form-urlencoded"}
     )
+    # --- DEBUG temporaire ---
+    st.write(f"🐛 DEBUG token Shopify — Status : {r.status_code}")
+    st.write(f"🐛 DEBUG token Shopify — Réponse : {r.text[:500]}")
+    # --- FIN DEBUG ---
     if r.status_code != 200:
         raise RuntimeError(f"Erreur token Shopify {r.status_code} : {r.text[:300]}")
     return shop, r.json()["access_token"]
