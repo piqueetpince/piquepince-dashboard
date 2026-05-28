@@ -650,62 +650,60 @@ elif page == "🚨 Réapprovisionnement":
                           "Réf. fournisseur", "Prix achat HT", "Stock", "En commande",
                           "Qté à commander", "Ventes/mois Wizi", "Ventes/mois Etsy",
                           "Ventes/mois Faire", "Ventes/mois Total", "Mois de stock", "Alerte"]
-            df_show = df_reap[cols_affich].copy()
-            df_show = df_show.rename(columns={"sku": "SKU"})
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
+            df_show_csv = df_reap[cols_affich].copy()
+            df_show_csv = df_show_csv.rename(columns={"sku": "SKU"})
 
-            st.divider()
-            df_reap_unique = df_reap.drop_duplicates(subset=["sku"])
-            sku_label_map = {
-                row["sku"]: f"{row['sku']} — {row['Produit']} ({row['Fournisseur'] or 'sans fournisseur'})"
-                for _, row in df_reap_unique.iterrows()
-            }
-            options_cmd = [""] + df_reap_unique["sku"].tolist()
-            saved_sku = st.session_state["reap_sku_selectionne"]
-            idx_cmd = options_cmd.index(saved_sku) if saved_sku in options_cmd else 0
+            cols_editor = ["SKU", "Produit", "Fournisseur", "Stock",
+                           "Qté à commander", "Ventes/mois Total", "Mois de stock", "Alerte", "En commande"]
+            df_editor = df_show_csv[cols_editor].copy()
+            df_editor["Qté commandée"] = 0
 
-            col_cmd1, col_cmd2 = st.columns([3, 1])
-            with col_cmd1:
-                sku_selectionne = st.selectbox(
-                    "Sélectionner un SKU à marquer en commande",
-                    options=options_cmd,
-                    index=idx_cmd,
-                    format_func=lambda x: sku_label_map.get(x, x) if x else "Choisir un SKU...",
-                    key="selectbox_marquer_commande"
+            with st.form("form_reap"):
+                edited = st.data_editor(
+                    df_editor,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "SKU": st.column_config.TextColumn(disabled=True),
+                        "Produit": st.column_config.TextColumn(disabled=True),
+                        "Fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Stock": st.column_config.NumberColumn(disabled=True),
+                        "Qté à commander": st.column_config.NumberColumn(disabled=True),
+                        "Ventes/mois Total": st.column_config.NumberColumn(disabled=True),
+                        "Mois de stock": st.column_config.NumberColumn(disabled=True),
+                        "Alerte": st.column_config.TextColumn(disabled=True),
+                        "En commande": st.column_config.TextColumn(disabled=True),
+                        "Qté commandée": st.column_config.NumberColumn(
+                            "Qté commandée", min_value=0, step=1
+                        ),
+                    }
                 )
-                if sku_selectionne != st.session_state["reap_sku_selectionne"]:
-                    st.session_state["reap_sku_selectionne"] = sku_selectionne
-                    st.session_state["reap_quantite"] = int(qty_attendue_map.get(sku_selectionne, 0))
+                submitted = st.form_submit_button("📦 Marquer en commande", type="primary")
 
-                qty_attendue_defaut = int(qty_attendue_map.get(sku_selectionne, 0)) if sku_selectionne else 0
-                qty_cmd_input = st.number_input(
-                    "Quantité commandée", min_value=0,
-                    value=st.session_state["reap_quantite"] if sku_selectionne else 0,
-                    step=1, key="qty_cmd"
-                )
-            with col_cmd2:
-                st.write("")
-                st.write("")
-                st.write("")
-                st.write("")
-                if sku_selectionne and st.button("📦 Marquer en commande", type="primary", key="btn_marquer_commande"):
-                    row = df_reap_unique[df_reap_unique["sku"] == sku_selectionne].iloc[0]
-                    upsert("commandes_fournisseur", [{
-                        "sku": sku_selectionne,
-                        "nom_produit": row["Produit"],
-                        "fournisseur": row["Fournisseur"],
-                        "date_commande": datetime.now(timezone.utc).isoformat(),
-                        "statut": "en_commande",
-                        "quantite_commandee": int(qty_cmd_input),
-                        "quantite_attendue": qty_attendue_defaut,
-                    }], "sku")
-                    st.success(f"✓ {sku_selectionne} marqué en commande ({int(qty_cmd_input)} unités) !")
-                    st.session_state["reap_sku_selectionne"] = ""
-                    st.session_state["reap_quantite"] = 0
+            if submitted:
+                a_commander = edited[edited["Qté commandée"] > 0]
+                if a_commander.empty:
+                    st.warning("Aucune quantité saisie.")
+                else:
+                    nb_ok = 0
+                    for _, r in a_commander.iterrows():
+                        sku_r = r["SKU"]
+                        qty_att_r = int(qty_attendue_map.get(sku_r, 0))
+                        upsert("commandes_fournisseur", [{
+                            "sku": sku_r,
+                            "nom_produit": r["Produit"],
+                            "fournisseur": r["Fournisseur"],
+                            "date_commande": datetime.now(timezone.utc).isoformat(),
+                            "statut": "en_commande",
+                            "quantite_commandee": int(r["Qté commandée"]),
+                            "quantite_attendue": qty_att_r,
+                        }], "sku")
+                        nb_ok += 1
+                    st.success(f"✓ {nb_ok} produit(s) marqué(s) en commande !")
                     st.rerun()
 
             st.divider()
-            csv = df_show.to_csv(index=False).encode("utf-8")
+            csv = df_show_csv.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Télécharger liste",
                 csv,
