@@ -160,8 +160,16 @@ def test_connection(shop, token):
 
 
 def get_shopify_token():
-    """Retourne le token depuis st.secrets (après installation OAuth)."""
+    """Retourne le token Foulard Frenchy depuis st.secrets."""
     return (
         st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"],
         st.secrets["SHOPIFY_FOULARD_FRENCHY_TOKEN"],
+    )
+
+
+def get_shopify_token_montessori():
+    """Retourne le token Montessori depuis st.secrets."""
+    return (
+        st.secrets["SHOPIFY_BOUTIQUE2_SHOP"],
+        st.secrets["SHOPIFY_BOUTIQUE2_TOKEN"],
     )
