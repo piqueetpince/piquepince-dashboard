@@ -2295,7 +2295,6 @@ elif page == "🔗 Connexion Faire":
         _nonce_m = f"shopify_montessori_{shopify_generate_nonce()}"
         st.session_state["shopify_montessori_nonce"] = _nonce_m
         _auth_url_m = shopify_get_auth_url(_shop_m, _cid_m, _nonce_m)
-        st.code(_auth_url_m, language=None)
         st.link_button("🔐 Autoriser l'app sur Shopify Montessori", _auth_url_m)
         st.caption(f"redirect_uri enregistrée : `https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app`")
     except KeyError as e:
