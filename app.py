@@ -19,6 +19,26 @@ st.set_page_config(
     layout="wide"
 )
 
+# Interception OAuth Shopify — doit s'exécuter avant la navigation
+_oauth_code_init = st.query_params.get("code")
+_oauth_state_init = st.query_params.get("state")
+if _oauth_code_init and _oauth_state_init == "piquepince_shopify" and "shopify_ff_token" not in st.session_state:
+    try:
+        _shop_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_SHOP"]
+        _cid_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_ID"]
+        _csec_init = st.secrets["SHOPIFY_FOULARD_FRENCHY_CLIENT_SECRET"]
+        _resp_init = requests.post(
+            f"https://{_shop_init}/admin/oauth/access_token",
+            json={"client_id": _cid_init, "client_secret": _csec_init, "code": _oauth_code_init}
+        )
+        if _resp_init.status_code == 200:
+            st.session_state["shopify_ff_token"] = _resp_init.json().get("access_token", "")
+        else:
+            st.session_state["shopify_ff_oauth_error"] = f"{_resp_init.status_code} — {_resp_init.text[:300]}"
+    except Exception as _e_init:
+        st.session_state["shopify_ff_oauth_error"] = str(_e_init)
+    st.query_params.clear()
+
 
 def get_prod_parent(sku, prod_map):
     if not sku:
@@ -2160,32 +2180,14 @@ elif page == "🔗 Connexion Faire":
     if not _shopify_secrets_ok:
         st.warning("Secrets SHOPIFY_FOULARD_FRENCHY_SHOP, CLIENT_ID ou CLIENT_SECRET manquants.")
     else:
-        # Échange du code OAuth si callback reçu
-        _oauth_code = st.query_params.get("code")
-        _oauth_state = st.query_params.get("state")
-        if _oauth_code and _oauth_state == "piquepince_shopify":
-            if "shopify_ff_token" not in st.session_state:
-                with st.spinner("Échange du code OAuth..."):
-                    try:
-                        resp = requests.post(
-                            f"https://{_shopify_shop}/admin/oauth/access_token",
-                            json={
-                                "client_id": _shopify_client_id,
-                                "client_secret": _shopify_client_secret,
-                                "code": _oauth_code,
-                            }
-                        )
-                        if resp.status_code == 200:
-                            st.session_state["shopify_ff_token"] = resp.json().get("access_token", "")
-                        else:
-                            st.error(f"Erreur échange token : {resp.status_code} — {resp.text[:300]}")
-                    except Exception as e:
-                        st.error(f"Erreur : {e}")
+        # Affichage du token si échange OAuth déjà effectué au chargement
+        if "shopify_ff_oauth_error" in st.session_state:
+            st.error(f"Erreur échange OAuth : {st.session_state['shopify_ff_oauth_error']}")
 
-            if "shopify_ff_token" in st.session_state:
-                st.success("✅ Token Shopify obtenu !")
-                st.info("Copie cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` :")
-                st.code(st.session_state["shopify_ff_token"])
+        if "shopify_ff_token" in st.session_state:
+            st.success("✅ Token Shopify obtenu !")
+            st.info("Copie cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` :")
+            st.code(st.session_state["shopify_ff_token"])
 
         # Bouton de connexion OAuth
         _auth_url = (
