@@ -218,9 +218,9 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
         rate_limit  = r.headers.get("X-Shopify-Shop-Api-Call-Limit", "?")
 
         # DEBUG — infos de la page courante
-        st.write(f"[DEBUG] Page {nb_pages} — {len(orders)} commandes | "
-                 f"API call limit: {rate_limit} | "
-                 f"Link: {link_header[:120] if link_header else 'aucun (dernière page)'}")
+        parsed_page_info = _next_page_info(link_header)
+        st.write(f"[DEBUG] Page {nb_pages} — {len(orders)} commandes | API call limit: {rate_limit}")
+        st.code(f"Link header brut : {repr(link_header)}\npage_info parsé  : {repr(parsed_page_info)}")
 
         for order in orders:
             order_id   = str(order["id"])
@@ -299,10 +299,9 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
 
             nb_commandes += 1
 
-        page_info = _next_page_info(link_header)
-        if not page_info or not orders:
+        if not parsed_page_info or not orders:
             break
-        params = {"limit": 250, "page_info": page_info}
+        params = {"limit": 250, "page_info": parsed_page_info}
         time.sleep(0.3)
 
     # DEBUG — bilan
