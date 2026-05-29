@@ -183,6 +183,16 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
     # DEBUG — paramètres utilisés
     st.write(f"[DEBUG] Endpoint REST orders.json | created_at_min={since_date} | status=any")
 
+    # DEBUG — total via /orders/count.json avant de paginer
+    r_count = api_get(shop, token, "orders/count.json", {
+        "status": "any", "created_at_min": since_date
+    })
+    if r_count.status_code == 200:
+        total_api = r_count.json().get("count", "?")
+        st.write(f"[DEBUG] orders/count.json → {total_api} commandes attendues")
+    else:
+        st.write(f"[DEBUG] orders/count.json → erreur {r_count.status_code}: {r_count.text[:100]}")
+
     params = {
         "status":          "any",
         "created_at_min":  since_date,
@@ -204,9 +214,11 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
         orders = r.json().get("orders", [])
         nb_pages += 1
         link_header = r.headers.get("Link", "")
+        rate_limit  = r.headers.get("X-Shopify-Shop-Api-Call-Limit", "?")
 
         # DEBUG — infos de la page courante
         st.write(f"[DEBUG] Page {nb_pages} — {len(orders)} commandes | "
+                 f"API call limit: {rate_limit} | "
                  f"Link: {link_header[:120] if link_header else 'aucun (dernière page)'}")
 
         for order in orders:
