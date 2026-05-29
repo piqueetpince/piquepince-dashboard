@@ -2326,6 +2326,7 @@ elif page == "🔗 Connexion Faire":
         _nonce = f"shopify_ff_{shopify_generate_nonce()}"
         st.session_state["shopify_ff_nonce"] = _nonce
         _auth_url = shopify_get_auth_url(_shop_ff, _cid_ff, _nonce)
+        st.code(_auth_url, language=None)
         st.link_button("🔐 Autoriser l'app sur Shopify Foulard Frenchy", _auth_url)
         st.caption(f"redirect_uri enregistrée : `https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app`")
     except KeyError as e:
