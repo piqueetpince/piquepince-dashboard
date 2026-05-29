@@ -164,20 +164,17 @@ st.title("Pique&Pince — Dashboard ventes")
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 
-_NAV_OPTIONS = [
+_NAV_PAGES = [
     "📊 Vue d'ensemble",
-    "─── Wizishop ───",
     "📦 Commandes",
     "⭐ Best-sellers",
     "🚨 Réapprovisionnement",
     "🏭 Stock & Fournisseurs",
     "🔍 Vérification Wizishop",
-    "─── Etsy ───",
     "🏷️ Catalogue Etsy",
     "📊 Gestion stock Etsy",
     "🔎 Produits manquants sur Etsy",
     "🔍 Vérification Etsy",
-    "─── Faire ───",
     "🔍 Vérification Faire",
     "📒 Réconciliation Faire",
     "📊 Gestion stock Faire",
@@ -186,30 +183,24 @@ _NAV_OPTIONS = [
     "🔗 Mapping SKUs Faire",
     "💰 Vérification prix Faire",
     "🔧 Correction lignes commandes Faire",
-    "─── Outils ───",
     "🌍 Comptabilité TVA",
     "🔗 Connexion Faire/Shopify",
     "🔄 Synchronisation",
 ]
 
-_NAV_SEPARATORS = {o for o in _NAV_OPTIONS if "───" in o}
-
-# Si la sélection précédente était un séparateur, on la réinitialise avant le widget
-if st.session_state.get("_nav_sel") in _NAV_SEPARATORS:
-    st.session_state["_nav_sel"] = st.session_state.get("_nav_page", "📊 Vue d'ensemble")
-
 with st.sidebar:
-    selected = st.selectbox(
-        "Navigation",
-        _NAV_OPTIONS,
-        key="_nav_sel",
+    st.markdown("### Navigation")
+    st.markdown("**📊 Général**")
+    st.markdown("**🛍️ Wizishop**")
+    st.markdown("**🏷️ Etsy**")
+    st.markdown("**🛒 Faire**")
+    st.markdown("**⚙️ Outils**")
+    page = st.radio(
+        "",
+        _NAV_PAGES,
+        index=0,
         label_visibility="collapsed",
     )
-
-if selected not in _NAV_SEPARATORS:
-    st.session_state["_nav_page"] = selected
-
-page = st.session_state.get("_nav_page", "📊 Vue d'ensemble")
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
