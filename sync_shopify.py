@@ -242,7 +242,7 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
     nb_commandes = 0
     nb_pages = 0
     cursor = None
-    query_filter = f"created_at:>={since_date}"
+    query_filter = f"created_at:>={since_date} status:any"
 
     # DEBUG — filtre utilisé
     st.write(f"[DEBUG] Filtre GraphQL : `{query_filter}`")
