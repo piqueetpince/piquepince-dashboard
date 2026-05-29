@@ -164,16 +164,20 @@ st.title("Pique&Pince — Dashboard ventes")
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 
-_ALL_PAGES = [
+_NAV_OPTIONS = [
+    "📊 Vue d'ensemble",
+    "─── Wizishop ───",
     "📦 Commandes",
     "⭐ Best-sellers",
     "🚨 Réapprovisionnement",
     "🏭 Stock & Fournisseurs",
     "🔍 Vérification Wizishop",
+    "─── Etsy ───",
     "🏷️ Catalogue Etsy",
     "📊 Gestion stock Etsy",
     "🔎 Produits manquants sur Etsy",
     "🔍 Vérification Etsy",
+    "─── Faire ───",
     "🔍 Vérification Faire",
     "📒 Réconciliation Faire",
     "📊 Gestion stock Faire",
@@ -182,27 +186,30 @@ _ALL_PAGES = [
     "🔗 Mapping SKUs Faire",
     "💰 Vérification prix Faire",
     "🔧 Correction lignes commandes Faire",
-    "📊 Vue d'ensemble",
+    "─── Outils ───",
     "🌍 Comptabilité TVA",
-    "🔗 Connexion Faire",
+    "🔗 Connexion Faire/Shopify",
     "🔄 Synchronisation",
 ]
 
+_NAV_SEPARATORS = {o for o in _NAV_OPTIONS if "───" in o}
+
+# Si la sélection précédente était un séparateur, on la réinitialise avant le widget
+if st.session_state.get("_nav_sel") in _NAV_SEPARATORS:
+    st.session_state["_nav_sel"] = st.session_state.get("_nav_page", "📊 Vue d'ensemble")
+
 with st.sidebar:
-    st.markdown("### 🛒 Pique & Pince — Wizishop")
-    st.markdown("*Commandes · Best-sellers · Réappro · Stock · Vérification*")
-    st.markdown("### 🏷️ Pique & Pince — Etsy")
-    st.markdown("*Catalogue · Gestion stock · Produits manquants · Vérification*")
-    st.markdown("### 🛒 Pique & Pince — Faire")
-    st.markdown("*Vérification · Réconciliation · Stock · Produits manquants · SKUs · Prix · Lignes*")
-    st.markdown("### 📊 Vue d'ensemble · 🔧 Outils")
-    st.divider()
-    page = st.radio(
+    selected = st.selectbox(
         "Navigation",
-        _ALL_PAGES,
-        index=_ALL_PAGES.index("📊 Vue d'ensemble"),
+        _NAV_OPTIONS,
+        key="_nav_sel",
         label_visibility="collapsed",
     )
+
+if selected not in _NAV_SEPARATORS:
+    st.session_state["_nav_page"] = selected
+
+page = st.session_state.get("_nav_page", "📊 Vue d'ensemble")
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
@@ -2247,8 +2254,8 @@ elif page == "📊 Gestion stock Faire":
     else:
         st.info("Aucune donnée. Lance d'abord la sync 8️⃣ Produits Faire.")
 
-elif page == "🔗 Connexion Faire":
-    st.subheader("🔗 Connexion Faire")
+elif page == "🔗 Connexion Faire/Shopify":
+    st.subheader("🔗 Connexion Faire/Shopify")
 
     if st.button("Tester la connexion Faire"):
         with st.spinner("Test de connexion..."):
