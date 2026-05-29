@@ -338,7 +338,7 @@ if page == "🔄 Synchronisation":
                 debut = time.time()
                 try:
                     shop_ff, token_ff = get_shopify_token()
-                    nb = sync_shopify_commandes("foulard_frenchy", shop_ff, token_ff, since_date="2025-01-01")
+                    nb = sync_shopify_commandes("foulard_frenchy", shop_ff, token_ff)
                     duree = time.time() - debut
                     log_sync_shopify("foulard_frenchy", "commandes_shopify", nb, "success",
                                      f"{nb} commandes", duree)
@@ -367,7 +367,7 @@ if page == "🔄 Synchronisation":
                 debut = time.time()
                 try:
                     shop_m, token_m = get_shopify_token_montessori()
-                    nb = sync_shopify_commandes("montessori", shop_m, token_m, since_date="2025-01-01")
+                    nb = sync_shopify_commandes("montessori", shop_m, token_m)
                     duree = time.time() - debut
                     log_sync_shopify("montessori", "commandes_shopify", nb, "success",
                                      f"{nb} commandes", duree)

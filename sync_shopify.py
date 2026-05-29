@@ -165,33 +165,22 @@ def sync_shopify_produits(boutique, shop, token):
     return nb_produits, nb_variants
 
 
-# ── Sync commandes (REST — pas de limite 60 jours) ───────────────────────────
+# ── Sync commandes (REST) ─────────────────────────────────────────────────────
 
-def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
+def sync_shopify_commandes(boutique, shop, token, since_date=None):
     """
-    Synchronise toutes les commandes depuis since_date via l'API REST.
-    L'API REST avec status=any n'a pas la limite 60 jours de l'API GraphQL.
+    Synchronise les commandes via l'API REST Shopify.
+    Si since_date est None, utilise une fenêtre glissante de 60 jours.
     Retourne nb_commandes.
     """
-    nb_commandes = 0
-    nb_pages = 0
-    debug_first_done = False
+    from datetime import datetime, timezone, timedelta
 
-    if "T" not in since_date:
+    if since_date is None:
+        since_date = (datetime.now(timezone.utc) - timedelta(days=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif "T" not in since_date:
         since_date = f"{since_date}T00:00:00Z"
 
-    # DEBUG — paramètres utilisés
-    st.write(f"[DEBUG] Endpoint REST orders.json | created_at_min={since_date} | status=any")
-
-    # DEBUG — total via /orders/count.json avant de paginer
-    r_count = api_get(shop, token, "orders/count.json", {
-        "status": "any", "created_at_min": since_date
-    })
-    if r_count.status_code == 200:
-        total_api = r_count.json().get("count", "?")
-        st.write(f"[DEBUG] orders/count.json → {total_api} commandes attendues")
-    else:
-        st.write(f"[DEBUG] orders/count.json → erreur {r_count.status_code}: {r_count.text[:100]}")
+    nb_commandes = 0
 
     params = {
         "status":              "any",
@@ -213,31 +202,18 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
             break
 
         orders = r.json().get("orders", [])
-        nb_pages += 1
         link_header = r.headers.get("Link", "")
-        rate_limit  = r.headers.get("X-Shopify-Shop-Api-Call-Limit", "?")
-
-        # DEBUG — infos de la page courante
         parsed_page_info = _next_page_info(link_header)
-        st.write(f"[DEBUG] Page {nb_pages} — {len(orders)} commandes | API call limit: {rate_limit}")
-        st.code(f"Link header brut : {repr(link_header)}\npage_info parsé  : {repr(parsed_page_info)}")
 
         for order in orders:
-            order_id   = str(order["id"])
-            legacy_id  = int(order["id"])
-            billing    = order.get("billing_address") or {}
-            shipping   = order.get("shipping_address") or {}
-            customer   = order.get("customer") or {}
-            tags_raw   = order.get("tags", "") or ""
-            tags_list  = [t.strip() for t in tags_raw.split(",") if t.strip()]
-            ship_set   = (order.get("total_shipping_price_set") or {}).get("shop_money") or {}
-
-            # DEBUG — première commande uniquement
-            if not debug_first_done:
-                st.write(f"[DEBUG] 1ère commande → id_shopify={order_id!r} (str) | "
-                         f"legacy_id={legacy_id!r} (int) | "
-                         f"on_conflict='id_shopify,boutique'")
-                debug_first_done = True
+            order_id  = str(order["id"])
+            legacy_id = int(order["id"])
+            billing   = order.get("billing_address") or {}
+            shipping  = order.get("shipping_address") or {}
+            customer  = order.get("customer") or {}
+            tags_raw  = order.get("tags", "") or ""
+            tags_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            ship_set  = (order.get("total_shipping_price_set") or {}).get("shop_money") or {}
 
             upsert("commandes_shopify", [{
                 "id_shopify":           order_id,
@@ -303,9 +279,6 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
             break
         params = {"limit": 250, "page_info": parsed_page_info}
         time.sleep(0.3)
-
-    # DEBUG — bilan
-    st.write(f"[DEBUG] Total : {nb_commandes} commandes en {nb_pages} page(s)")
 
     return nb_commandes
 
