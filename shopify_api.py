@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 
 SHOPIFY_API_VERSION = "2026-04"
-SHOPIFY_SCOPES = "read_orders,read_products,read_inventory,read_customers"
+SHOPIFY_SCOPES = "read_orders,read_all_orders,read_products,read_inventory,read_customers"
 SHOPIFY_REDIRECT_URI = "https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app"
 
 

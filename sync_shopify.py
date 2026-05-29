@@ -1,6 +1,6 @@
 import time
 import streamlit as st
-from shopify_api import graphql_query
+from shopify_api import graphql_query, api_get, _next_page_info
 from supabase_api import upsert
 
 # ── GraphQL queries ───────────────────────────────────────────────────────────
@@ -48,73 +48,6 @@ query GetProducts($cursor: String) {
 }
 """
 
-_ORDERS_QUERY = """
-query GetOrders($cursor: String, $queryFilter: String) {
-  orders(first: 250, after: $cursor, query: $queryFilter) {
-    nodes {
-      id
-      legacyResourceId
-      name
-      number
-      processedAt
-      createdAt
-      updatedAt
-      cancelledAt
-      displayFinancialStatus
-      displayFulfillmentStatus
-      totalPriceSet      { shopMoney { amount currencyCode } }
-      subtotalPriceSet   { shopMoney { amount } }
-      totalTaxSet        { shopMoney { amount } }
-      totalShippingPriceSet { shopMoney { amount } }
-      totalDiscountsSet  { shopMoney { amount } }
-      currencyCode
-      taxesIncluded
-      test
-      note
-      tags
-      sourceName
-      email
-      customer {
-        id
-        email
-        firstName
-        lastName
-      }
-      billingAddress {
-        name
-        address1
-        city
-        zip
-        countryCodeV2
-      }
-      shippingAddress {
-        name
-        address1
-        city
-        zip
-        countryCodeV2
-      }
-      lineItems(first: 100) {
-        nodes {
-          id
-          title
-          quantity
-          sku
-          taxable
-          originalUnitPrice
-          discountedUnitPrice
-          totalDiscount
-          variant { id }
-        }
-      }
-    }
-    pageInfo {
-      hasNextPage
-      endCursor
-    }
-  }
-}
-"""
 
 
 # ── Helper bas niveau ─────────────────────────────────────────────────────────
@@ -232,102 +165,110 @@ def sync_shopify_produits(boutique, shop, token):
     return nb_produits, nb_variants
 
 
-# ── Sync commandes ────────────────────────────────────────────────────────────
+# ── Sync commandes (REST — pas de limite 60 jours) ───────────────────────────
 
 def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
     """
-    Synchronise toutes les commandes depuis since_date pour la boutique donnée.
+    Synchronise toutes les commandes depuis since_date via l'API REST.
+    L'API REST avec status=any n'a pas la limite 60 jours de l'API GraphQL.
     Retourne nb_commandes.
     """
     nb_commandes = 0
     nb_pages = 0
-    cursor = None
-    query_filter = f"created_at:>={since_date} status:any"
 
-    # DEBUG — filtre utilisé
-    st.write(f"[DEBUG] Filtre GraphQL : `{query_filter}`")
+    if "T" not in since_date:
+        since_date = f"{since_date}T00:00:00Z"
+
+    # DEBUG — paramètres utilisés
+    st.write(f"[DEBUG] Endpoint REST orders.json | created_at_min={since_date} | status=any")
+
+    params = {
+        "status":          "any",
+        "created_at_min":  since_date,
+        "limit":           250,
+        "fields": (
+            "id,name,order_number,created_at,processed_at,updated_at,cancelled_at,"
+            "financial_status,fulfillment_status,total_price,subtotal_price,total_tax,"
+            "total_shipping_price_set,total_discounts,currency,taxes_included,test,"
+            "note,tags,source_name,email,customer,billing_address,shipping_address,line_items"
+        ),
+    }
 
     while True:
-        variables = {"cursor": cursor, "queryFilter": query_filter}
-        r = _gql(shop, token, _ORDERS_QUERY, variables)
+        r = api_get(shop, token, "orders.json", params)
         if r.status_code != 200:
-            st.warning(f"[sync_shopify] Erreur GraphQL commandes {r.status_code}: {r.text[:200]}")
+            st.warning(f"[sync_shopify] Erreur REST commandes {r.status_code}: {r.text[:200]}")
             break
 
-        body = r.json()
-        if body.get("errors"):
-            st.warning(f"[sync_shopify] Erreurs GraphQL commandes: {body['errors']}")
-            break
-
-        data = body.get("data", {}).get("orders", {})
-        nodes = data.get("nodes", [])
+        orders = r.json().get("orders", [])
         nb_pages += 1
+        link_header = r.headers.get("Link", "")
 
         # DEBUG — infos de la page courante
-        page_info = data.get("pageInfo", {})
-        total_count = data.get("totalCount")  # non standard, présent sur certaines versions
-        st.write(f"[DEBUG] Page {nb_pages} — {len(nodes)} commandes | "
-                 f"hasNextPage={page_info.get('hasNextPage')} | "
-                 f"totalCount={total_count}")
+        st.write(f"[DEBUG] Page {nb_pages} — {len(orders)} commandes | "
+                 f"Link: {link_header[:120] if link_header else 'aucun (dernière page)'}")
 
-        for order in nodes:
-            order_id = order["id"]
-            billing  = order.get("billingAddress") or {}
-            shipping = order.get("shippingAddress") or {}
-            customer = order.get("customer") or {}
+        for order in orders:
+            order_id  = str(order["id"])
+            billing   = order.get("billing_address") or {}
+            shipping  = order.get("shipping_address") or {}
+            customer  = order.get("customer") or {}
+            tags_raw  = order.get("tags", "") or ""
+            tags_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            ship_set  = (order.get("total_shipping_price_set") or {}).get("shop_money") or {}
 
             upsert("commandes_shopify", [{
                 "id_shopify":           order_id,
                 "boutique":             boutique,
-                "legacy_id":            _legacy_int(order.get("legacyResourceId")),
+                "legacy_id":            order["id"],
                 "numero":               order.get("name"),
-                "numero_seq":           order.get("number"),
-                "cree_le":              order.get("createdAt"),
-                "traite_le":            order.get("processedAt"),
-                "mis_a_jour_le":        order.get("updatedAt"),
-                "annule_le":            order.get("cancelledAt"),
-                "statut_financier":     order.get("displayFinancialStatus"),
-                "statut_livraison":     order.get("displayFulfillmentStatus"),
-                "montant_ttc":          _money(order.get("totalPriceSet")),
-                "montant_ht_approx":    _money(order.get("subtotalPriceSet")),
-                "montant_taxes":        _money(order.get("totalTaxSet")),
-                "frais_port":           _money(order.get("totalShippingPriceSet")),
-                "montant_remises":      _money(order.get("totalDiscountsSet")),
-                "devise":               order.get("currencyCode"),
-                "taxes_incluses":       order.get("taxesIncluded"),
+                "numero_seq":           order.get("order_number"),
+                "cree_le":              order.get("created_at"),
+                "traite_le":            order.get("processed_at"),
+                "mis_a_jour_le":        order.get("updated_at"),
+                "annule_le":            order.get("cancelled_at"),
+                "statut_financier":     order.get("financial_status"),
+                "statut_livraison":     order.get("fulfillment_status"),
+                "montant_ttc":          float(order["total_price"])    if order.get("total_price")    else None,
+                "montant_ht_approx":    float(order["subtotal_price"]) if order.get("subtotal_price") else None,
+                "montant_taxes":        float(order["total_tax"])      if order.get("total_tax")      else None,
+                "frais_port":           float(ship_set["amount"])      if ship_set.get("amount")      else None,
+                "montant_remises":      float(order["total_discounts"]) if order.get("total_discounts") else None,
+                "devise":               order.get("currency"),
+                "taxes_incluses":       order.get("taxes_included"),
                 "commande_test":        order.get("test", False),
-                "source":               order.get("sourceName"),
+                "source":               order.get("source_name"),
                 "note":                 order.get("note"),
-                "tags":                 order.get("tags") or [],
+                "tags":                 tags_list,
                 "email_client":         order.get("email") or customer.get("email"),
-                "id_client_shopify":    customer.get("id"),
-                "prenom_client":        customer.get("firstName"),
-                "nom_client":           customer.get("lastName"),
+                "id_client_shopify":    str(customer["id"]) if customer.get("id") else None,
+                "prenom_client":        customer.get("first_name"),
+                "nom_client":           customer.get("last_name"),
                 "nom_facturation":      billing.get("name"),
                 "adresse_facturation":  billing.get("address1"),
                 "ville_facturation":    billing.get("city"),
                 "cp_facturation":       billing.get("zip"),
-                "pays_facturation_iso": billing.get("countryCodeV2"),
+                "pays_facturation_iso": billing.get("country_code"),
                 "nom_livraison":        shipping.get("name"),
                 "adresse_livraison":    shipping.get("address1"),
                 "ville_livraison":      shipping.get("city"),
                 "cp_livraison":         shipping.get("zip"),
-                "pays_livraison_iso":   shipping.get("countryCodeV2"),
+                "pays_livraison_iso":   shipping.get("country_code"),
             }], "id_shopify,boutique")
 
             lignes = []
-            for item in (order.get("lineItems") or {}).get("nodes", []):
+            for item in order.get("line_items", []):
                 lignes.append({
-                    "id_shopify":             item["id"],
+                    "id_shopify":             str(item["id"]),
                     "boutique":               boutique,
                     "id_commande_shopify":    order_id,
-                    "id_variant_shopify":     (item.get("variant") or {}).get("id"),
+                    "id_variant_shopify":     str(item["variant_id"]) if item.get("variant_id") else None,
                     "sku":                    item.get("sku"),
                     "titre":                  item.get("title"),
                     "quantite":               item.get("quantity"),
-                    "prix_unitaire_original": float(item["originalUnitPrice"]) if item.get("originalUnitPrice") else None,
-                    "prix_unitaire_remise":   float(item["discountedUnitPrice"]) if item.get("discountedUnitPrice") else None,
-                    "total_remise":           float(item["totalDiscount"]) if item.get("totalDiscount") else None,
+                    "prix_unitaire_original": float(item["price"])          if item.get("price")          else None,
+                    "prix_unitaire_remise":   None,
+                    "total_remise":           float(item["total_discount"]) if item.get("total_discount") else None,
                     "taxable":                item.get("taxable"),
                 })
 
@@ -336,9 +277,10 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
 
             nb_commandes += 1
 
-        if not page_info.get("hasNextPage"):
+        page_info = _next_page_info(link_header)
+        if not page_info or not orders:
             break
-        cursor = page_info.get("endCursor")
+        params = {"limit": 250, "page_info": page_info}
         time.sleep(0.3)
 
     # DEBUG — bilan
