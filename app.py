@@ -162,45 +162,52 @@ def _get_ventes_reap(date_limite):
 
 st.title("Pique&Pince — Dashboard ventes")
 
-# ── Navigation ────────────────────────────────────────────────────────────────
+# ── Navigation groupée ────────────────────────────────────────────────────────
 
-_NAV_PAGES = [
-    "📊 Vue d'ensemble",
-    "📦 Commandes",
-    "⭐ Best-sellers",
-    "🚨 Réapprovisionnement",
-    "🏭 Stock & Fournisseurs",
-    "🔍 Vérification Wizishop",
-    "🏷️ Catalogue Etsy",
-    "📊 Gestion stock Etsy",
-    "🔎 Produits manquants sur Etsy",
-    "🔍 Vérification Etsy",
-    "🔍 Vérification Faire",
-    "📒 Réconciliation Faire",
-    "📊 Gestion stock Faire",
-    "🔎 Produits manquants sur Faire",
-    "✏️ Correction SKUs Faire",
-    "🔗 Mapping SKUs Faire",
-    "💰 Vérification prix Faire",
-    "🔧 Correction lignes commandes Faire",
-    "🌍 Comptabilité TVA",
-    "🔗 Connexion Faire/Shopify",
-    "🔄 Synchronisation",
-]
+_NAV_GROUPES = {
+    "📊 Général":    ["📊 Vue d'ensemble"],
+    "🛍️ Wizishop":  ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
+                      "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop"],
+    "🏷️ Etsy":      ["🏷️ Catalogue Etsy", "📊 Gestion stock Etsy",
+                      "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
+    "🛒 Faire":      ["🔍 Vérification Faire", "📒 Réconciliation Faire",
+                      "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
+                      "✏️ Correction SKUs Faire", "🔗 Mapping SKUs Faire",
+                      "💰 Vérification prix Faire", "🔧 Correction lignes commandes Faire"],
+    "⚙️ Outils":    ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
+}
+
+_NAV_KEYS = {g: f"_nav_{i}" for i, g in enumerate(_NAV_GROUPES)}
+
+
+def _nav_change(key):
+    val = st.session_state.get(key)
+    if val:
+        st.session_state["page"] = val
+    for k in _NAV_KEYS.values():
+        if k != key:
+            st.session_state[k] = None
+
+
+# Initialisation au premier chargement
+if "page" not in st.session_state:
+    st.session_state["page"] = "📊 Vue d'ensemble"
+    st.session_state[_NAV_KEYS["📊 Général"]] = "📊 Vue d'ensemble"
 
 with st.sidebar:
     st.markdown("### Navigation")
-    st.markdown("**📊 Général**")
-    st.markdown("**🛍️ Wizishop**")
-    st.markdown("**🏷️ Etsy**")
-    st.markdown("**🛒 Faire**")
-    st.markdown("**⚙️ Outils**")
-    page = st.radio(
-        "",
-        _NAV_PAGES,
-        index=0,
-        label_visibility="collapsed",
-    )
+    for groupe, pages in _NAV_GROUPES.items():
+        key = _NAV_KEYS[groupe]
+        st.radio(
+            groupe,
+            pages,
+            index=None,
+            key=key,
+            on_change=_nav_change,
+            args=(key,),
+        )
+
+page = st.session_state.get("page", "📊 Vue d'ensemble")
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
