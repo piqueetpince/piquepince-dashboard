@@ -2270,29 +2270,52 @@ elif page == "🔗 Connexion Faire":
         st.info("Ajoute cette valeur dans tes secrets Streamlit sous la clé `SHOPIFY_FOULARD_FRENCHY_TOKEN` puis redémarre l'app :")
         st.code(st.session_state["shopify_ff_token_obtained"])
 
-    # Token déjà configuré → bouton de test
+    # Token déjà configuré → boutons de test
     _token_pret = "SHOPIFY_FOULARD_FRENCHY_TOKEN" in st.secrets
     if _token_pret:
         st.success("✅ Token configuré dans les secrets")
-        if st.button("Tester la connexion Shopify"):
-            with st.spinner("Test en cours..."):
-                try:
-                    shop, token = get_shopify_token()
-                    status, result = shopify_test_connection(shop, token)
-                    if status == 200:
-                        errors = result.get("errors")
-                        if errors:
-                            st.error(f"Erreur GraphQL : {errors}")
+        _col_ff1, _col_ff2 = st.columns(2)
+        with _col_ff1:
+            if st.button("Tester la connexion Shopify"):
+                with st.spinner("Test en cours..."):
+                    try:
+                        shop, token = get_shopify_token()
+                        status, result = shopify_test_connection(shop, token)
+                        if status == 200:
+                            errors = result.get("errors")
+                            if errors:
+                                st.error(f"Erreur GraphQL : {errors}")
+                            else:
+                                shop_info = result["shop"]
+                                st.success("✅ Connexion Shopify fonctionnelle")
+                                st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
+                                st.write(f"**Email :** {shop_info.get('email')}")
+                                st.write(f"**Plan :** {shop_info.get('plan_name')}")
                         else:
-                            shop_info = result["shop"]
-                            st.success("✅ Connexion Shopify fonctionnelle")
-                            st.write(f"**Boutique :** {shop_info.get('name')} (`{shop_info.get('domain')}`)")
-                            st.write(f"**Email :** {shop_info.get('email')}")
-                            st.write(f"**Plan :** {shop_info.get('plan_name')}")
-                    else:
-                        st.error(f"Erreur {status} : {result}")
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
+                            st.error(f"Erreur {status} : {result}")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+        with _col_ff2:
+            if st.button("Vérifier les scopes du token"):
+                with st.spinner("Récupération des scopes..."):
+                    try:
+                        shop, token = get_shopify_token()
+                        r = requests.get(
+                            f"https://{shop}/admin/oauth/access_scopes.json",
+                            headers={"X-Shopify-Access-Token": token}
+                        )
+                        if r.status_code == 200:
+                            scopes = [s["handle"] for s in r.json().get("access_scopes", [])]
+                            st.success(f"✅ {len(scopes)} scope(s) accordé(s) :")
+                            st.code("\n".join(scopes))
+                            if "read_all_orders" in scopes:
+                                st.success("✅ read_all_orders présent — accès illimité aux commandes")
+                            else:
+                                st.warning("⚠️ read_all_orders absent — commandes limitées à 60 jours. Réautorise l'app.")
+                        else:
+                            st.error(f"Erreur {r.status_code} : {r.text[:200]}")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
 
     # Flux OAuth — bouton d'installation
     st.divider()
