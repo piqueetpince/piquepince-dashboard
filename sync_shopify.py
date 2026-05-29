@@ -194,9 +194,10 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
         st.write(f"[DEBUG] orders/count.json → erreur {r_count.status_code}: {r_count.text[:100]}")
 
     params = {
-        "status":          "any",
-        "created_at_min":  since_date,
-        "limit":           250,
+        "status":              "any",
+        "fulfillment_status":  "any",
+        "created_at_min":      since_date,
+        "limit":               250,
         "fields": (
             "id,name,order_number,created_at,processed_at,updated_at,cancelled_at,"
             "financial_status,fulfillment_status,total_price,subtotal_price,total_tax,"
