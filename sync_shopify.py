@@ -175,6 +175,7 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
     """
     nb_commandes = 0
     nb_pages = 0
+    debug_first_done = False
 
     if "T" not in since_date:
         since_date = f"{since_date}T00:00:00Z"
@@ -209,18 +210,26 @@ def sync_shopify_commandes(boutique, shop, token, since_date="2025-01-01"):
                  f"Link: {link_header[:120] if link_header else 'aucun (dernière page)'}")
 
         for order in orders:
-            order_id  = str(order["id"])
-            billing   = order.get("billing_address") or {}
-            shipping  = order.get("shipping_address") or {}
-            customer  = order.get("customer") or {}
-            tags_raw  = order.get("tags", "") or ""
-            tags_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
-            ship_set  = (order.get("total_shipping_price_set") or {}).get("shop_money") or {}
+            order_id   = str(order["id"])
+            legacy_id  = int(order["id"])
+            billing    = order.get("billing_address") or {}
+            shipping   = order.get("shipping_address") or {}
+            customer   = order.get("customer") or {}
+            tags_raw   = order.get("tags", "") or ""
+            tags_list  = [t.strip() for t in tags_raw.split(",") if t.strip()]
+            ship_set   = (order.get("total_shipping_price_set") or {}).get("shop_money") or {}
+
+            # DEBUG — première commande uniquement
+            if not debug_first_done:
+                st.write(f"[DEBUG] 1ère commande → id_shopify={order_id!r} (str) | "
+                         f"legacy_id={legacy_id!r} (int) | "
+                         f"on_conflict='id_shopify,boutique'")
+                debug_first_done = True
 
             upsert("commandes_shopify", [{
                 "id_shopify":           order_id,
                 "boutique":             boutique,
-                "legacy_id":            order["id"],
+                "legacy_id":            legacy_id,
                 "numero":               order.get("name"),
                 "numero_seq":           order.get("order_number"),
                 "cree_le":              order.get("created_at"),
