@@ -162,88 +162,47 @@ def _get_ventes_reap(date_limite):
 
 st.title("Pique&Pince — Dashboard ventes")
 
-# ── Navigation groupée ────────────────────────────────────────────────────────
+# ── Navigation ────────────────────────────────────────────────────────────────
 
-_NAV_GROUPS = {
-    "_nav_wizi": {
-        "label": "🛒 Wizishop",
-        "pages": [
-            "📦 Commandes",
-            "⭐ Best-sellers",
-            "🚨 Réapprovisionnement",
-            "🏭 Stock & Fournisseurs",
-            "🔍 Vérification Wizishop",
-        ],
-    },
-    "_nav_etsy": {
-        "label": "🏷️ Etsy",
-        "pages": [
-            "🏷️ Catalogue Etsy",
-            "📊 Gestion stock Etsy",
-            "🔎 Produits manquants sur Etsy",
-            "🔍 Vérification Etsy",
-        ],
-    },
-    "_nav_faire": {
-        "label": "🛒 Faire",
-        "pages": [
-            "🔍 Vérification Faire",
-            "📒 Réconciliation Faire",
-            "📊 Gestion stock Faire",
-            "🔎 Produits manquants sur Faire",
-            "✏️ Correction SKUs Faire",
-            "🔗 Mapping SKUs Faire",
-            "💰 Vérification prix Faire",
-            "🔧 Correction lignes commandes Faire",
-        ],
-    },
-    "_nav_vue": {
-        "label": "📊 Vue d'ensemble",
-        "pages": [
-            "📊 Vue d'ensemble",
-        ],
-    },
-    "_nav_outils": {
-        "label": "🔧 Outils",
-        "pages": [
-            "🌍 Comptabilité TVA",
-            "🔗 Connexion Faire",
-            "🔄 Synchronisation",
-        ],
-    },
-}
-
-_ALL_NAV_KEYS = list(_NAV_GROUPS.keys())
-
-
-def _on_nav_change(key):
-    val = st.session_state.get(key)
-    if val:
-        st.session_state["_current_page"] = val
-        for k in _ALL_NAV_KEYS:
-            if k != key:
-                st.session_state[k] = None
-
+_ALL_PAGES = [
+    "📦 Commandes",
+    "⭐ Best-sellers",
+    "🚨 Réapprovisionnement",
+    "🏭 Stock & Fournisseurs",
+    "🔍 Vérification Wizishop",
+    "🏷️ Catalogue Etsy",
+    "📊 Gestion stock Etsy",
+    "🔎 Produits manquants sur Etsy",
+    "🔍 Vérification Etsy",
+    "🔍 Vérification Faire",
+    "📒 Réconciliation Faire",
+    "📊 Gestion stock Faire",
+    "🔎 Produits manquants sur Faire",
+    "✏️ Correction SKUs Faire",
+    "🔗 Mapping SKUs Faire",
+    "💰 Vérification prix Faire",
+    "🔧 Correction lignes commandes Faire",
+    "📊 Vue d'ensemble",
+    "🌍 Comptabilité TVA",
+    "🔗 Connexion Faire",
+    "🔄 Synchronisation",
+]
 
 with st.sidebar:
-    for key, group in _NAV_GROUPS.items():
-        st.markdown(f"**{group['label']}**")
-        st.radio(
-            key,
-            group["pages"],
-            index=None,
-            key=key,
-            label_visibility="collapsed",
-            on_change=_on_nav_change,
-            args=(key,),
-        )
-        st.divider()
-
-if "_current_page" not in st.session_state:
-    st.session_state["_current_page"] = "📊 Vue d'ensemble"
-    st.session_state["_nav_vue"] = "📊 Vue d'ensemble"
-
-page = st.session_state["_current_page"]
+    st.markdown("### 🛒 Pique & Pince — Wizishop")
+    st.markdown("*Commandes · Best-sellers · Réappro · Stock · Vérification*")
+    st.markdown("### 🏷️ Pique & Pince — Etsy")
+    st.markdown("*Catalogue · Gestion stock · Produits manquants · Vérification*")
+    st.markdown("### 🛒 Pique & Pince — Faire")
+    st.markdown("*Vérification · Réconciliation · Stock · Produits manquants · SKUs · Prix · Lignes*")
+    st.markdown("### 📊 Vue d'ensemble · 🔧 Outils")
+    st.divider()
+    page = st.radio(
+        "Navigation",
+        _ALL_PAGES,
+        index=_ALL_PAGES.index("📊 Vue d'ensemble"),
+        label_visibility="collapsed",
+    )
 
 if page == "🔄 Synchronisation":
     st.subheader("Synchronisation des données")
