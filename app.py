@@ -1194,7 +1194,7 @@ elif page == "📊 Gestion stock Etsy":
             if stock_wizi == 0 and stock_etsy == 0:
                 continue
 
-            if stock_etsy > stock_wizi:
+            if stock_etsy > stock_wizi and jours_stock < seuil_jours:
                 alerte = "🔴 URGENT"
                 priorite = 1
             elif stock_etsy == 0 and jours_stock > seuil_jours:
