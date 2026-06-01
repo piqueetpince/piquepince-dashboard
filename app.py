@@ -2424,18 +2424,23 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
     # ── Chargement données ────────────────────────────────────────────────────
 
     @st.cache_data(ttl=300)
-    def _ff_load_variants():
-        rows = select("produits_shopify_variants",
-            "select=sku,nom_complet,stock,id_produit_shopify"
-            "&boutique=eq.foulard_frenchy&sku=not.is.null")
-        return rows or []
-
-    @st.cache_data(ttl=300)
     def _ff_load_produits():
         rows = select("produits_shopify",
             "select=id_shopify,fournisseur"
-            "&boutique=eq.foulard_frenchy")
+            "&boutique=eq.foulard_frenchy&statut=eq.ACTIVE")
         return {r["id_shopify"]: r.get("fournisseur") or "" for r in rows} if rows else {}
+
+    @st.cache_data(ttl=300)
+    def _ff_load_variants(ids_actifs_tuple):
+        if not ids_actifs_tuple:
+            return []
+        ids_str = ",".join(ids_actifs_tuple)
+        rows = select("produits_shopify_variants",
+            f"select=sku,nom_complet,stock,id_produit_shopify"
+            f"&boutique=eq.foulard_frenchy&sku=not.is.null"
+            f"&disponible=eq.true"
+            f"&id_produit_shopify=in.({ids_str})")
+        return rows or []
 
     @st.cache_data(ttl=300)
     def _ff_load_ventes(depuis):
@@ -2476,8 +2481,9 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
     depuis_str = (datetime.now(timezone.utc) - timedelta(days=30 * nb_mois_ff)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     with st.spinner("Chargement des données Shopify..."):
-        variants_ff    = _ff_load_variants()
         prod_fourn_ff  = _ff_load_produits()
+        ids_actifs     = tuple(sorted(prod_fourn_ff.keys()))
+        variants_ff    = _ff_load_variants(ids_actifs)
         ventes_ff      = _ff_load_ventes(depuis_str)
         en_commande_ff = _ff_load_en_commande()
 
