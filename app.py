@@ -1476,7 +1476,7 @@ elif page == "🔍 Vérification Etsy":
     st.subheader("⚠️ SKUs Etsy absents de Wizishop")
 
     etsy_vars = select("produits_etsy_variations",
-        "select=sku,listing_id,variation_valeur&sku=not.is.null")
+        "select=sku,listing_id,variation_valeur&sku=not.is.null&is_enabled=eq.true")
     wizi_skus_raw = select("produits", "select=sku")
 
     if etsy_vars and wizi_skus_raw:
@@ -1515,8 +1515,8 @@ elif page == "🔍 Vérification Etsy":
     st.subheader("💰 Comparaison des prix Etsy vs Wizishop")
 
     etsy_prix = select("produits_etsy_variations",
-        "select=sku,prix&sku=not.is.null&prix=not.is.null")
-    wizi_prix = select("produits", "select=sku,prix_ttc&prix_ttc=not.is.null")
+        "select=sku,prix&sku=not.is.null&prix=not.is.null&is_enabled=eq.true")
+    wizi_prix = select("produits", "select=sku,prix_vente_ht&prix_vente_ht=not.is.null")
 
     if etsy_prix and wizi_prix:
         # Garder le prix max par SKU Etsy (en cas de plusieurs variations)
@@ -1530,9 +1530,9 @@ elif page == "🔍 Vérification Etsy":
         wizi_prix_map = {}
         for r in wizi_prix:
             sku = r.get("sku") or ""
-            prix = float(r.get("prix_ttc") or 0)
-            if sku and prix > 0:
-                wizi_prix_map[sku] = prix
+            prix_ht = float(r.get("prix_vente_ht") or 0)
+            if sku and prix_ht > 0:
+                wizi_prix_map[sku] = round(prix_ht * 1.2, 2)  # HT → TTC pour comparaison
 
         rows_ecart = []
         for sku, prix_etsy in etsy_prix_map.items():
@@ -1544,7 +1544,7 @@ elif page == "🔍 Vérification Etsy":
                 rows_ecart.append({
                     "SKU": sku,
                     "Prix Etsy (€)": round(prix_etsy, 2),
-                    "Prix Wizishop (€)": round(prix_wizi, 2),
+                    "Prix Wizishop TTC (€)": round(prix_wizi, 2),
                     "Écart (%)": round(ecart_pct, 1),
                 })
 
