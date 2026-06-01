@@ -2522,15 +2522,22 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
             qty_att_p = int(cmd_p.get("quantite_attendue") or 0)
             qty_a_commander = max(0, qty_att_p - qty_cmd_p)
         else:
-            if stock == 0 and v_mois == 0:
+            # Exclure uniquement les produits avec du stock mais jamais vendus
+            if stock > 0 and v_mois == 0:
                 continue
-            qty_a_commander = max(0, round(v_mois * 4) - stock) if v_mois > 0 else 0
-            if mois_stock <= 3 and v_mois > 0:
+            if stock == 0 and v_mois == 0:
+                # Rupture sans historique de ventes : à commander
+                mois_stock = 0
                 alerte = "🔴 Commander"
-            elif mois_stock <= 5 and v_mois > 0:
-                alerte = "🟡 Surveiller"
+                qty_a_commander = 0
             else:
-                alerte = "🟢 OK"
+                qty_a_commander = max(0, round(v_mois * 4) - stock)
+                if mois_stock <= 3:
+                    alerte = "🔴 Commander"
+                elif mois_stock <= 5:
+                    alerte = "🟡 Surveiller"
+                else:
+                    alerte = "🟢 OK"
 
         rows_ff.append({
             "sku":             sku,
