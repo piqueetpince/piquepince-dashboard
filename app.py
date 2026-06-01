@@ -1123,9 +1123,6 @@ elif page == "📊 Gestion stock Etsy":
         alerte_filtre = st.selectbox("Filtre alerte", [
             "Toutes", "🔴 Urgent uniquement", "🔴 + 🟡 Attention", "⚪ Info uniquement"
         ])
-        statut_filtre = st.selectbox("Statut listing", [
-            "Tous", "Actifs uniquement", "Inactifs uniquement"
-        ])
 
     variations = select("produits_etsy_variations",
         "select=sku,stock_etsy,stock_wizishop,is_enabled,variation_valeur,listing_id")
@@ -1161,6 +1158,7 @@ elif page == "📊 Gestion stock Etsy":
                         ventes_etsy[sku_key] = ventes_etsy.get(sku_key, 0) + qty
 
         rows = []
+        rows_inactifs = []
         for v in variations:
             sku = v.get("sku") or ""
             listing_id = v.get("listing_id")
@@ -1178,16 +1176,29 @@ elif page == "📊 Gestion stock Etsy":
             ventes_par_jour = v_total / 30
             jours_stock = round(stock_wizi / ventes_par_jour) if ventes_par_jour > 0 else 999
 
-            if is_enabled and ((stock_wizi == 0 and stock_etsy > 0 and v_total > 0) or
-                               (jours_stock < seuil_jours and v_total > 0)):
+            if not is_enabled:
+                # Tableau séparé : inactifs avec stock Etsy supérieur au stock Wizishop
+                if stock_etsy > stock_wizi:
+                    rows_inactifs.append({
+                        "SKU": sku,
+                        "Produit": titre,
+                        "Variation": variation_valeur,
+                        "Stock Wizishop": stock_wizi,
+                        "Stock Etsy": stock_etsy,
+                        "Écart": ecart,
+                        "Ventes/mois Total": v_total,
+                    })
+                continue
+
+            # Tableau principal — listings actifs uniquement
+            if stock_wizi == 0 and stock_etsy == 0:
+                continue
+
+            if (stock_wizi == 0 and stock_etsy > 0 and v_total > 0) or (jours_stock < seuil_jours and v_total > 0):
                 alerte = "🔴 URGENT"
                 priorite = 1
-            elif is_enabled and ((stock_etsy > stock_wizi and v_total > 0) or
-                                 (ventes_par_jour > 0 and ecart > 0 and
-                                  (ecart / ventes_par_jour) > seuil_ecart_jours)):
-                alerte = "🟡 ATTENTION"
-                priorite = 2
-            elif not is_enabled and jours_stock > seuil_jours and v_total > 0:
+            elif (stock_etsy > stock_wizi and v_total > 0) or (
+                    ventes_par_jour > 0 and ecart > 0 and (ecart / ventes_par_jour) > seuil_ecart_jours):
                 alerte = "🟡 ATTENTION"
                 priorite = 2
             elif stock_etsy > stock_wizi and v_total == 0:
@@ -1208,13 +1219,11 @@ elif page == "📊 Gestion stock Etsy":
                 "Ventes/mois Etsy": v_etsy,
                 "Ventes/mois Total": v_total,
                 "Jours de stock": jours_stock,
-                "Actif": "✅" if is_enabled else "⏸️",
                 "Alerte": alerte,
                 "_priorite": priorite
             })
 
         df = pd.DataFrame(rows)
-        df = df[~((df["Stock Wizishop"] == 0) & (df["Stock Etsy"] == 0))]
 
         nb_urgent = len(df[df["Alerte"] == "🔴 URGENT"])
         nb_attention = len(df[df["Alerte"] == "🟡 ATTENTION"])
@@ -1231,11 +1240,6 @@ elif page == "📊 Gestion stock Etsy":
         with col4:
             st.metric("🟢 OK", nb_ok)
 
-        if statut_filtre == "Actifs uniquement":
-            df = df[df["Actif"] == "✅"]
-        elif statut_filtre == "Inactifs uniquement":
-            df = df[df["Actif"] == "⏸️"]
-
         if alerte_filtre == "🔴 Urgent uniquement":
             df = df[df["Alerte"] == "🔴 URGENT"]
         elif alerte_filtre == "🔴 + 🟡 Attention":
@@ -1248,6 +1252,15 @@ elif page == "📊 Gestion stock Etsy":
         st.dataframe(df, use_container_width=True, hide_index=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Télécharger en CSV", csv, "gestion_stock_etsy.csv", "text/csv")
+
+        # ── Anomalies listings inactifs ───────────────────────────────────────
+        if rows_inactifs:
+            st.divider()
+            st.subheader("⚠️ Anomalies stock (listings inactifs)")
+            st.caption(f"{len(rows_inactifs)} listing(s) inactif(s) avec stock Etsy > stock Wizishop")
+            df_inactifs = pd.DataFrame(rows_inactifs)
+            df_inactifs = df_inactifs.sort_values("Écart")
+            st.dataframe(df_inactifs, use_container_width=True, hide_index=True)
     else:
         st.info("Aucune donnée. Lance d'abord la sync 6️⃣ Produits Etsy.")
 
