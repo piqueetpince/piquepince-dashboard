@@ -165,16 +165,17 @@ st.title("Pique&Pince — Dashboard ventes")
 # ── Navigation groupée ────────────────────────────────────────────────────────
 
 _NAV_GROUPES = {
-    "📊 Général":    ["📊 Vue d'ensemble"],
-    "🛍️ Wizishop":  ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
-                      "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop"],
-    "🏷️ Etsy":      ["🏷️ Catalogue Etsy", "📊 Gestion stock Etsy",
-                      "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
-    "🛒 Faire":      ["🔍 Vérification Faire", "📒 Réconciliation Faire",
-                      "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
-                      "✏️ Correction SKUs Faire", "🔗 Mapping SKUs Faire",
-                      "💰 Vérification prix Faire", "🔧 Correction lignes commandes Faire"],
-    "⚙️ Outils":    ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
+    "📊 Général":       ["📊 Vue d'ensemble"],
+    "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
+                         "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop"],
+    "🏷️ Etsy":         ["🏷️ Catalogue Etsy", "📊 Gestion stock Etsy",
+                         "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
+    "🛒 Faire":         ["🔍 Vérification Faire", "📒 Réconciliation Faire",
+                         "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
+                         "✏️ Correction SKUs Faire", "🔗 Mapping SKUs Faire",
+                         "💰 Vérification prix Faire", "🔧 Correction lignes commandes Faire"],
+    "🧣 Foulard Frenchy": ["🚨 Réapprovisionnement Foulard Frenchy"],
+    "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
 }
 
 _NAV_KEYS = {g: f"_nav_{i}" for i, g in enumerate(_NAV_GROUPES)}
@@ -2403,3 +2404,231 @@ elif page == "🔗 Connexion Faire/Shopify":
         st.caption(f"redirect_uri enregistrée : `https://piquepince-dashboard-e5yp9kroebwpi6edfgl9zo.streamlit.app`")
     except KeyError as e:
         st.warning(f"Secret manquant : {e}")
+
+elif page == "🚨 Réapprovisionnement Foulard Frenchy":
+    from datetime import timedelta
+
+    with st.sidebar:
+        st.divider()
+        nb_mois_ff = st.slider("Période calcul ventes (mois)", min_value=1, max_value=2, value=2,
+                               key="reap_ff_nb_mois")
+        alerte_filtre_ff = st.selectbox("Filtre alerte", [
+            "Tous les produits",
+            "🔴 À commander uniquement",
+            "🔴 + 🟡 Surveiller",
+        ], key="reap_ff_alerte")
+
+    st.subheader("🚨 Réapprovisionnement Foulard Frenchy")
+    st.info(f"Calcul basé sur les ventes des {nb_mois_ff} derniers mois. Objectif : 4 mois de stock.")
+
+    # ── Chargement données ────────────────────────────────────────────────────
+
+    @st.cache_data(ttl=300)
+    def _ff_load_variants():
+        rows = select("produits_shopify_variants",
+            "select=sku,nom_complet,stock,id_produit_shopify"
+            "&boutique=eq.foulard_frenchy&sku=not.is.null")
+        return rows or []
+
+    @st.cache_data(ttl=300)
+    def _ff_load_produits():
+        rows = select("produits_shopify",
+            "select=id_shopify,fournisseur"
+            "&boutique=eq.foulard_frenchy")
+        return {r["id_shopify"]: r.get("fournisseur") or "" for r in rows} if rows else {}
+
+    @st.cache_data(ttl=300)
+    def _ff_load_ventes(depuis):
+        lignes = select("lignes_commande_shopify",
+            "select=sku,quantite,id_commande_shopify"
+            "&boutique=eq.foulard_frenchy&sku=not.is.null",
+            limit=50000)
+        if not lignes:
+            return {}
+
+        cmds = select("commandes_shopify",
+            f"select=id_shopify"
+            f"&boutique=eq.foulard_frenchy"
+            f"&statut_financier=not.eq.voided"
+            f"&cree_le=gte.{depuis}"
+            f"&commande_test=eq.false")
+        if not cmds:
+            return {}
+        ids_valides = {c["id_shopify"] for c in cmds}
+
+        ventes = {}
+        for l in lignes:
+            if l.get("id_commande_shopify") not in ids_valides:
+                continue
+            sku = l.get("sku") or ""
+            if not sku:
+                continue
+            ventes[sku] = ventes.get(sku, 0) + (l.get("quantite") or 0)
+        return ventes
+
+    @st.cache_data(ttl=60)
+    def _ff_load_en_commande():
+        rows = select("commandes_fournisseur",
+            "select=id,sku,nom_produit,fournisseur,date_commande,quantite_commandee,quantite_attendue,quantite_recue"
+            "&source=eq.foulard_frenchy&statut=in.(en_commande,recu_partiel)&order=date_commande.desc")
+        return rows or []
+
+    depuis_str = (datetime.now(timezone.utc) - timedelta(days=30 * nb_mois_ff)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    with st.spinner("Chargement des données Shopify..."):
+        variants_ff    = _ff_load_variants()
+        prod_fourn_ff  = _ff_load_produits()
+        ventes_ff      = _ff_load_ventes(depuis_str)
+        en_commande_ff = _ff_load_en_commande()
+
+    skus_exclu_ff = set()
+    skus_partiels_ff = {}
+    for c in en_commande_ff:
+        sku_c = c["sku"]
+        qty_cmd = int(c.get("quantite_commandee") or 0)
+        qty_att = int(c.get("quantite_attendue") or 0)
+        if qty_att == 0 or qty_cmd >= qty_att:
+            skus_exclu_ff.add(sku_c)
+        else:
+            skus_partiels_ff[sku_c] = c
+
+    # ── Construction tableau ──────────────────────────────────────────────────
+
+    fournisseurs_set_ff = set()
+    rows_ff = []
+
+    for v in variants_ff:
+        sku = v.get("sku") or ""
+        if not sku or sku in skus_exclu_ff:
+            continue
+        stock = int(v.get("stock") or 0)
+        fournisseur = prod_fourn_ff.get(v.get("id_produit_shopify") or "", "") or "—"
+        fournisseurs_set_ff.add(fournisseur)
+
+        ventes_total = ventes_ff.get(sku, 0)
+        v_mois = round(ventes_total / nb_mois_ff, 1)
+        mois_stock = round(stock / v_mois, 1) if v_mois > 0 else 99
+
+        if sku in skus_partiels_ff:
+            alerte = "⚠️ Commande partielle"
+            cmd_p = skus_partiels_ff[sku]
+            qty_cmd_p = int(cmd_p.get("quantite_commandee") or 0)
+            qty_att_p = int(cmd_p.get("quantite_attendue") or 0)
+            qty_a_commander = max(0, qty_att_p - qty_cmd_p)
+        else:
+            if stock == 0 and v_mois == 0:
+                continue
+            qty_a_commander = max(0, round(v_mois * 4) - stock) if v_mois > 0 else 0
+            if mois_stock <= 3 and v_mois > 0:
+                alerte = "🔴 Commander"
+            elif mois_stock <= 5 and v_mois > 0:
+                alerte = "🟡 Surveiller"
+            else:
+                alerte = "🟢 OK"
+
+        rows_ff.append({
+            "sku":             sku,
+            "Produit":         v.get("nom_complet") or sku,
+            "Fournisseur":     fournisseur,
+            "Stock":           stock,
+            "Ventes/mois":     v_mois,
+            "Mois de stock":   mois_stock if mois_stock < 99 else "—",
+            "Qté à commander": qty_a_commander,
+            "Alerte":          alerte,
+        })
+
+    df_ff = pd.DataFrame(rows_ff)
+
+    # ── Filtres ───────────────────────────────────────────────────────────────
+
+    fourn_options_ff = ["Tous"] + sorted(fournisseurs_set_ff)
+    with st.sidebar:
+        fournisseur_filtre_ff = st.selectbox("Fournisseur", fourn_options_ff, key="reap_ff_fourn")
+
+    if df_ff.empty:
+        st.info("Aucun produit à afficher.")
+    else:
+        if fournisseur_filtre_ff != "Tous":
+            df_ff = df_ff[df_ff["Fournisseur"] == fournisseur_filtre_ff]
+
+        if alerte_filtre_ff == "🔴 À commander uniquement":
+            df_ff = df_ff[df_ff["Alerte"].isin(["🔴 Commander", "⚠️ Commande partielle"])]
+        elif alerte_filtre_ff == "🔴 + 🟡 Surveiller":
+            df_ff = df_ff[df_ff["Alerte"].isin(["🔴 Commander", "🟡 Surveiller", "⚠️ Commande partielle"])]
+
+        df_ff = df_ff.sort_values(["Alerte", "Ventes/mois"], ascending=[True, False])
+        st.caption(f"{len(df_ff)} produits affichés")
+
+        # ── Éditeur de commande ───────────────────────────────────────────────
+
+        df_edit_ff = df_ff.copy()
+        df_edit_ff["Qté commandée"] = df_edit_ff["Qté à commander"]
+
+        edited_ff = st.data_editor(
+            df_edit_ff[["Alerte", "sku", "Produit", "Fournisseur", "Stock",
+                         "Ventes/mois", "Mois de stock", "Qté à commander", "Qté commandée"]],
+            column_config={
+                "Alerte":          st.column_config.TextColumn("Alerte", width="small"),
+                "sku":             st.column_config.TextColumn("SKU"),
+                "Produit":         st.column_config.TextColumn("Produit", width="large"),
+                "Fournisseur":     st.column_config.TextColumn("Fournisseur"),
+                "Stock":           st.column_config.NumberColumn("Stock"),
+                "Ventes/mois":     st.column_config.NumberColumn("Ventes/mois", format="%.1f"),
+                "Mois de stock":   st.column_config.TextColumn("Mois stock"),
+                "Qté à commander": st.column_config.NumberColumn("Qté suggérée"),
+                "Qté commandée":   st.column_config.NumberColumn("Qté commandée", min_value=0),
+            },
+            disabled=["Alerte", "sku", "Produit", "Fournisseur", "Stock",
+                      "Ventes/mois", "Mois de stock", "Qté à commander"],
+            use_container_width=True,
+            hide_index=True,
+            key="reap_ff_editor",
+        )
+
+        if st.button("📦 Marquer en commande", type="primary"):
+            lignes_cmd_ff = edited_ff[edited_ff["Qté commandée"] > 0]
+            if lignes_cmd_ff.empty:
+                st.warning("Aucune quantité saisie.")
+            else:
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                records_ff = []
+                for _, row in lignes_cmd_ff.iterrows():
+                    records_ff.append({
+                        "source":             "foulard_frenchy",
+                        "sku":                row["sku"],
+                        "nom_produit":        row["Produit"],
+                        "fournisseur":        None if row["Fournisseur"] == "—" else row["Fournisseur"],
+                        "date_commande":      today,
+                        "quantite_attendue":  int(row["Qté à commander"]),
+                        "quantite_commandee": int(row["Qté commandée"]),
+                        "statut":             "en_commande",
+                    })
+                try:
+                    upsert("commandes_fournisseur", records_ff, "id")
+                    _ff_load_en_commande.clear()
+                    st.success(f"✅ {len(records_ff)} produit(s) marqués en commande.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+    # ── Produits en commande ──────────────────────────────────────────────────
+
+    st.divider()
+    st.subheader("📦 Produits en commande")
+
+    if en_commande_ff:
+        df_cmd_ff = pd.DataFrame(en_commande_ff)
+        df_cmd_ff = df_cmd_ff.rename(columns={
+            "sku":                "SKU",
+            "nom_produit":        "Produit",
+            "fournisseur":        "Fournisseur",
+            "date_commande":      "Date commande",
+            "quantite_commandee": "Qté commandée",
+            "quantite_attendue":  "Qté attendue",
+            "quantite_recue":     "Qté reçue",
+        })
+        st.dataframe(df_cmd_ff[["SKU", "Produit", "Fournisseur", "Date commande",
+                                 "Qté attendue", "Qté commandée", "Qté reçue"]],
+                     use_container_width=True, hide_index=True)
+    else:
+        st.info("Aucune commande fournisseur en cours.")
