@@ -2438,7 +2438,6 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
         rows = select("produits_shopify_variants",
             f"select=sku,nom_complet,stock,id_produit_shopify"
             f"&boutique=eq.foulard_frenchy&sku=not.is.null"
-            f"&disponible=eq.true"
             f"&id_produit_shopify=in.({ids_str})")
         return rows or []
 
