@@ -1027,23 +1027,28 @@ elif page == "⭐ Best-sellers Etsy":
         date_limite_etsy = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_etsy)).strftime("%Y-%m-%dT%H:%M:%S")
         query_cmds = f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite_etsy}"
 
+    # Catalogue complet Etsy (base du left join)
+    catalogue_etsy = select("produits_etsy_variations",
+        "select=sku,nom_complet,listing_id&sku=not.is.null")
+    # Dédoublonner par SKU en gardant le premier nom trouvé
+    catalogue_skus = {}
+    if catalogue_etsy:
+        for r in catalogue_etsy:
+            sku = r.get("sku") or ""
+            if sku and sku not in catalogue_skus:
+                catalogue_skus[sku] = r.get("nom_complet") or ""
+
     cmds_etsy = select("commandes", query_cmds)
 
-    if not cmds_etsy:
-        st.info("Aucune commande Etsy valide sur la période sélectionnée.")
-    else:
+    # Agréger les ventes par SKU
+    ventes_sku = {}
+    if cmds_etsy:
         ids_str = ",".join(str(c["id_wizi"]) for c in cmds_etsy if c.get("id_wizi"))
         lignes_etsy = select("lignes_commande",
             f"select=sku,sku_variation,quantite,prix_unitaire_ttc,nom_produit"
             f"&id_commande=in.({ids_str})",
             limit=50000)
-
-        if not lignes_etsy:
-            st.info("Aucune ligne de commande trouvée.")
-        else:
-            prod_map_etsy, _ = _get_produits_reap()
-
-            ventes_sku = {}
+        if lignes_etsy:
             for l in lignes_etsy:
                 sku_key = l.get("sku_variation") or l.get("sku") or ""
                 if not sku_key:
@@ -1056,39 +1061,49 @@ elif page == "⭐ Best-sellers Etsy":
                 ventes_sku[sku_key]["quantite"] += qty
                 ventes_sku[sku_key]["ca_ht"] += ca_ht
 
-            rows_etsy = []
-            for sku, data in ventes_sku.items():
-                prod = get_prod_parent(sku, prod_map_etsy)
-                nom = prod.get("nom") or data["nom"] or sku
-                categorie = prod.get("nom_categorie") or ""
-                v_mois = round(data["quantite"] / nb_mois_etsy, 1) if nb_mois_etsy else None
-                rows_etsy.append({
-                    "SKU": sku,
-                    "Produit": nom,
-                    "Catégorie": categorie,
-                    "Unités vendues": data["quantite"],
-                    "CA HT (€)": round(data["ca_ht"], 2),
-                    "Ventes/mois": v_mois if v_mois is not None else "—",
-                })
+    if not catalogue_skus:
+        st.info("Aucune donnée catalogue. Lance d'abord la sync Produits Etsy.")
+    else:
+        prod_map_etsy, _ = _get_produits_reap()
 
-            df_etsy = pd.DataFrame(rows_etsy).sort_values("Unités vendues", ascending=False)
+        rows_etsy = []
+        # Tous les SKUs du catalogue (left join)
+        for sku, nom_etsy in catalogue_skus.items():
+            prod = get_prod_parent(sku, prod_map_etsy)
+            nom = prod.get("nom") or nom_etsy or sku
+            categorie = prod.get("nom_categorie") or ""
+            data = ventes_sku.get(sku, {"quantite": 0, "ca_ht": 0.0})
+            v_mois = round(data["quantite"] / nb_mois_etsy, 1) if nb_mois_etsy else (
+                "—" if data["quantite"] == 0 else data["quantite"])
+            rows_etsy.append({
+                "SKU": sku,
+                "Produit": nom,
+                "Catégorie": categorie,
+                "Unités vendues": data["quantite"],
+                "CA HT (€)": round(data["ca_ht"], 2),
+                "Ventes/mois": v_mois,
+            })
 
-            total_unites = df_etsy["Unités vendues"].sum()
-            total_ca = df_etsy["CA HT (€)"].sum()
-            nb_skus = len(df_etsy)
+        df_etsy = pd.DataFrame(rows_etsy).sort_values(
+            ["Unités vendues", "SKU"], ascending=[False, True]
+        )
 
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("📦 Unités vendues", f"{total_unites:,}")
-            with col2:
-                st.metric("💶 CA HT", f"{total_ca:,.2f} €")
-            with col3:
-                st.metric("🔢 SKUs vendus", nb_skus)
+        total_unites = df_etsy["Unités vendues"].sum()
+        total_ca = df_etsy["CA HT (€)"].sum()
+        nb_skus_vendus = (df_etsy["Unités vendues"] > 0).sum()
 
-            st.dataframe(df_etsy, use_container_width=True, hide_index=True)
-            csv_etsy = df_etsy.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Exporter CSV", csv_etsy, "bestsellers_etsy.csv", "text/csv",
-                               key="bs_etsy_csv")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📦 Unités vendues", f"{total_unites:,}")
+        with col2:
+            st.metric("💶 CA HT", f"{total_ca:,.2f} €")
+        with col3:
+            st.metric("🔢 SKUs vendus", f"{nb_skus_vendus} / {len(df_etsy)}")
+
+        st.dataframe(df_etsy, use_container_width=True, hide_index=True)
+        csv_etsy = df_etsy.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv_etsy, "bestsellers_etsy.csv", "text/csv",
+                           key="bs_etsy_csv")
 
 elif page == "📊 Gestion stock Etsy":
     st.subheader("📊 Gestion stock Etsy")
