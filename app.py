@@ -168,7 +168,7 @@ _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop"],
-    "🏷️ Etsy":         ["🏷️ Catalogue Etsy", "📊 Gestion stock Etsy",
+    "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
     "🛒 Faire":         ["🔍 Vérification Faire", "📒 Réconciliation Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
@@ -1011,106 +1011,84 @@ elif page == "🏭 Stock & Fournisseurs":
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation.")
 
-elif page == "🏷️ Catalogue Etsy":
-    st.subheader("🏷️ Catalogue Etsy")
-
+elif page == "⭐ Best-sellers Etsy":
     with st.sidebar:
         st.divider()
-        vue = st.radio("Vue", [
-            "📋 Catalogue complet",
-            "🔴 Alertes stock",
-            "⚠️ SKUs manquantes dans Wizishop"
-        ])
+        periode_etsy = st.selectbox("Période", ["3 mois", "6 mois", "12 mois", "Tout"],
+                                    key="bs_etsy_periode")
 
-    variations = select("produits_etsy_variations",
-        "select=sku,variation_valeur,stock_etsy,stock_wizishop,is_enabled,alerte_stock,prix,listing_id")
-    listings = select("produits_etsy", "select=listing_id,titre,url,has_variations,nb_favoris")
-    listing_map = {l["listing_id"]: l for l in listings} if listings else {}
-    skus_wizi = select("skus", "select=sku&statut=eq.visible")
-    skus_wizi_set = {s["sku"] for s in skus_wizi} if skus_wizi else set()
+    st.subheader("⭐ Best-sellers Etsy")
 
-    if variations:
-        df = pd.DataFrame(variations)
-        df["stock_etsy"] = pd.to_numeric(df["stock_etsy"], errors="coerce").fillna(0).astype(int)
-        df["stock_wizishop"] = pd.to_numeric(df["stock_wizishop"], errors="coerce").fillna(0).astype(int)
-        df["titre"] = df["listing_id"].map(
-            lambda x: listing_map.get(x, {}).get("titre", "")[:60] if x else "")
-
-        if vue == "📋 Catalogue complet":
-            nb_alertes = len(df[df["alerte_stock"] == True])
-            nb_actifs = len(df[df["is_enabled"] == True])
-            nb_inactifs = len(df[df["is_enabled"] == False])
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("🔴 Alertes stock", nb_alertes)
-            with col2:
-                st.metric("✅ Variations actives", nb_actifs)
-            with col3:
-                st.metric("⏸️ Variations inactives", nb_inactifs)
-
-            df["Alerte"] = df["alerte_stock"].map({True: "🔴 Stock 0", False: "🟢 OK"})
-            df["Actif"] = df["is_enabled"].map({True: "✅", False: "⏸️"})
-            df_show = df[["sku", "titre", "variation_valeur", "Actif",
-                         "stock_wizishop", "stock_etsy", "prix", "Alerte"]].copy()
-            df_show.columns = ["SKU", "Produit", "Variation", "Actif",
-                               "Stock Wizishop", "Stock Etsy", "Prix (€)", "Alerte"]
-            df_show = df_show.sort_values("Alerte", ascending=False)
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
-            csv = df_show.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Télécharger catalogue", csv, "catalogue_etsy.csv", "text/csv")
-
-        elif vue == "🔴 Alertes stock":
-            df_alertes = df[df["alerte_stock"] == True].copy()
-            if not df_alertes.empty:
-                st.warning(f"⚠️ {len(df_alertes)} variations actives avec stock Wizishop = 0 !")
-                df_alertes["Actif"] = df_alertes["is_enabled"].map({True: "✅", False: "⏸️"})
-                df_show = df_alertes[["sku", "titre", "variation_valeur", "Actif",
-                                     "stock_wizishop", "stock_etsy", "prix"]].copy()
-                df_show.columns = ["SKU", "Produit", "Variation", "Actif",
-                                   "Stock Wizishop", "Stock Etsy", "Prix (€)"]
-                st.dataframe(df_show, use_container_width=True, hide_index=True)
-                csv = df_show.to_csv(index=False).encode("utf-8")
-                st.download_button("📥 Télécharger alertes", csv, "alertes_stock_etsy.csv", "text/csv")
-            else:
-                st.success("✅ Aucune alerte stock !")
-
-        elif vue == "⚠️ SKUs manquantes dans Wizishop":
-            st.info("Liste des SKUs Etsy qui n'existent pas dans Wizishop — à corriger sur Etsy.")
-
-            df["sku_existe_wizi"] = df["sku"].apply(
-                lambda x: x in skus_wizi_set if x else False)
-            df["sku_parent_existe"] = df["sku"].apply(
-                lambda x: any(s.startswith(x) for s in skus_wizi_set) if x else False)
-            df["statut_sku"] = df.apply(
-                lambda r: "✅ SKU exact" if r["sku_existe_wizi"]
-                else ("⚠️ SKU parent sans variation" if r["sku_parent_existe"]
-                else "❌ Introuvable dans Wizishop"), axis=1)
-
-            df_manquants = df[df["statut_sku"] != "✅ SKU exact"].copy()
-
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("✅ SKUs corrects", len(df[df["statut_sku"] == "✅ SKU exact"]))
-            with col2:
-                st.metric("⚠️ SKU parent sans variation",
-                         len(df[df["statut_sku"] == "⚠️ SKU parent sans variation"]))
-            with col3:
-                st.metric("❌ Introuvable",
-                         len(df[df["statut_sku"] == "❌ Introuvable dans Wizishop"]))
-
-            df_show = df_manquants[["sku", "titre", "variation_valeur",
-                                    "is_enabled", "statut_sku"]].copy()
-            df_show["is_enabled"] = df_show["is_enabled"].map(
-                {True: "✅ Actif", False: "⏸️ Inactif"})
-            df_show.columns = ["SKU Etsy", "Produit", "Variation", "Statut listing", "Statut SKU"]
-            df_show = df_show.sort_values("Statut SKU")
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
-            csv = df_show.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Télécharger liste à corriger",
-                              csv, "skus_a_corriger_etsy.csv", "text/csv")
+    if periode_etsy == "Tout":
+        query_cmds = "select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)"
+        nb_mois_etsy = None
     else:
-        st.info("Aucune donnée. Lance d'abord la sync 6️⃣ Produits Etsy.")
+        nb_mois_etsy = int(periode_etsy.split()[0])
+        date_limite_etsy = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_etsy)).strftime("%Y-%m-%dT%H:%M:%S")
+        query_cmds = f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite_etsy}"
+
+    cmds_etsy = select("commandes", query_cmds)
+
+    if not cmds_etsy:
+        st.info("Aucune commande Etsy valide sur la période sélectionnée.")
+    else:
+        ids_str = ",".join(str(c["id_wizi"]) for c in cmds_etsy if c.get("id_wizi"))
+        lignes_etsy = select("lignes_commande",
+            f"select=sku,sku_variation,quantite,prix_unitaire_ttc,nom_produit"
+            f"&id_commande=in.({ids_str})",
+            limit=50000)
+
+        if not lignes_etsy:
+            st.info("Aucune ligne de commande trouvée.")
+        else:
+            prod_map_etsy, _ = _get_produits_reap()
+
+            ventes_sku = {}
+            for l in lignes_etsy:
+                sku_key = l.get("sku_variation") or l.get("sku") or ""
+                if not sku_key:
+                    continue
+                qty = l.get("quantite") or 0
+                prix_ttc = float(l.get("prix_unitaire_ttc") or 0)
+                ca_ht = prix_ttc / 1.2 * qty
+                if sku_key not in ventes_sku:
+                    ventes_sku[sku_key] = {"quantite": 0, "ca_ht": 0.0, "nom": l.get("nom_produit") or ""}
+                ventes_sku[sku_key]["quantite"] += qty
+                ventes_sku[sku_key]["ca_ht"] += ca_ht
+
+            rows_etsy = []
+            for sku, data in ventes_sku.items():
+                prod = get_prod_parent(sku, prod_map_etsy)
+                nom = prod.get("nom") or data["nom"] or sku
+                categorie = prod.get("nom_categorie") or ""
+                v_mois = round(data["quantite"] / nb_mois_etsy, 1) if nb_mois_etsy else None
+                rows_etsy.append({
+                    "SKU": sku,
+                    "Produit": nom,
+                    "Catégorie": categorie,
+                    "Unités vendues": data["quantite"],
+                    "CA HT (€)": round(data["ca_ht"], 2),
+                    "Ventes/mois": v_mois if v_mois is not None else "—",
+                })
+
+            df_etsy = pd.DataFrame(rows_etsy).sort_values("Unités vendues", ascending=False)
+
+            total_unites = df_etsy["Unités vendues"].sum()
+            total_ca = df_etsy["CA HT (€)"].sum()
+            nb_skus = len(df_etsy)
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("📦 Unités vendues", f"{total_unites:,}")
+            with col2:
+                st.metric("💶 CA HT", f"{total_ca:,.2f} €")
+            with col3:
+                st.metric("🔢 SKUs vendus", nb_skus)
+
+            st.dataframe(df_etsy, use_container_width=True, hide_index=True)
+            csv_etsy = df_etsy.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Exporter CSV", csv_etsy, "bestsellers_etsy.csv", "text/csv",
+                               key="bs_etsy_csv")
 
 elif page == "📊 Gestion stock Etsy":
     st.subheader("📊 Gestion stock Etsy")
