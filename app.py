@@ -1029,14 +1029,14 @@ elif page == "⭐ Best-sellers Etsy":
 
     # Catalogue complet Etsy (base du left join)
     catalogue_etsy = select("produits_etsy_variations",
-        "select=sku,nom_complet,listing_id&sku=not.is.null")
+        "select=sku,variation_valeur,listing_id&sku=not.is.null")
     # Dédoublonner par SKU en gardant le premier nom trouvé
     catalogue_skus = {}
     if catalogue_etsy:
         for r in catalogue_etsy:
             sku = r.get("sku") or ""
             if sku and sku not in catalogue_skus:
-                catalogue_skus[sku] = r.get("nom_complet") or ""
+                catalogue_skus[sku] = r.get("variation_valeur") or ""
 
     cmds_etsy = select("commandes", query_cmds)
 
