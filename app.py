@@ -1118,11 +1118,9 @@ elif page == "📊 Gestion stock Etsy":
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période ventes (mois)", min_value=1, max_value=12, value=3)
-        seuil_jours = st.slider("Seuil alerte jours de stock", min_value=7, max_value=90, value=30)
-        seuil_ecart_jours = st.slider("Seuil écart significatif (jours)", min_value=5, max_value=60, value=15)
-        seuil_etsy_jours = st.slider("Seuil stock Etsy (jours)", min_value=7, max_value=30, value=15)
+        seuil_jours = st.slider("Seuil jours de stock", min_value=7, max_value=90, value=15)
         alerte_filtre = st.selectbox("Filtre alerte", [
-            "Toutes", "🔴 Urgent uniquement", "🔴 + 🟡 Attention", "⚪ Info uniquement"
+            "Toutes", "🔴 Urgent uniquement", "🟡 Attention uniquement", "🟢 OK uniquement"
         ])
 
     variations = select("produits_etsy_variations",
@@ -1196,20 +1194,18 @@ elif page == "📊 Gestion stock Etsy":
             if stock_wizi == 0 and stock_etsy == 0:
                 continue
 
-            if (stock_wizi == 0 and stock_etsy > 0 and v_total > 0) or (jours_stock < seuil_jours and v_total > 0):
+            if stock_etsy > stock_wizi:
                 alerte = "🔴 URGENT"
                 priorite = 1
-            elif (stock_etsy > stock_wizi and v_total > 0) or (
-                    ventes_par_jour > 0 and ecart > 0 and (ecart / ventes_par_jour) > seuil_ecart_jours) or (
-                    stock_etsy > 0 and jours_stock_etsy < seuil_etsy_jours):
+            elif stock_etsy == 0 and jours_stock > seuil_jours:
                 alerte = "🟡 ATTENTION"
                 priorite = 2
-            elif stock_etsy > stock_wizi and v_total == 0:
-                alerte = "⚪ INFO"
-                priorite = 3
+            elif jours_stock < seuil_jours:
+                alerte = "🟡 ATTENTION"
+                priorite = 2
             else:
                 alerte = "🟢 OK"
-                priorite = 4
+                priorite = 3
 
             rows.append({
                 "SKU": sku,
@@ -1221,8 +1217,7 @@ elif page == "📊 Gestion stock Etsy":
                 "Ventes/mois Wizi": v_wizi,
                 "Ventes/mois Etsy": v_etsy,
                 "Ventes/mois Total": v_total,
-                "Jours stock Wizi": jours_stock,
-                "Jours stock Etsy": jours_stock_etsy if jours_stock_etsy < 999 else "—",
+                "Jours stock Wizi": jours_stock if jours_stock < 999 else "—",
                 "Alerte": alerte,
                 "_priorite": priorite
             })
@@ -1231,25 +1226,22 @@ elif page == "📊 Gestion stock Etsy":
 
         nb_urgent = len(df[df["Alerte"] == "🔴 URGENT"])
         nb_attention = len(df[df["Alerte"] == "🟡 ATTENTION"])
-        nb_info = len(df[df["Alerte"] == "⚪ INFO"])
         nb_ok = len(df[df["Alerte"] == "🟢 OK"])
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("🔴 Urgent", nb_urgent)
         with col2:
             st.metric("🟡 Attention", nb_attention)
         with col3:
-            st.metric("⚪ Info", nb_info)
-        with col4:
             st.metric("🟢 OK", nb_ok)
 
         if alerte_filtre == "🔴 Urgent uniquement":
             df = df[df["Alerte"] == "🔴 URGENT"]
-        elif alerte_filtre == "🔴 + 🟡 Attention":
-            df = df[df["Alerte"].isin(["🔴 URGENT", "🟡 ATTENTION"])]
-        elif alerte_filtre == "⚪ Info uniquement":
-            df = df[df["Alerte"] == "⚪ INFO"]
+        elif alerte_filtre == "🟡 Attention uniquement":
+            df = df[df["Alerte"] == "🟡 ATTENTION"]
+        elif alerte_filtre == "🟢 OK uniquement":
+            df = df[df["Alerte"] == "🟢 OK"]
 
         df = df.sort_values("_priorite").drop(columns=["_priorite"]).reset_index(drop=True)
 
