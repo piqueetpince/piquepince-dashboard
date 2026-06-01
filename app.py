@@ -2513,31 +2513,33 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
 
         ventes_total = ventes_ff.get(sku, 0)
         v_mois = round(ventes_total / nb_mois_ff, 1)
-        mois_stock = round(stock / v_mois, 1) if v_mois > 0 else 99
 
         if sku in skus_partiels_ff:
+            mois_stock = round(stock / v_mois, 1) if v_mois > 0 else 999
             alerte = "⚠️ Commande partielle"
             cmd_p = skus_partiels_ff[sku]
             qty_cmd_p = int(cmd_p.get("quantite_commandee") or 0)
             qty_att_p = int(cmd_p.get("quantite_attendue") or 0)
             qty_a_commander = max(0, qty_att_p - qty_cmd_p)
-        else:
-            # Exclure uniquement les produits avec du stock mais jamais vendus
-            if stock > 0 and v_mois == 0:
-                continue
-            if stock == 0 and v_mois == 0:
-                # Rupture sans historique de ventes : à commander
-                mois_stock = 0
+        elif v_mois > 0:
+            mois_stock = round(stock / v_mois, 1)
+            qty_a_commander = max(0, round(v_mois * 4) - stock)
+            if mois_stock <= 3:
                 alerte = "🔴 Commander"
-                qty_a_commander = 0
+            elif mois_stock <= 5:
+                alerte = "🟡 Surveiller"
             else:
-                qty_a_commander = max(0, round(v_mois * 4) - stock)
-                if mois_stock <= 3:
-                    alerte = "🔴 Commander"
-                elif mois_stock <= 5:
-                    alerte = "🟡 Surveiller"
-                else:
-                    alerte = "🟢 OK"
+                alerte = "🟢 OK"
+        elif stock == 0:
+            # Rupture totale, aucune vente récente
+            mois_stock = 0
+            alerte = "🔴 Commander"
+            qty_a_commander = 0
+        else:
+            # Stock présent, aucune vente récente
+            mois_stock = 999
+            alerte = "🟢 OK"
+            qty_a_commander = 0
 
         rows_ff.append({
             "sku":             sku,
