@@ -1417,62 +1417,9 @@ elif page == "🔍 Vérification Wizishop":
         st.info("Aucune commande Wizishop trouvée.")
 
 elif page == "🔍 Vérification Etsy":
-    st.subheader("🔍 Vérification des ventes Etsy")
-
-    with st.sidebar:
-        st.divider()
-        nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
-
-    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    commandes_etsy = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,45,50)&source=eq.etsy&date_commande=gte.{date_limite}")
-
-    if commandes_etsy:
-        ids = [str(c["id_wizi"]) for c in commandes_etsy]
-        ids_str = ",".join(ids)
-
-        lignes = select("lignes_commande",
-            f"select=sku,sku_variation,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
-            limit=50000)
-
-        produits_wizi = select("produits", "select=sku,nom,nom_categorie")
-        prod_wizi_map = {p["sku"]: p for p in produits_wizi} if produits_wizi else {}
-
-        if lignes:
-            df = pd.DataFrame(lignes)
-            df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
-            df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
-            df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
-            df["sku_effectif"] = df.apply(
-                lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
-            df["nom_affiche"] = df["sku_effectif"].map(
-                lambda x: get_prod_parent(x, prod_wizi_map).get("nom", "") or "")
-            df["nom_affiche"] = df.apply(
-                lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
-            df["categorie"] = df["sku_effectif"].map(
-                lambda x: get_prod_parent(x, prod_wizi_map).get("nom_categorie", "") or "")
-
-            result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
-                unites_vendues=("quantite", "sum"),
-                ca_total=("ca", "sum"),
-                nb_commandes=("id_commande", "nunique")
-            ).reset_index().sort_values("unites_vendues", ascending=False)
-
-            result.columns = ["SKU", "Produit", "Catégorie",
-                             "Unités vendues", "CA (€)", "Nb commandes"]
-            result["CA (€)"] = result["CA (€)"].apply(lambda x: f"{x:.2f}")
-
-            st.info(f"{len(result)} produits vendus sur Etsy sur les {nb_mois} derniers mois")
-            st.dataframe(result, use_container_width=True, hide_index=True)
-            csv = result.to_csv(index=False).encode("utf-8")
-            st.download_button("Télécharger en CSV", csv, "verification_etsy.csv", "text/csv")
-        else:
-            st.info("Aucune ligne de commande trouvée.")
-    else:
-        st.info("Aucune commande Etsy trouvée.")
+    st.subheader("🔍 Vérification Etsy")
 
     # ── Section 1 : SKUs Etsy absents de Wizishop ────────────────────────────
-    st.divider()
     st.subheader("⚠️ SKUs Etsy absents de Wizishop")
 
     etsy_vars = select("produits_etsy_variations",
@@ -1516,7 +1463,7 @@ elif page == "🔍 Vérification Etsy":
 
     etsy_prix = select("produits_etsy_variations",
         "select=sku,prix&sku=not.is.null&prix=not.is.null&is_enabled=eq.true")
-    wizi_prix = select("produits", "select=sku,prix_vente_ht&prix_vente_ht=not.is.null")
+    wizi_prix = select("produits", "select=sku,nom,prix_vente_ht&prix_vente_ht=not.is.null")
 
     if etsy_prix and wizi_prix:
         # Garder le prix max par SKU Etsy (en cas de plusieurs variations)
@@ -1527,24 +1474,45 @@ elif page == "🔍 Vérification Etsy":
             if sku and prix > 0:
                 etsy_prix_map[sku] = max(etsy_prix_map.get(sku, 0), prix)
 
-        wizi_prix_map = {}
+        wizi_prix_map = {}   # sku → {"nom": ..., "ht": ..., "ttc": ...}
         for r in wizi_prix:
             sku = r.get("sku") or ""
             prix_ht = float(r.get("prix_vente_ht") or 0)
             if sku and prix_ht > 0:
-                wizi_prix_map[sku] = round(prix_ht * 1.2, 2)  # HT → TTC pour comparaison
+                wizi_prix_map[sku] = {
+                    "nom": r.get("nom") or "",
+                    "ht": prix_ht,
+                    "ttc": round(prix_ht * 1.2, 2),
+                }
+
+        # DEBUG — 5 SKUs en commun pour vérifier la cohérence des valeurs
+        skus_communs = [s for s in etsy_prix_map if s in wizi_prix_map][:5]
+        if skus_communs:
+            debug_rows = []
+            for s in skus_communs:
+                w = wizi_prix_map[s]
+                debug_rows.append({
+                    "SKU": s,
+                    "Prix Etsy (€)": etsy_prix_map[s],
+                    "prix_vente_ht brut": w["ht"],
+                    "prix_vente_ht × 1.2": w["ttc"],
+                })
+            with st.expander("🔍 DEBUG — 5 SKUs pour vérifier le calcul TTC"):
+                st.dataframe(pd.DataFrame(debug_rows), hide_index=True)
 
         rows_ecart = []
         for sku, prix_etsy in etsy_prix_map.items():
-            prix_wizi = wizi_prix_map.get(sku)
-            if not prix_wizi:
+            wizi = wizi_prix_map.get(sku)
+            if not wizi:
                 continue
-            ecart_pct = (prix_etsy - prix_wizi) / prix_wizi * 100
+            prix_wizi_ttc = wizi["ttc"]
+            ecart_pct = (prix_etsy - prix_wizi_ttc) / prix_wizi_ttc * 100
             if abs(ecart_pct) > 2:
                 rows_ecart.append({
                     "SKU": sku,
+                    "Produit": wizi["nom"],
                     "Prix Etsy (€)": round(prix_etsy, 2),
-                    "Prix Wizishop TTC (€)": round(prix_wizi, 2),
+                    "Prix Wizishop TTC (€)": prix_wizi_ttc,
                     "Écart (%)": round(ecart_pct, 1),
                 })
 
