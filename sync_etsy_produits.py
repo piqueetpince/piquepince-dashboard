@@ -106,7 +106,7 @@ def sync_produits_etsy(shop_id):
                 stock_wizishop = sku_stock_map.get(sku, 0)
                 alerte = data["is_enabled"] and stock_wizishop == 0
 
-                upsert("produits_etsy_variations", [{
+                _payload = [{
                     "listing_id": listing_id,
                     "sku": sku,
                     "prix": data["prix"],
@@ -115,7 +115,10 @@ def sync_produits_etsy(shop_id):
                     "variation_valeur": data["variation_valeur"],
                     "stock_wizishop": stock_wizishop,
                     "alerte_stock": alerte,
-                }], "listing_id,sku")
+                }]
+                _ok = upsert("produits_etsy_variations", _payload, "listing_id,sku")
+                if not _ok:
+                    st.write("DEBUG payload échoué :", _payload)
                 total_variations += 1
 
             time.sleep(0.1)
