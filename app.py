@@ -2573,6 +2573,12 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
         df_ff = df_ff.sort_values(["Alerte", "Ventes/mois"], ascending=[True, False])
         st.caption(f"{len(df_ff)} produits affichés")
 
+        csv_ff = df_ff[["Alerte", "sku", "Produit", "Fournisseur", "Stock",
+                         "Ventes/mois", "Mois de stock", "Qté à commander"]].to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Exporter CSV", csv_ff,
+                           file_name="reapprovisionnement_foulard_frenchy.csv",
+                           mime="text/csv", key="reap_ff_csv")
+
         # ── Éditeur de commande ───────────────────────────────────────────────
 
         df_edit_ff = df_ff.copy()
