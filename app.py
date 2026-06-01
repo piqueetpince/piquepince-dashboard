@@ -1471,6 +1471,95 @@ elif page == "🔍 Vérification Etsy":
     else:
         st.info("Aucune commande Etsy trouvée.")
 
+    # ── Section 1 : SKUs Etsy absents de Wizishop ────────────────────────────
+    st.divider()
+    st.subheader("⚠️ SKUs Etsy absents de Wizishop")
+
+    etsy_vars = select("produits_etsy_variations",
+        "select=sku,listing_id,variation_valeur&sku=not.is.null")
+    wizi_skus_raw = select("produits", "select=sku")
+
+    if etsy_vars and wizi_skus_raw:
+        wizi_skus_set = {r["sku"] for r in wizi_skus_raw if r.get("sku")}
+
+        # Dédoublonner : une ligne par (sku, listing_id, variation_valeur)
+        vus = set()
+        rows_absents = []
+        for r in etsy_vars:
+            sku = r.get("sku") or ""
+            if not sku or sku in wizi_skus_set:
+                continue
+            key = (sku, r.get("listing_id"), r.get("variation_valeur"))
+            if key not in vus:
+                vus.add(key)
+                rows_absents.append({
+                    "SKU": sku,
+                    "listing_id": r.get("listing_id"),
+                    "variation_valeur": r.get("variation_valeur") or "—",
+                })
+
+        if rows_absents:
+            st.warning(f"{len(rows_absents)} SKU(s) présents sur Etsy mais introuvables dans Wizishop")
+            df_absents = pd.DataFrame(rows_absents).sort_values("SKU")
+            st.dataframe(df_absents, use_container_width=True, hide_index=True)
+            csv_absents = df_absents.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Exporter CSV", csv_absents, "skus_etsy_absents_wizishop.csv",
+                               "text/csv", key="verif_etsy_absents_csv")
+        else:
+            st.success("✅ Tous les SKUs Etsy sont présents dans Wizishop.")
+    else:
+        st.info("Données insuffisantes pour la vérification.")
+
+    # ── Section 2 : Comparaison des prix Etsy vs Wizishop ────────────────────
+    st.divider()
+    st.subheader("💰 Comparaison des prix Etsy vs Wizishop")
+
+    etsy_prix = select("produits_etsy_variations",
+        "select=sku,prix&sku=not.is.null&prix=not.is.null")
+    wizi_prix = select("produits", "select=sku,prix_ttc&prix_ttc=not.is.null")
+
+    if etsy_prix and wizi_prix:
+        # Garder le prix max par SKU Etsy (en cas de plusieurs variations)
+        etsy_prix_map = {}
+        for r in etsy_prix:
+            sku = r.get("sku") or ""
+            prix = float(r.get("prix") or 0)
+            if sku and prix > 0:
+                etsy_prix_map[sku] = max(etsy_prix_map.get(sku, 0), prix)
+
+        wizi_prix_map = {}
+        for r in wizi_prix:
+            sku = r.get("sku") or ""
+            prix = float(r.get("prix_ttc") or 0)
+            if sku and prix > 0:
+                wizi_prix_map[sku] = prix
+
+        rows_ecart = []
+        for sku, prix_etsy in etsy_prix_map.items():
+            prix_wizi = wizi_prix_map.get(sku)
+            if not prix_wizi:
+                continue
+            ecart_pct = (prix_etsy - prix_wizi) / prix_wizi * 100
+            if abs(ecart_pct) > 2:
+                rows_ecart.append({
+                    "SKU": sku,
+                    "Prix Etsy (€)": round(prix_etsy, 2),
+                    "Prix Wizishop (€)": round(prix_wizi, 2),
+                    "Écart (%)": round(ecart_pct, 1),
+                })
+
+        if rows_ecart:
+            df_ecart = pd.DataFrame(rows_ecart).sort_values("Écart (%)", key=abs, ascending=False)
+            st.warning(f"{len(df_ecart)} SKU(s) avec écart de prix > 2% entre Etsy et Wizishop")
+            st.dataframe(df_ecart, use_container_width=True, hide_index=True)
+            csv_ecart = df_ecart.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Exporter CSV", csv_ecart, "ecarts_prix_etsy_wizishop.csv",
+                               "text/csv", key="verif_etsy_prix_csv")
+        else:
+            st.success("✅ Aucun écart de prix significatif (> 2%) entre Etsy et Wizishop.")
+    else:
+        st.info("Données insuffisantes pour la comparaison des prix.")
+
 elif page == "🔎 Produits manquants sur Faire":
     st.subheader("🔎 Produits manquants sur Faire")
 
