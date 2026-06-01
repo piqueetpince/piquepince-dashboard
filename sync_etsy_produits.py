@@ -68,14 +68,13 @@ def sync_produits_etsy(shop_id):
 
         if listing.get("has_variations"):
             products = get_listing_inventory(listing_id)
+
+            # Grouper par SKU : somme des stocks, is_enabled si au moins un offering actif
+            sku_data = {}
             for product in products:
-                sku = product.get("sku")
-                offering = product.get("offerings", [{}])[0] if product.get("offerings") else {}
-                prix_var = offering.get("price", {})
-                divisor_var = prix_var.get("divisor", 100) or 100
-                stock_etsy = offering.get("quantity", 0)
-                # Si le listing est inactif, aucune variation n'est active
-                is_enabled = listing_active and offering.get("is_enabled", False)
+                sku = product.get("sku") or ""
+                if not sku:
+                    continue
 
                 variation_valeur = ""
                 prop_values = product.get("property_values", [])
@@ -85,20 +84,38 @@ def sync_produits_etsy(shop_id):
                         for v in pv.get("values", [])
                     ])
 
-                stock_wizishop = sku_stock_map.get(sku, 0) if sku else 0
-                alerte = is_enabled and stock_wizishop == 0
+                for offering in product.get("offerings", []):
+                    qty = offering.get("quantity", 0)
+                    enabled = listing_active and offering.get("is_enabled", False)
+                    prix_var = offering.get("price", {})
+                    divisor_var = prix_var.get("divisor", 100) or 100
+                    prix_amount = prix_var.get("amount", 0) / divisor_var
+
+                    if sku not in sku_data:
+                        sku_data[sku] = {
+                            "stock": 0,
+                            "is_enabled": False,
+                            "variation_valeur": variation_valeur,
+                            "prix": prix_amount,
+                        }
+                    sku_data[sku]["stock"] += qty
+                    if enabled:
+                        sku_data[sku]["is_enabled"] = True
+
+            for sku, data in sku_data.items():
+                stock_wizishop = sku_stock_map.get(sku, 0)
+                alerte = data["is_enabled"] and stock_wizishop == 0
 
                 upsert("produits_etsy_variations", [{
                     "listing_id": listing_id,
-                    "product_id": product.get("product_id"),
                     "sku": sku,
-                    "prix": prix_var.get("amount", 0) / divisor_var,
-                    "stock_etsy": stock_etsy,
-                    "is_enabled": is_enabled,
-                    "variation_valeur": variation_valeur,
+                    "prix": data["prix"],
+                    "stock_etsy": data["stock"],
+                    "is_enabled": data["is_enabled"],
+                    "variation_valeur": data["variation_valeur"],
                     "stock_wizishop": stock_wizishop,
-                    "alerte_stock": alerte
-                }], "product_id")
+                    "alerte_stock": alerte,
+                }], "listing_id,sku")
                 total_variations += 1
 
             time.sleep(0.1)
@@ -111,15 +128,14 @@ def sync_produits_etsy(shop_id):
 
                 upsert("produits_etsy_variations", [{
                     "listing_id": listing_id,
-                    "product_id": listing_id,
                     "sku": sku,
                     "prix": prix.get("amount", 0) / divisor,
                     "stock_etsy": listing.get("quantity", 0),
                     "is_enabled": is_enabled,
                     "variation_valeur": "—",
                     "stock_wizishop": stock_wizishop,
-                    "alerte_stock": alerte
-                }], "product_id")
+                    "alerte_stock": alerte,
+                }], "listing_id,sku")
                 total_variations += 1
 
     return total_listings, total_variations
