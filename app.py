@@ -1120,6 +1120,7 @@ elif page == "📊 Gestion stock Etsy":
         nb_mois = st.slider("Période ventes (mois)", min_value=1, max_value=12, value=3)
         seuil_jours = st.slider("Seuil alerte jours de stock", min_value=7, max_value=90, value=30)
         seuil_ecart_jours = st.slider("Seuil écart significatif (jours)", min_value=5, max_value=60, value=15)
+        seuil_etsy_jours = st.slider("Seuil stock Etsy (jours)", min_value=7, max_value=30, value=15)
         alerte_filtre = st.selectbox("Filtre alerte", [
             "Toutes", "🔴 Urgent uniquement", "🔴 + 🟡 Attention", "⚪ Info uniquement"
         ])
@@ -1175,6 +1176,7 @@ elif page == "📊 Gestion stock Etsy":
             v_total = round(total_ventes / nb_mois, 1)
             ventes_par_jour = v_total / 30
             jours_stock = round(stock_wizi / ventes_par_jour) if ventes_par_jour > 0 else 999
+            jours_stock_etsy = round(stock_etsy / ventes_par_jour) if ventes_par_jour > 0 else 999
 
             if not is_enabled:
                 # Tableau séparé : inactifs avec stock Etsy supérieur au stock Wizishop
@@ -1198,7 +1200,8 @@ elif page == "📊 Gestion stock Etsy":
                 alerte = "🔴 URGENT"
                 priorite = 1
             elif (stock_etsy > stock_wizi and v_total > 0) or (
-                    ventes_par_jour > 0 and ecart > 0 and (ecart / ventes_par_jour) > seuil_ecart_jours):
+                    ventes_par_jour > 0 and ecart > 0 and (ecart / ventes_par_jour) > seuil_ecart_jours) or (
+                    stock_etsy > 0 and jours_stock_etsy < seuil_etsy_jours):
                 alerte = "🟡 ATTENTION"
                 priorite = 2
             elif stock_etsy > stock_wizi and v_total == 0:
@@ -1218,7 +1221,8 @@ elif page == "📊 Gestion stock Etsy":
                 "Ventes/mois Wizi": v_wizi,
                 "Ventes/mois Etsy": v_etsy,
                 "Ventes/mois Total": v_total,
-                "Jours de stock": jours_stock,
+                "Jours stock Wizi": jours_stock,
+                "Jours stock Etsy": jours_stock_etsy if jours_stock_etsy < 999 else "—",
                 "Alerte": alerte,
                 "_priorite": priorite
             })
