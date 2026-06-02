@@ -1416,7 +1416,7 @@ elif page == "🔍 Vérification Wizishop":
         st.info("Aucune commande Wizishop trouvée.")
 
 elif page == "📈 Évolution CA annuelle":
-    st.subheader("📈 Évolution CA HT Wizishop — 2025 vs 2026")
+    st.subheader("📈 Évolution CA HT Wizishop + Etsy — 2025 vs 2026")
 
     import plotly.graph_objects as go
     from datetime import date
@@ -1425,19 +1425,21 @@ elif page == "📈 Évolution CA annuelle":
                    "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
 
     @st.cache_data(ttl=600)
-    def _ca_annuel_wizishop():
+    def _ca_annuel_multi():
         rows = select("commandes",
-            "select=date_commande,montant_ht"
-            "&source=eq.wizishop"
+            "select=date_commande,montant_ht,source"
+            "&source=in.(wizishop,etsy)"
             "&statut_code=not.in.(0,45,46,50)"
             "&date_commande=gte.2025-01-01"
             "&montant_ht=not.is.null")
         return rows or []
 
-    rows = _ca_annuel_wizishop()
+    rows = _ca_annuel_multi()
 
-    ca_2025 = [0.0] * 12
-    ca_2026 = [0.0] * 12
+    wizi_2025 = [0.0] * 12
+    wizi_2026 = [0.0] * 12
+    etsy_2025 = [0.0] * 12
+    etsy_2026 = [0.0] * 12
 
     for r in rows:
         d = r.get("date_commande", "")
@@ -1449,16 +1451,24 @@ elif page == "📈 Évolution CA annuelle":
             continue
         mois_idx = dt.month - 1
         montant = float(r.get("montant_ht") or 0)
+        source = r.get("source", "")
         if dt.year == 2025:
-            ca_2025[mois_idx] += montant
+            if source == "wizishop":
+                wizi_2025[mois_idx] += montant
+            elif source == "etsy":
+                etsy_2025[mois_idx] += montant
         elif dt.year == 2026:
-            ca_2026[mois_idx] += montant
+            if source == "wizishop":
+                wizi_2026[mois_idx] += montant
+            elif source == "etsy":
+                etsy_2026[mois_idx] += montant
 
-    mois_courant = date.today().month  # dernier mois comparable (inclus)
-    total_2025_comp = sum(ca_2025[:mois_courant])
-    total_2026_comp = sum(ca_2026[:mois_courant])
-    total_2025_full = sum(ca_2025)
-    total_2026_full = sum(ca_2026)
+    total_2025 = [w + e for w, e in zip(wizi_2025, etsy_2025)]
+    total_2026 = [w + e for w, e in zip(wizi_2026, etsy_2026)]
+
+    mois_courant = date.today().month
+    total_2025_comp = sum(total_2025[:mois_courant])
+    total_2026_comp = sum(total_2026[:mois_courant])
 
     if total_2025_comp > 0:
         evol_pct = (total_2026_comp - total_2025_comp) / total_2025_comp * 100
@@ -1469,8 +1479,8 @@ elif page == "📈 Évolution CA annuelle":
         evol_color = "off"
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("CA HT 2025 (total)", f"{total_2025_full:,.0f} €".replace(",", " "))
-    col2.metric("CA HT 2026 (total)", f"{total_2026_full:,.0f} €".replace(",", " "))
+    col1.metric("CA HT total 2025", f"{sum(total_2025):,.0f} €".replace(",", " "))
+    col2.metric("CA HT total 2026", f"{sum(total_2026):,.0f} €".replace(",", " "))
     col3.metric(
         f"Évolution (jan–{MOIS_LABELS[mois_courant - 1]})",
         evol_str,
@@ -1480,23 +1490,37 @@ elif page == "📈 Évolution CA annuelle":
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        name="2025",
+        name="Wizishop 2025",
         x=MOIS_LABELS,
-        y=ca_2025,
+        y=wizi_2025,
         marker_color="#4C78A8",
-        text=[f"{v:,.0f} €".replace(",", " ") if v > 0 else "" for v in ca_2025],
-        textposition="outside",
+        offsetgroup="2025",
     ))
     fig.add_trace(go.Bar(
-        name="2026",
+        name="Etsy 2025",
         x=MOIS_LABELS,
-        y=ca_2026,
+        y=etsy_2025,
+        marker_color="#72B7B2",
+        offsetgroup="2025",
+        base=wizi_2025,
+    ))
+    fig.add_trace(go.Bar(
+        name="Wizishop 2026",
+        x=MOIS_LABELS,
+        y=wizi_2026,
         marker_color="#F58518",
-        text=[f"{v:,.0f} €".replace(",", " ") if v > 0 else "" for v in ca_2026],
-        textposition="outside",
+        offsetgroup="2026",
+    ))
+    fig.add_trace(go.Bar(
+        name="Etsy 2026",
+        x=MOIS_LABELS,
+        y=etsy_2026,
+        marker_color="#FFBF79",
+        offsetgroup="2026",
+        base=wizi_2026,
     ))
     fig.update_layout(
-        barmode="group",
+        barmode="stack",
         xaxis_title="Mois",
         yaxis_title="CA HT (€)",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
