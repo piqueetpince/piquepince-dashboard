@@ -1610,12 +1610,21 @@ elif page == "🎨 Meilleures variations":
         if vn:
             catalogue_dispo.setdefault(vn, set()).add(r["sku"])
 
+    # ── DEBUG temporaire ─────────────────────────────────────────────────────
+    st.write("🔍 DEBUG catalogue_dispo :", len(catalogue_dispo), "variations")
+    st.write("🔍 Exemples clés catalogue :", list(catalogue_dispo.keys())[:5])
+
     cmds = _load_cmds_var(date_limite_var)
     if not cmds:
         st.info("Aucune commande trouvée pour cette période.")
     else:
         ids_t = tuple(str(c["id_wizi"]) for c in cmds)
         lignes = _load_lignes_var(ids_t)
+
+        st.write("🔍 Lignes chargées :", len(lignes))
+        st.write("🔍 Exemples sku_variation :", [l.get("sku_variation") for l in lignes[:5]])
+        nb_avec_var = sum(1 for l in lignes if _variation_name(l.get("sku_variation")) is not None)
+        st.write("🔍 Lignes avec variation extraite :", nb_avec_var, "/", len(lignes))
 
         if not lignes:
             st.info("Aucune ligne de commande trouvée.")
