@@ -1485,21 +1485,6 @@ elif page == "🔍 Vérification Etsy":
                     "ttc": round(prix_ht * 1.2, 2),
                 }
 
-        # DEBUG — 5 SKUs en commun pour vérifier la cohérence des valeurs
-        skus_communs = [s for s in etsy_prix_map if s in wizi_prix_map][:5]
-        if skus_communs:
-            debug_rows = []
-            for s in skus_communs:
-                w = wizi_prix_map[s]
-                debug_rows.append({
-                    "SKU": s,
-                    "Prix Etsy (€)": etsy_prix_map[s],
-                    "prix_vente_ht brut": w["ht"],
-                    "prix_vente_ht × 1.2": w["ttc"],
-                })
-            with st.expander("🔍 DEBUG — 5 SKUs pour vérifier le calcul TTC"):
-                st.dataframe(pd.DataFrame(debug_rows), hide_index=True)
-
         rows_ecart = []
         for sku, prix_etsy in etsy_prix_map.items():
             wizi = wizi_prix_map.get(sku)
