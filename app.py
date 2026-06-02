@@ -167,7 +167,8 @@ st.title("Pique&Pince — Dashboard ventes")
 _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
-                         "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop"],
+                         "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
+                         "📈 Évolution CA annuelle"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
@@ -1413,6 +1414,99 @@ elif page == "🔍 Vérification Wizishop":
             st.info("Aucune ligne de commande trouvée.")
     else:
         st.info("Aucune commande Wizishop trouvée.")
+
+elif page == "📈 Évolution CA annuelle":
+    st.subheader("📈 Évolution CA HT Wizishop — 2025 vs 2026")
+
+    import plotly.graph_objects as go
+    from datetime import date
+
+    MOIS_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun",
+                   "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
+
+    @st.cache_data(ttl=600)
+    def _ca_annuel_wizishop():
+        rows = select("commandes",
+            "select=date_commande,montant_ht"
+            "&source=eq.wizishop"
+            "&statut_code=not.in.(0,45,50)"
+            "&date_commande=gte.2025-01-01"
+            "&montant_ht=not.is.null")
+        return rows or []
+
+    rows = _ca_annuel_wizishop()
+
+    ca_2025 = [0.0] * 12
+    ca_2026 = [0.0] * 12
+
+    for r in rows:
+        d = r.get("date_commande", "")
+        if not d:
+            continue
+        try:
+            dt = pd.Timestamp(d)
+        except Exception:
+            continue
+        mois_idx = dt.month - 1
+        montant = float(r.get("montant_ht") or 0)
+        if dt.year == 2025:
+            ca_2025[mois_idx] += montant
+        elif dt.year == 2026:
+            ca_2026[mois_idx] += montant
+
+    mois_courant = date.today().month  # dernier mois comparable (inclus)
+    total_2025_comp = sum(ca_2025[:mois_courant])
+    total_2026_comp = sum(ca_2026[:mois_courant])
+    total_2025_full = sum(ca_2025)
+    total_2026_full = sum(ca_2026)
+
+    if total_2025_comp > 0:
+        evol_pct = (total_2026_comp - total_2025_comp) / total_2025_comp * 100
+        evol_str = f"{evol_pct:+.1f}%"
+        evol_color = "normal" if evol_pct >= 0 else "inverse"
+    else:
+        evol_str = "—"
+        evol_color = "off"
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("CA HT 2025 (total)", f"{total_2025_full:,.0f} €".replace(",", " "))
+    col2.metric("CA HT 2026 (total)", f"{total_2026_full:,.0f} €".replace(",", " "))
+    col3.metric(
+        f"Évolution (jan–{MOIS_LABELS[mois_courant - 1]})",
+        evol_str,
+        delta=evol_str if evol_str != "—" else None,
+        delta_color=evol_color,
+    )
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="2025",
+        x=MOIS_LABELS,
+        y=ca_2025,
+        marker_color="#4C78A8",
+        text=[f"{v:,.0f} €".replace(",", " ") if v > 0 else "" for v in ca_2025],
+        textposition="outside",
+    ))
+    fig.add_trace(go.Bar(
+        name="2026",
+        x=MOIS_LABELS,
+        y=ca_2026,
+        marker_color="#F58518",
+        text=[f"{v:,.0f} €".replace(",", " ") if v > 0 else "" for v in ca_2026],
+        textposition="outside",
+    ))
+    fig.update_layout(
+        barmode="group",
+        xaxis_title="Mois",
+        yaxis_title="CA HT (€)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis=dict(tickformat=",.0f", ticksuffix=" €"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        margin=dict(t=40, b=40),
+        height=480,
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 elif page == "🔍 Vérification Etsy":
     st.subheader("🔍 Vérification Etsy")
