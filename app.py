@@ -1596,31 +1596,25 @@ elif page == "🎨 Meilleures variations":
         return select("produits_etsy_variations",
             "select=sku,variation_valeur&sku=not.is.null&is_enabled=eq.true") or []
 
-    def _norm_variation(val):
-        """Normalise un libellé : majuscules, première partie avant /."""
-        if not val:
-            return None
-        part = str(val).split("/")[0].strip().upper()
-        return part if part and part != "—" else None
-
-    def _variation_from_sku(sku_var):
-        """Extrait le coloris depuis un SKU Wizishop (ex: BAR060GRES -> GRES)."""
-        if not sku_var:
-            return None
-        m = _re.search(r'\d+([A-Z]{2,})$', str(sku_var).strip().upper())
-        return m.group(1) if m else None
+    def _extract_variation(libelle, sku_var):
+        """libelle_variation en priorité, fallback regex sur sku_variation."""
+        if libelle:
+            part = str(libelle).split("/")[0].strip().upper()
+            if part and part != "—":
+                return part
+        if sku_var:
+            m = _re.search(r'\d+([A-Z]{2,})$', str(sku_var).strip().upper())
+            if m:
+                return m.group(1)
+        return None
 
     _etsy_cat = _load_catalogue_var()
     # Catalogue : variation -> set de SKUs disponibles (produits_etsy_variations)
     catalogue_dispo = {}
     for r in _etsy_cat:
-        vn = _norm_variation(r.get("variation_valeur"))
+        vn = _extract_variation(r.get("variation_valeur"), r.get("sku"))
         if vn:
             catalogue_dispo.setdefault(vn, set()).add(r["sku"])
-
-    # ── DEBUG temporaire ─────────────────────────────────────────────────────
-    st.write("🔍 DEBUG catalogue_dispo :", len(catalogue_dispo), "variations")
-    st.write("🔍 Exemples clés catalogue :", list(catalogue_dispo.keys())[:5])
 
     cmds = _load_cmds_var(date_limite_var)
     if not cmds:
@@ -1629,23 +1623,12 @@ elif page == "🎨 Meilleures variations":
         ids_t = tuple(str(c["id_wizi"]) for c in cmds)
         lignes = _load_lignes_var(ids_t)
 
-        st.write("🔍 Lignes chargées :", len(lignes))
-        st.write("🔍 Exemples sku_variation :", [l.get("sku_variation") for l in lignes[:5]])
-        nb_avec_var = sum(1 for l in lignes
-            if (_norm_variation(l.get("libelle_variation")) if l.get("source") == "etsy"
-                else _variation_from_sku(l.get("sku_variation"))) is not None)
-        st.write("🔍 Lignes avec variation extraite :", nb_avec_var, "/", len(lignes))
-
         if not lignes:
             st.info("Aucune ligne de commande trouvée.")
         else:
             agg = {}
             for l in lignes:
-                src = l.get("source", "")
-                if src == "etsy":
-                    var = _norm_variation(l.get("libelle_variation"))
-                else:
-                    var = _variation_from_sku(l.get("sku_variation"))
+                var = _extract_variation(l.get("libelle_variation"), l.get("sku_variation"))
                 if not var:
                     continue
                 qty = int(l.get("quantite") or 0)
