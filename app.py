@@ -1611,14 +1611,19 @@ elif page == "🎨 Meilleures variations":
         return select("produits_etsy_variations",
             "select=sku,variation_valeur&sku=not.is.null&is_enabled=eq.true") or []
 
+    import unicodedata as _ud
+
+    def _strip_accents(s):
+        return _ud.normalize("NFD", s).encode("ascii", "ignore").decode("ascii")
+
     def _extract_variation(libelle, sku_var):
         """libelle_variation en priorité, fallback regex sur sku_variation."""
         if libelle:
-            part = str(libelle).split("/")[0].strip().upper()
+            part = _strip_accents(str(libelle).split("/")[0].strip()).upper()
             if part and part != "—":
                 return part
         if sku_var:
-            m = _re.search(r'\d+([A-Z]{2,})$', str(sku_var).strip().upper())
+            m = _re.search(r'\d+([A-Z]{2,})$', _strip_accents(str(sku_var).strip()).upper())
             if m:
                 return m.group(1)
         return None
