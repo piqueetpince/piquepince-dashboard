@@ -1588,34 +1588,25 @@ elif page == "🎨 Meilleures variations":
                 all_lignes.extend(rows)
         return all_lignes
 
+    _FOURNISSEURS_VAR = "BAVOUX,DELORME,Navarro,NPC,VEINIERE"
+
     @st.cache_data(ttl=600)
     def _load_catalogue_var():
-        etsy = select("produits_etsy_variations",
-            "select=sku,variation_valeur&sku=not.is.null&is_enabled=eq.true") or []
-        wizi = select("skus", "select=sku&statut=eq.visible") or []
-        return etsy, wizi
+        return select("produits",
+            f"select=sku&statut=eq.visible&fournisseur=in.({_FOURNISSEURS_VAR})") or []
 
-    def _variation_name(libelle, sku_var):
-        if libelle and libelle.strip() not in ("", "—"):
-            return libelle.strip().upper()
+    def _variation_name(sku_var):
         if sku_var:
             s = str(sku_var).strip()
             if "/" in s:
                 return s.rsplit("/", 1)[-1].strip().upper()
-            if "_" in s:
-                return s.rsplit("_", 1)[-1].strip().upper()
-            return s.upper()
         return None
 
-    _etsy_cat, _wizi_cat = _load_catalogue_var()
-    # Catalogue : variation -> set de SKUs disponibles
+    _wizi_produits = _load_catalogue_var()
+    # Catalogue : variation -> set de SKUs disponibles (produits Wizishop filtrés)
     catalogue_dispo = {}
-    for r in _etsy_cat:
-        vn = _variation_name(r.get("variation_valeur"), r.get("sku"))
-        if vn:
-            catalogue_dispo.setdefault(vn, set()).add(r["sku"])
-    for r in _wizi_cat:
-        vn = _variation_name(None, r.get("sku"))
+    for r in _wizi_produits:
+        vn = _variation_name(r.get("sku"))
         if vn:
             catalogue_dispo.setdefault(vn, set()).add(r["sku"])
 
@@ -1631,11 +1622,11 @@ elif page == "🎨 Meilleures variations":
         else:
             agg = {}
             for l in lignes:
-                var = _variation_name(l.get("libelle_variation"), l.get("sku_variation"))
+                var = _variation_name(l.get("sku_variation"))
                 if not var:
                     continue
                 qty = int(l.get("quantite") or 0)
-                sku = l.get("sku_variation") or l.get("sku") or ""
+                sku = l.get("sku_variation") or ""
                 ca = float(l.get("prix_unitaire_ttc") or 0) * qty
                 if var not in agg:
                     agg[var] = {"unites": 0, "skus": set(), "ca": 0.0}
