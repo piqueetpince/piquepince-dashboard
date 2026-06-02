@@ -1639,6 +1639,24 @@ elif page == "🎨 Meilleures variations":
         if vn:
             catalogue_dispo.setdefault(vn, set()).add(r["sku"])
 
+    # --- DEBUG MER DU SUD ---
+    with st.expander("🐛 Debug — MER DU SUD", expanded=True):
+        st.write(f"**1. variant_skus (fournisseurs filtrés) :** {len(_valid_variant_skus)} SKUs")
+        _mer_all = [
+            r for r in _etsy_cat
+            if "MER" in _strip_accents(str(r.get("variation_valeur") or "")).upper()
+            or "SUD" in _strip_accents(str(r.get("variation_valeur") or "")).upper()
+        ]
+        st.write(f"**2. Lignes produits_etsy_variations avec 'MER' ou 'SUD' :** {len(_mer_all)}")
+        for _r in _mer_all[:10]:
+            st.write(f"  → SKU: `{_r.get('sku')}` | variation_valeur: `{_r.get('variation_valeur')}`")
+        _mer_ok = [_r for _r in _mer_all if not _valid_variant_skus or _r.get("sku") in _valid_variant_skus]
+        st.write(f"**3. Après filtre sku in variant_skus :** {len(_mer_ok)}")
+        for _r in _mer_ok[:10]:
+            _vn = _extract_variation(_r.get("variation_valeur"), _r.get("sku"))
+            st.write(f"  → SKU: `{_r.get('sku')}` | variation_valeur: `{_r.get('variation_valeur')}` | extrait: `{_vn}`")
+    # --- FIN DEBUG ---
+
     cmds = _load_cmds_var(date_limite_var)
     if not cmds:
         st.info("Aucune commande trouvée pour cette période.")
