@@ -1550,6 +1550,7 @@ elif page == "🎨 Meilleures variations":
 
     import plotly.graph_objects as go
     from datetime import date as _date
+    import re as _re
 
     with st.sidebar:
         st.divider()
@@ -1596,11 +1597,10 @@ elif page == "🎨 Meilleures variations":
             f"select=sku&statut=eq.visible&fournisseur=in.({_FOURNISSEURS_VAR})") or []
 
     def _variation_name(sku_var):
-        if sku_var:
-            s = str(sku_var).strip()
-            if "/" in s:
-                return s.rsplit("/", 1)[-1].strip().upper()
-        return None
+        if not sku_var:
+            return None
+        m = _re.search(r'\d+([A-Z]{2,})$', str(sku_var).strip().upper())
+        return m.group(1) if m else None
 
     _wizi_produits = _load_catalogue_var()
     # Catalogue : variation -> set de SKUs disponibles (produits Wizishop filtrés)
