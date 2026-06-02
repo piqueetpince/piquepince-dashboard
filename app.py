@@ -1592,6 +1592,21 @@ elif page == "🎨 Meilleures variations":
     _FOURNISSEURS_VAR = "BAVOUX,DELORME,Navarro,NPC,VEINIERE"
 
     @st.cache_data(ttl=600)
+    def _load_skus_fournisseurs():
+        """Charge les SKUs parents + variants pour les fournisseurs autorisés."""
+        produits_f = select("produits",
+            f"select=sku,id_wizi&statut=eq.visible&fournisseur=in.({_FOURNISSEURS_VAR})") or []
+        parent_skus = {p["sku"] for p in produits_f if p.get("sku")}
+        variant_skus = set()
+        if produits_f:
+            prod_ids = ",".join(str(p["id_wizi"]) for p in produits_f if p.get("id_wizi"))
+            if prod_ids:
+                variants = select("skus",
+                    f"select=sku&statut=eq.visible&id_produit_parent=in.({prod_ids})") or []
+                variant_skus = {v["sku"] for v in variants if v.get("sku")}
+        return parent_skus, variant_skus
+
+    @st.cache_data(ttl=600)
     def _load_catalogue_var():
         return select("produits_etsy_variations",
             "select=sku,variation_valeur&sku=not.is.null&is_enabled=eq.true") or []
@@ -1608,10 +1623,13 @@ elif page == "🎨 Meilleures variations":
                 return m.group(1)
         return None
 
+    _valid_parent_skus, _valid_variant_skus = _load_skus_fournisseurs()
     _etsy_cat = _load_catalogue_var()
-    # Catalogue : variation -> set de SKUs disponibles (produits_etsy_variations)
+    # Catalogue : variation -> set de SKUs dispo, filtré par fournisseurs autorisés
     catalogue_dispo = {}
     for r in _etsy_cat:
+        if _valid_variant_skus and r.get("sku") not in _valid_variant_skus:
+            continue
         vn = _extract_variation(r.get("variation_valeur"), r.get("sku"))
         if vn:
             catalogue_dispo.setdefault(vn, set()).add(r["sku"])
@@ -1628,6 +1646,13 @@ elif page == "🎨 Meilleures variations":
         else:
             agg = {}
             for l in lignes:
+                # Filtre fournisseur
+                if _valid_parent_skus or _valid_variant_skus:
+                    src_l = l.get("source", "")
+                    if src_l == "wizishop" and (l.get("sku") or "") not in _valid_parent_skus:
+                        continue
+                    if src_l == "etsy" and (l.get("sku") or "") not in _valid_variant_skus:
+                        continue
                 var = _extract_variation(l.get("libelle_variation"), l.get("sku_variation"))
                 if not var:
                     continue
