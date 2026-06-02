@@ -1776,48 +1776,43 @@ elif page == "🎨 Meilleures variations":
                     agg_sans[sku]["unites"] += qty
                     agg_sans[sku]["ca"] += ca
 
-                df_sans = pd.DataFrame([
-                    {"SKU": sku, "Nom produit": d["nom"],
-                     "Unités vendues": d["unites"], "CA TTC (€)": round(d["ca"], 2),
-                     "Variation à attribuer": ""}
-                    for sku, d in sorted(agg_sans.items(), key=lambda x: -x[1]["unites"])
-                ])
+                rows_sans = sorted(agg_sans.items(), key=lambda x: -x[1]["unites"])
 
-                edited_sans = st.data_editor(
-                    df_sans,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "SKU": st.column_config.TextColumn(disabled=True),
-                        "Nom produit": st.column_config.TextColumn(disabled=True),
-                        "Unités vendues": st.column_config.NumberColumn(format="%d", disabled=True),
-                        "CA TTC (€)": st.column_config.NumberColumn(format="%.2f €", disabled=True),
-                        "Variation à attribuer": st.column_config.TextColumn(
-                            help="Saisir le coloris (ex: VISON, NOIR, ECRU...)",
-                        ),
-                    },
-                    key="editor_sans_variation",
-                )
+                h1, h2, h3, h4, h5, h6 = st.columns([2, 4, 1, 2, 2, 1])
+                h1.markdown("**SKU**")
+                h2.markdown("**Nom produit**")
+                h3.markdown("**Unités**")
+                h4.markdown("**CA TTC**")
+                h5.markdown("**Variation à attribuer**")
 
-                if st.button("💾 Enregistrer les variations", key="btn_save_sans_var"):
-                    nb_ok = nb_err = 0
-                    for _, row in edited_sans.iterrows():
-                        variation = str(row.get("Variation à attribuer") or "").strip().upper()
-                        if not variation:
-                            continue
-                        sku = row["SKU"]
-                        ok = update("lignes_commande",
-                            f"sku=eq.{sku}&libelle_variation=is.null&source=in.(wizishop,etsy)",
-                            {"libelle_variation": variation})
-                        if ok:
-                            nb_ok += 1
-                        else:
-                            nb_err += 1
-                    if nb_ok:
-                        st.success(f"✓ {nb_ok} SKU(s) mis à jour.")
-                        st.cache_data.clear()
-                    if nb_err:
-                        st.error(f"{nb_err} erreur(s) lors de la mise à jour.")
+                for sku, d in rows_sans:
+                    with st.form(key=f"form_var_{sku}", border=False):
+                        c1, c2, c3, c4, c5, c6 = st.columns([2, 4, 1, 2, 2, 1])
+                        c1.write(sku)
+                        c2.write(d["nom"])
+                        c3.write(str(d["unites"]))
+                        c4.write(f"{d['ca']:.2f} €")
+                        variation_input = c5.text_input(
+                            "Variation",
+                            label_visibility="collapsed",
+                            placeholder="ex: VISON, NOIR...",
+                        )
+                        submitted = c6.form_submit_button("💾")
+                        if submitted:
+                            variation = variation_input.strip().upper()
+                            if variation:
+                                ok = update(
+                                    "lignes_commande",
+                                    f"sku=eq.{sku}&libelle_variation=is.null&source=in.(wizishop,etsy)",
+                                    {"libelle_variation": variation},
+                                )
+                                if ok:
+                                    st.success(f"✓ {sku} → {variation}")
+                                    st.cache_data.clear()
+                                else:
+                                    st.error(f"Erreur pour {sku}.")
+                            else:
+                                st.warning("Saisir une variation avant d'enregistrer.")
 
 elif page == "🔍 Vérification Etsy":
     st.subheader("🔍 Vérification Etsy")
