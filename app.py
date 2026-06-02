@@ -170,7 +170,7 @@ _NAV_GROUPES = {
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
-    "🛒 Faire":         ["🔍 Vérification Faire", "📒 Réconciliation Faire",
+    "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
                          "✏️ Correction SKUs Faire", "🔗 Mapping SKUs Faire",
                          "💰 Vérification prix Faire", "🔧 Correction lignes commandes Faire"],
@@ -2296,6 +2296,99 @@ elif page == "📊 Gestion stock Faire":
         st.download_button("📥 Télécharger en CSV", csv, "gestion_stock_faire.csv", "text/csv")
     else:
         st.info("Aucune donnée. Lance d'abord la sync 8️⃣ Produits Faire.")
+
+elif page == "⭐ Best-sellers Faire":
+    with st.sidebar:
+        st.divider()
+        periode_faire = st.selectbox("Période", ["3 mois", "6 mois", "12 mois", "Tout"],
+                                     key="bs_faire_periode")
+
+    st.subheader("⭐ Best-sellers Faire")
+
+    if periode_faire == "Tout":
+        query_cmds_faire = "select=id_faire&source=eq.faire&statut_code=not.eq.50"
+        nb_mois_faire = None
+    else:
+        nb_mois_faire = int(periode_faire.split()[0])
+        date_limite_faire = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_faire)).strftime("%Y-%m-%dT%H:%M:%S")
+        query_cmds_faire = (
+            f"select=id_faire&source=eq.faire&statut_code=not.eq.50"
+            f"&date_commande=gte.{date_limite_faire}"
+        )
+
+    # Catalogue Faire (base du left join)
+    faire_variants = select("produits_faire_variants", "select=sku,nom,id_produit_faire&sku=not.is.null")
+    faire_produits = select("produits_faire", "select=id_faire,nom")
+
+    catalogue_faire = {}
+    if faire_variants:
+        produit_map_faire = {r["id_faire"]: r.get("nom") or "" for r in faire_produits} if faire_produits else {}
+        for r in faire_variants:
+            sku = r.get("sku") or ""
+            if not sku or sku in catalogue_faire:
+                continue
+            nom_variant = r.get("nom") or ""
+            nom_parent = produit_map_faire.get(r.get("id_produit_faire"), "")
+            catalogue_faire[sku] = nom_parent or nom_variant
+
+    cmds_faire = select("commandes", query_cmds_faire)
+
+    # Agréger les ventes par SKU
+    ventes_faire = {}
+    if cmds_faire:
+        ids_str_faire = ",".join(str(c["id_faire"]) for c in cmds_faire if c.get("id_faire"))
+        lignes_faire = select("lignes_commande",
+            f"select=sku,quantite,prix_unitaire_ttc"
+            f"&source=eq.faire&id_commande=in.({ids_str_faire})",
+            limit=50000)
+        if lignes_faire:
+            for l in lignes_faire:
+                sku = l.get("sku") or ""
+                if not sku:
+                    continue
+                qty = l.get("quantite") or 0
+                ca_ht = float(l.get("prix_unitaire_ttc") or 0) / 1.2 * qty
+                if sku not in ventes_faire:
+                    ventes_faire[sku] = {"quantite": 0, "ca_ht": 0.0}
+                ventes_faire[sku]["quantite"] += qty
+                ventes_faire[sku]["ca_ht"] += ca_ht
+
+    if not catalogue_faire:
+        st.info("Aucune donnée catalogue. Lance d'abord la sync Produits Faire.")
+    else:
+        rows_faire = []
+        for sku, nom in catalogue_faire.items():
+            data = ventes_faire.get(sku, {"quantite": 0, "ca_ht": 0.0})
+            v_mois = round(data["quantite"] / nb_mois_faire, 1) if nb_mois_faire else (
+                "—" if data["quantite"] == 0 else data["quantite"])
+            rows_faire.append({
+                "SKU": sku,
+                "Produit": nom or sku,
+                "Unités vendues": data["quantite"],
+                "CA HT (€)": round(data["ca_ht"], 2),
+                "Ventes/mois": v_mois,
+            })
+
+        df_faire = pd.DataFrame(rows_faire).sort_values(
+            ["Unités vendues", "SKU"], ascending=[False, True]
+        )
+
+        total_unites_faire = df_faire["Unités vendues"].sum()
+        total_ca_faire = df_faire["CA HT (€)"].sum()
+        nb_skus_vendus_faire = (df_faire["Unités vendues"] > 0).sum()
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📦 Unités vendues", f"{total_unites_faire:,}")
+        with col2:
+            st.metric("💶 CA HT", f"{total_ca_faire:,.2f} €")
+        with col3:
+            st.metric("🔢 SKUs vendus", f"{nb_skus_vendus_faire} / {len(df_faire)}")
+
+        st.dataframe(df_faire, use_container_width=True, hide_index=True)
+        csv_faire = df_faire.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv_faire, "bestsellers_faire.csv", "text/csv",
+                           key="bs_faire_csv")
 
 elif page == "🔗 Connexion Faire/Shopify":
     st.subheader("🔗 Connexion Faire/Shopify")
