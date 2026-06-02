@@ -166,6 +166,7 @@ st.title("Pique&Pince — Dashboard ventes")
 
 _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble"],
+    "📊 Analytique":    ["🎨 Meilleures variations"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "📈 Évolution CA annuelle"],
@@ -1488,6 +1489,10 @@ elif page == "📈 Évolution CA annuelle":
         delta_color=evol_color,
     )
 
+    _hover_2025 = [[wizi_2025[i], etsy_2025[i], total_2025[i]] for i in range(12)]
+    _hover_2026 = [[wizi_2026[i], etsy_2026[i], total_2026[i]] for i in range(12)]
+    _ht = "<br>Wizishop : %{customdata[0]:,.0f} €<br>Etsy : %{customdata[1]:,.0f} €<br><b>Total : %{customdata[2]:,.0f} €</b><extra></extra>"
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
         name="Wizishop 2025",
@@ -1495,6 +1500,8 @@ elif page == "📈 Évolution CA annuelle":
         y=wizi_2025,
         marker_color="#4C78A8",
         offsetgroup="2025",
+        customdata=_hover_2025,
+        hovertemplate="<b>%{x} 2025</b>" + _ht,
     ))
     fig.add_trace(go.Bar(
         name="Etsy 2025",
@@ -1503,6 +1510,8 @@ elif page == "📈 Évolution CA annuelle":
         marker_color="#72B7B2",
         offsetgroup="2025",
         base=wizi_2025,
+        customdata=_hover_2025,
+        hovertemplate="<b>%{x} 2025</b>" + _ht,
     ))
     fig.add_trace(go.Bar(
         name="Wizishop 2026",
@@ -1510,6 +1519,8 @@ elif page == "📈 Évolution CA annuelle":
         y=wizi_2026,
         marker_color="#F58518",
         offsetgroup="2026",
+        customdata=_hover_2026,
+        hovertemplate="<b>%{x} 2026</b>" + _ht,
     ))
     fig.add_trace(go.Bar(
         name="Etsy 2026",
@@ -1518,6 +1529,8 @@ elif page == "📈 Évolution CA annuelle":
         marker_color="#FFBF79",
         offsetgroup="2026",
         base=wizi_2026,
+        customdata=_hover_2026,
+        hovertemplate="<b>%{x} 2026</b>" + _ht,
     ))
     fig.update_layout(
         barmode="stack",
@@ -1531,6 +1544,186 @@ elif page == "📈 Évolution CA annuelle":
         height=480,
     )
     st.plotly_chart(fig, use_container_width=True)
+
+elif page == "🎨 Meilleures variations":
+    st.subheader("🎨 Meilleures variations — Wizishop + Etsy")
+
+    import plotly.graph_objects as go
+    from datetime import date as _date
+
+    with st.sidebar:
+        st.divider()
+        periodes_var = {"3 mois": 3, "6 mois": 6, "12 mois": 12, "Année complète": 0}
+        periode_label_var = st.selectbox(
+            "Période", list(periodes_var.keys()), index=2, key="sel_periode_variations")
+        nb_mois_var = periodes_var[periode_label_var]
+        tri_var = st.selectbox("Trier par", ["Ratio", "Unités vendues"], key="sel_tri_variations")
+
+    if nb_mois_var == 0:
+        date_limite_var = f"{_date.today().year}-01-01T00:00:00"
+    else:
+        date_limite_var = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_var)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    @st.cache_data(ttl=300)
+    def _load_cmds_var(dl):
+        return select("commandes",
+            f"select=id_wizi"
+            f"&source=in.(wizishop,etsy)"
+            f"&statut_code=not.in.(0,45,46,50)"
+            f"&date_commande=gte.{dl}") or []
+
+    @st.cache_data(ttl=300)
+    def _load_lignes_var(ids_t):
+        if not ids_t:
+            return []
+        all_lignes = []
+        ids_list = list(ids_t)
+        for i in range(0, len(ids_list), 500):
+            batch = ids_list[i:i + 500]
+            rows = select("lignes_commande",
+                f"select=sku,sku_variation,libelle_variation,nom_produit,quantite,prix_unitaire_ttc"
+                f"&id_commande=in.({','.join(batch)})"
+                f"&quantite=gt.0")
+            if rows:
+                all_lignes.extend(rows)
+        return all_lignes
+
+    @st.cache_data(ttl=600)
+    def _load_catalogue_var():
+        etsy = select("produits_etsy_variations",
+            "select=sku,variation_valeur&sku=not.is.null&is_enabled=eq.true") or []
+        wizi = select("skus", "select=sku&statut=eq.visible") or []
+        return etsy, wizi
+
+    def _variation_name(libelle, sku_var):
+        if libelle and libelle.strip() not in ("", "—"):
+            return libelle.strip().upper()
+        if sku_var:
+            s = str(sku_var).strip()
+            if "/" in s:
+                return s.rsplit("/", 1)[-1].strip().upper()
+            if "_" in s:
+                return s.rsplit("_", 1)[-1].strip().upper()
+            return s.upper()
+        return None
+
+    _etsy_cat, _wizi_cat = _load_catalogue_var()
+    # Catalogue : variation -> set de SKUs disponibles
+    catalogue_dispo = {}
+    for r in _etsy_cat:
+        vn = _variation_name(r.get("variation_valeur"), r.get("sku"))
+        if vn:
+            catalogue_dispo.setdefault(vn, set()).add(r["sku"])
+    for r in _wizi_cat:
+        vn = _variation_name(None, r.get("sku"))
+        if vn:
+            catalogue_dispo.setdefault(vn, set()).add(r["sku"])
+
+    cmds = _load_cmds_var(date_limite_var)
+    if not cmds:
+        st.info("Aucune commande trouvée pour cette période.")
+    else:
+        ids_t = tuple(str(c["id_wizi"]) for c in cmds)
+        lignes = _load_lignes_var(ids_t)
+
+        if not lignes:
+            st.info("Aucune ligne de commande trouvée.")
+        else:
+            agg = {}
+            for l in lignes:
+                var = _variation_name(l.get("libelle_variation"), l.get("sku_variation"))
+                if not var:
+                    continue
+                qty = int(l.get("quantite") or 0)
+                sku = l.get("sku_variation") or l.get("sku") or ""
+                ca = float(l.get("prix_unitaire_ttc") or 0) * qty
+                if var not in agg:
+                    agg[var] = {"unites": 0, "skus": set(), "ca": 0.0}
+                agg[var]["unites"] += qty
+                if sku:
+                    agg[var]["skus"].add(sku)
+                agg[var]["ca"] += ca
+
+            if not agg:
+                st.info("Aucune variation identifiable dans les lignes de commande.")
+            else:
+                rows_var = []
+                for v, d in agg.items():
+                    nb_dispo = len(catalogue_dispo.get(v, set()))
+                    ratio = round(d["unites"] / nb_dispo, 1) if nb_dispo > 0 else None
+                    rows_var.append({
+                        "Variation": v,
+                        "Unités vendues": d["unites"],
+                        "Nb produits vendus": len(d["skus"]),
+                        "Nb produits dispo": nb_dispo if nb_dispo > 0 else "—",
+                        "Ratio": ratio,
+                        "CA TTC (€)": round(d["ca"], 2),
+                    })
+
+                sort_col = "Ratio" if tri_var == "Ratio" else "Unités vendues"
+                df_var = pd.DataFrame(rows_var)
+                df_var_sorted = df_var.copy()
+                df_var_sorted["_sort"] = pd.to_numeric(df_var_sorted[sort_col], errors="coerce").fillna(-1)
+                df_var = df_var_sorted.sort_values("_sort", ascending=False).drop(columns="_sort").reset_index(drop=True)
+
+                top1 = df_var.iloc[0]
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Variations distinctes", len(df_var))
+                col2.metric("Variation n°1", top1["Variation"],
+                            delta=f"{int(top1['Unités vendues'])} unités")
+                top1_ratio = top1["Ratio"]
+                col3.metric("Meilleur ratio", f"{top1_ratio}" if top1_ratio is not None else "—")
+
+                chart_col = sort_col
+                top20_chart = df_var.head(20).copy()
+                top20_chart["_x"] = pd.to_numeric(top20_chart[chart_col], errors="coerce").fillna(0)
+                top20 = top20_chart.sort_values("_x", ascending=True)
+                fig_var = go.Figure(go.Bar(
+                    x=top20["_x"],
+                    y=top20["Variation"],
+                    orientation="h",
+                    marker_color="#4C78A8",
+                    text=top20["_x"].round(1),
+                    textposition="outside",
+                    customdata=list(zip(top20["Unités vendues"], top20["Nb produits dispo"], top20["Ratio"])),
+                    hovertemplate=(
+                        "<b>%{y}</b><br>"
+                        "Unités vendues : %{customdata[0]}<br>"
+                        "Nb dispo catalogue : %{customdata[1]}<br>"
+                        "Ratio : %{customdata[2]}<extra></extra>"
+                    ),
+                ))
+                fig_var.update_layout(
+                    xaxis_title=chart_col,
+                    yaxis_title="",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(t=20, b=40, l=150, r=80),
+                    height=max(320, len(top20) * 30 + 80),
+                )
+                st.subheader("🔝 Top 20 variations")
+                st.plotly_chart(fig_var, use_container_width=True)
+
+                st.subheader("📋 Tableau complet")
+                st.dataframe(
+                    df_var[["Variation", "Unités vendues", "Nb produits vendus",
+                             "Nb produits dispo", "Ratio", "CA TTC (€)"]],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "CA TTC (€)": st.column_config.NumberColumn(format="%.2f €"),
+                        "Unités vendues": st.column_config.NumberColumn(format="%d"),
+                        "Nb produits vendus": st.column_config.NumberColumn(format="%d"),
+                        "Ratio": st.column_config.NumberColumn(format="%.1f"),
+                    },
+                )
+                st.download_button(
+                    "📥 Exporter CSV",
+                    df_var.to_csv(index=False).encode("utf-8"),
+                    "meilleures_variations.csv",
+                    "text/csv",
+                    key="dl_variations",
+                )
 
 elif page == "🔍 Vérification Etsy":
     st.subheader("🔍 Vérification Etsy")
