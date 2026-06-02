@@ -1582,7 +1582,7 @@ elif page == "🎨 Meilleures variations":
         for i in range(0, len(ids_list), 500):
             batch = ids_list[i:i + 500]
             rows = select("lignes_commande",
-                f"select=sku,sku_variation,libelle_variation,nom_produit,quantite,prix_unitaire_ttc"
+                f"select=sku,sku_variation,libelle_variation,nom_produit,quantite,prix_unitaire_ttc,source"
                 f"&id_commande=in.({','.join(batch)})"
                 f"&quantite=gt.0")
             if rows:
@@ -1593,20 +1593,28 @@ elif page == "🎨 Meilleures variations":
 
     @st.cache_data(ttl=600)
     def _load_catalogue_var():
-        return select("produits",
-            f"select=sku&statut=eq.visible&fournisseur=in.({_FOURNISSEURS_VAR})") or []
+        return select("produits_etsy_variations",
+            "select=sku,variation_valeur&sku=not.is.null&is_enabled=eq.true") or []
 
-    def _variation_name(sku_var):
+    def _norm_variation(val):
+        """Normalise un libellé : majuscules, première partie avant /."""
+        if not val:
+            return None
+        part = str(val).split("/")[0].strip().upper()
+        return part if part and part != "—" else None
+
+    def _variation_from_sku(sku_var):
+        """Extrait le coloris depuis un SKU Wizishop (ex: BAR060GRES -> GRES)."""
         if not sku_var:
             return None
         m = _re.search(r'\d+([A-Z]{2,})$', str(sku_var).strip().upper())
         return m.group(1) if m else None
 
-    _wizi_produits = _load_catalogue_var()
-    # Catalogue : variation -> set de SKUs disponibles (produits Wizishop filtrés)
+    _etsy_cat = _load_catalogue_var()
+    # Catalogue : variation -> set de SKUs disponibles (produits_etsy_variations)
     catalogue_dispo = {}
-    for r in _wizi_produits:
-        vn = _variation_name(r.get("sku"))
+    for r in _etsy_cat:
+        vn = _norm_variation(r.get("variation_valeur"))
         if vn:
             catalogue_dispo.setdefault(vn, set()).add(r["sku"])
 
@@ -1623,7 +1631,9 @@ elif page == "🎨 Meilleures variations":
 
         st.write("🔍 Lignes chargées :", len(lignes))
         st.write("🔍 Exemples sku_variation :", [l.get("sku_variation") for l in lignes[:5]])
-        nb_avec_var = sum(1 for l in lignes if _variation_name(l.get("sku_variation")) is not None)
+        nb_avec_var = sum(1 for l in lignes
+            if (_norm_variation(l.get("libelle_variation")) if l.get("source") == "etsy"
+                else _variation_from_sku(l.get("sku_variation"))) is not None)
         st.write("🔍 Lignes avec variation extraite :", nb_avec_var, "/", len(lignes))
 
         if not lignes:
@@ -1631,11 +1641,15 @@ elif page == "🎨 Meilleures variations":
         else:
             agg = {}
             for l in lignes:
-                var = _variation_name(l.get("sku_variation"))
+                src = l.get("source", "")
+                if src == "etsy":
+                    var = _norm_variation(l.get("libelle_variation"))
+                else:
+                    var = _variation_from_sku(l.get("sku_variation"))
                 if not var:
                     continue
                 qty = int(l.get("quantite") or 0)
-                sku = l.get("sku_variation") or ""
+                sku = l.get("sku_variation") or l.get("sku") or ""
                 ca = float(l.get("prix_unitaire_ttc") or 0) * qty
                 if var not in agg:
                     agg[var] = {"unites": 0, "skus": set(), "ca": 0.0}
