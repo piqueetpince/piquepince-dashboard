@@ -171,9 +171,7 @@ _NAV_GROUPES = {
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
-                         "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
-                         "✏️ Correction SKUs Faire", "🔗 Mapping SKUs Faire",
-                         "💰 Vérification prix Faire", "🔧 Correction lignes commandes Faire"],
+                         "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire"],
     "🧣 Foulard Frenchy": ["🚨 Réapprovisionnement Foulard Frenchy"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
 }
@@ -1573,476 +1571,381 @@ elif page == "🔎 Produits manquants sur Faire":
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation.")
 
-elif page == "✏️ Correction SKUs Faire":
-    st.subheader("✏️ Correction SKUs Faire")
+elif page == "🔍 Vérification Faire":
+    st.subheader("🔍 Vérification Faire")
 
-    faire_variants = select("produits_faire_variants",
-        "select=id_faire,id_produit_faire,sku,nom")
-    skus_data = select("skus", "select=sku&statut=eq.visible")
-    produits_faire_data = select("produits_faire", "select=id_faire,nom")
-    produits_faire_map = {p["id_faire"]: p["nom"] for p in produits_faire_data} if produits_faire_data else {}
-    skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "✏️ Correction SKUs",
+        "🔗 Mapping SKUs",
+        "🔧 Correction lignes commandes",
+        "💰 Vérification prix",
+    ])
 
-    if not faire_variants:
-        st.info("Aucun variant Faire trouvé. Lance d'abord la sync 8️⃣ Produits Faire.")
-    else:
-        incorrects = [
-            v for v in faire_variants
-            if not v.get("sku") or v.get("sku") not in skus_valides
-        ]
-        nb_total = len(incorrects)
-        nb_vides = len([v for v in incorrects if not v.get("sku")])
+    # ── Onglet 1 : Correction SKUs ────────────────────────────────────────────
+    with tab1:
+        faire_variants = select("produits_faire_variants",
+            "select=id_faire,id_produit_faire,sku,nom")
+        skus_data = select("skus", "select=sku&statut=eq.visible")
+        produits_faire_data = select("produits_faire", "select=id_faire,nom")
+        produits_faire_map = {p["id_faire"]: p["nom"] for p in produits_faire_data} if produits_faire_data else {}
+        skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("SKUs incorrects sur Faire", nb_total)
-        with col2:
-            st.metric("SKUs vides (NULL ou vide)", nb_vides)
-
-        if not incorrects:
-            st.success("✅ Tous les SKUs Faire correspondent à des SKUs Wizishop valides !")
+        if not faire_variants:
+            st.info("Aucun variant Faire trouvé. Lance d'abord la sync 8️⃣ Produits Faire.")
         else:
-            df_edit = pd.DataFrame([{
-                "ID Faire": v.get("id_faire", ""),
-                "ID Produit Faire": v.get("id_produit_faire", ""),
-                "Produit parent": produits_faire_map.get(v.get("id_produit_faire", ""), v.get("nom", "")),
-                "Nom variant": v.get("nom", ""),
-                "SKU actuel": v.get("sku", ""),
-                "Nouveau SKU": "",
-            } for v in incorrects])
-
-            df_result = st.data_editor(
-                df_edit,
-                column_config={
-                    "ID Faire": st.column_config.TextColumn("ID Faire", disabled=True),
-                    "ID Produit Faire": st.column_config.TextColumn("ID Produit Faire", disabled=True),
-                    "Produit parent": st.column_config.TextColumn("Produit parent", disabled=True),
-                    "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
-                    "SKU actuel": st.column_config.TextColumn("SKU actuel", disabled=True),
-                    "Nouveau SKU": st.column_config.TextColumn("Nouveau SKU"),
-                },
-                hide_index=True,
-                use_container_width=True,
-                key="editor_sku_faire"
-            )
-
-            lignes_a_corriger = df_result[
-                df_result["Nouveau SKU"].notna() & (df_result["Nouveau SKU"].str.strip() != "")
+            incorrects = [
+                v for v in faire_variants
+                if not v.get("sku") or v.get("sku") not in skus_valides
             ]
-            st.caption(f"{len(lignes_a_corriger)} correction(s) à appliquer "
-                       f"sur {lignes_a_corriger['ID Produit Faire'].nunique()} produit(s).")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("SKUs incorrects sur Faire", len(incorrects))
+            with col2:
+                st.metric("SKUs vides (NULL ou vide)", len([v for v in incorrects if not v.get("sku")]))
 
-            if st.button("Mettre à jour sur Faire", type="primary",
-                         disabled=len(lignes_a_corriger) == 0):
-                progress = st.progress(0)
-                # Grouper par produit pour éviter les 429
-                groupes = lignes_a_corriger.groupby("ID Produit Faire")
-                nb_produits = len(groupes)
-                succes = 0
-                erreurs = 0
-
-                for i, (product_id, groupe) in enumerate(groupes):
-                    variants_payload = [
-                        {"id": row["ID Faire"], "sku": row["Nouveau SKU"].strip()}
-                        for _, row in groupe.iterrows()
-                    ]
-                    try:
-                        r = faire_api_patch(
-                            f"/products/{product_id}",
-                            {"variants": variants_payload}
-                        )
-                        if r.status_code == 200:
-                            succes += len(variants_payload)
-                        else:
-                            erreurs += len(variants_payload)
-                            skus_concernes = ", ".join(
-                                row["SKU actuel"] or "(vide)" for _, row in groupe.iterrows())
-                            st.error(f"❌ Produit {product_id} ({skus_concernes}) : "
-                                     f"{r.status_code} — {r.text[:200]}")
-                    except Exception as e:
-                        erreurs += len(variants_payload)
-                        st.error(f"❌ Produit {product_id} : {e}")
-                    progress.progress((i + 1) / nb_produits)
-
-                if succes > 0:
-                    st.success(f"✅ {succes} variant(s) corrigé(s).")
-                if erreurs > 0:
-                    st.warning(f"⚠️ {erreurs} variant(s) en erreur.")
-                if succes > 0:
-                    st.info("💡 Relance la **8️⃣ Sync Produits Faire** depuis la page "
-                            "🔄 Synchronisation pour mettre à jour la base.")
-
-elif page == "🔗 Mapping SKUs Faire":
-    st.subheader("🔗 Mapping SKUs Faire")
-    st.caption("Associe les anciens SKUs Faire aux SKUs Wizishop corrects pour la réconciliation.")
-
-    # Commandes Faire depuis le 1er janvier 2026
-    commandes_faire = select("commandes",
-        "select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)"
-        "&date_commande=gte.2026-01-01")
-    skus_data = select("skus", "select=sku&statut=eq.visible")
-    mapping_existant = select("sku_mapping_faire", "select=id,sku_faire,sku_wizishop&order=sku_faire.asc")
-    faire_variants_data = select("produits_faire_variants", "select=sku,nom,id_produit_faire")
-    produits_faire_data = select("produits_faire", "select=id_faire,nom")
-
-    variant_map = {v["sku"]: v for v in faire_variants_data if v.get("sku")} if faire_variants_data else {}
-    produits_faire_map = {p["id_faire"]: p["nom"] for p in produits_faire_data} if produits_faire_data else {}
-
-    skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
-    mapping_connu = {m["sku_faire"] for m in mapping_existant} if mapping_existant else set()
-
-    skus_inconnus = {}  # sku_faire → nb occurrences
-    if commandes_faire:
-        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
-        ids_str = ",".join(ids_faire)
-        lignes = select("lignes_commande",
-            f"select=sku&id_commande=in.({ids_str})", limit=50000)
-        if lignes:
-            for ligne in lignes:
-                sku = ligne.get("sku") or ""
-                if sku and sku not in skus_valides:
-                    skus_inconnus[sku] = skus_inconnus.get(sku, 0) + 1
-
-    # Exclure les SKUs déjà mappés
-    skus_a_mapper = {sku: nb for sku, nb in skus_inconnus.items() if sku not in mapping_connu}
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("SKUs inconnus depuis 2026", len(skus_inconnus))
-    with col2:
-        st.metric("Déjà mappés", len(mapping_connu))
-    with col3:
-        st.metric("Restant à mapper", len(skus_a_mapper))
-
-    if skus_a_mapper:
-        st.divider()
-        st.subheader("SKUs à mapper")
-
-        df_edit = pd.DataFrame([{
-            "SKU Faire": sku,
-            "Nb commandes": nb,
-            "Nom produit": produits_faire_map.get(
-                (variant_map.get(sku) or {}).get("id_produit_faire", ""), ""),
-            "Nom variant": (variant_map.get(sku) or {}).get("nom", ""),
-            "Nouveau SKU Wizishop": "",
-        } for sku, nb in sorted(skus_a_mapper.items(), key=lambda x: -x[1])])
-
-        df_result = st.data_editor(
-            df_edit,
-            column_config={
-                "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
-                "Nb commandes": st.column_config.NumberColumn("Nb commandes", disabled=True),
-                "Nom produit": st.column_config.TextColumn("Nom produit", disabled=True),
-                "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
-                "Nouveau SKU Wizishop": st.column_config.TextColumn("Nouveau SKU Wizishop"),
-            },
-            hide_index=True,
-            use_container_width=True,
-            key="editor_mapping_faire"
-        )
-
-        lignes_remplies = df_result[
-            df_result["Nouveau SKU Wizishop"].notna() &
-            (df_result["Nouveau SKU Wizishop"].str.strip() != "")
-        ]
-        st.caption(f"{len(lignes_remplies)} mapping(s) à enregistrer.")
-
-        if st.button("Enregistrer le mapping", type="primary",
-                     disabled=len(lignes_remplies) == 0):
-            payload = [
-                {"sku_faire": row["SKU Faire"], "sku_wizishop": row["Nouveau SKU Wizishop"].strip()}
-                for _, row in lignes_remplies.iterrows()
-            ]
-            ok = upsert("sku_mapping_faire", payload, "sku_faire")
-            if ok:
-                st.success(f"✅ {len(payload)} mapping(s) enregistré(s).")
-                st.rerun()
+            if not incorrects:
+                st.success("✅ Tous les SKUs Faire correspondent à des SKUs Wizishop valides !")
             else:
-                st.error("Erreur lors de l'enregistrement.")
-    else:
-        st.success("✅ Tous les SKUs inconnus depuis 2026 sont déjà mappés.")
-
-    if mapping_existant:
-        st.divider()
-        st.subheader("Mappings enregistrés")
-
-        df_mapping = pd.DataFrame(mapping_existant)
-        df_mapping_edit = st.data_editor(
-            df_mapping[["sku_faire", "sku_wizishop"]].rename(columns={
-                "sku_faire": "SKU Faire",
-                "sku_wizishop": "SKU Wizishop"
-            }),
-            column_config={
-                "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
-                "SKU Wizishop": st.column_config.TextColumn("SKU Wizishop"),
-            },
-            hide_index=True,
-            use_container_width=True,
-            key="editor_mapping_existant"
-        )
-
-        if st.button("Mettre à jour les mappings", type="secondary"):
-            payload = [
-                {"sku_faire": row["SKU Faire"], "sku_wizishop": row["SKU Wizishop"].strip()}
-                for _, row in df_mapping_edit.iterrows()
-                if row["SKU Wizishop"].strip()
-            ]
-            ok = upsert("sku_mapping_faire", payload, "sku_faire")
-            if ok:
-                st.success(f"✅ {len(payload)} mapping(s) mis à jour.")
-                st.rerun()
-            else:
-                st.error("Erreur lors de la mise à jour.")
-
-elif page == "🔧 Correction lignes commandes Faire":
-    st.subheader("🔧 Correction lignes commandes Faire")
-
-    commandes_faire = select("commandes",
-        "select=id_faire,date_commande,nom_facturation,montant_ttc"
-        "&source=eq.faire&statut_code=not.in.(0,45,50)"
-        "&date_commande=gte.2026-01-01&order=date_commande.desc")
-    skus_data = select("skus", "select=sku&statut=eq.visible")
-    skus_valides = {s["sku"] for s in skus_data} if skus_data else set()
-
-    if not commandes_faire:
-        st.info("Aucune commande Faire depuis le 1er janvier 2026.")
-    else:
-        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
-        ids_str = ",".join(ids_faire)
-
-        all_lignes = select("lignes_commande",
-            f"select=id_commande,sku&id_commande=in.({ids_str})", limit=50000)
-
-        cmds_avec_probleme = set()
-        nb_lignes_a_corriger = 0
-        if all_lignes:
-            for ligne in all_lignes:
-                sku = ligne.get("sku") or ""
-                id_cmd = str(ligne.get("id_commande", ""))
-                if not sku or sku not in skus_valides:
-                    cmds_avec_probleme.add(id_cmd)
-                    nb_lignes_a_corriger += 1
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Commandes avec lignes à corriger", len(cmds_avec_probleme))
-        with col2:
-            st.metric("Total lignes à corriger", nb_lignes_a_corriger)
-
-        st.divider()
-
-        def format_cmd(id_faire):
-            if not id_faire:
-                return "Choisir une commande..."
-            cmd = next((c for c in commandes_faire if c["id_faire"] == id_faire), {})
-            try:
-                date = pd.to_datetime(cmd.get("date_commande", "")).strftime("%d/%m/%Y")
-            except Exception:
-                date = "?"
-            client = cmd.get("nom_facturation", "")
-            montant = float(cmd.get("montant_ttc") or 0)
-            alerte = "⚠️ " if id_faire in cmds_avec_probleme else ""
-            return f"{alerte}{date} — {client} — {montant:.2f}€"
-
-        commande_choisie = st.selectbox(
-            "Commande",
-            options=[""] + ids_faire,
-            format_func=format_cmd
-        )
-
-        if commande_choisie:
-            lignes_cmd = select("lignes_commande",
-                f"select=id,nom_produit,libelle_variation,quantite,prix_unitaire_ttc,sku"
-                f"&id_commande=eq.{commande_choisie}")
-
-            if lignes_cmd:
-                ids_lignes = [row["id"] for row in lignes_cmd]
-                orig_skus = [row.get("sku") or "" for row in lignes_cmd]
-
                 df_edit = pd.DataFrame([{
-                    "Statut SKU": ("✅" if (row.get("sku") and row["sku"] in skus_valides)
-                                   else ("❌" if not row.get("sku") else "⚠️")),
-                    "Produit": row.get("nom_produit", ""),
-                    "Variation": row.get("libelle_variation", "") or "",
-                    "Qté": row.get("quantite", 0),
-                    "Prix TTC": float(row.get("prix_unitaire_ttc") or 0),
-                    "SKU": row.get("sku") or "",
-                } for row in lignes_cmd])
+                    "ID Faire": v.get("id_faire", ""),
+                    "ID Produit Faire": v.get("id_produit_faire", ""),
+                    "Produit parent": produits_faire_map.get(v.get("id_produit_faire", ""), v.get("nom", "")),
+                    "Nom variant": v.get("nom", ""),
+                    "SKU actuel": v.get("sku", ""),
+                    "Nouveau SKU": "",
+                } for v in incorrects])
 
                 df_result = st.data_editor(
                     df_edit,
                     column_config={
-                        "Statut SKU": st.column_config.TextColumn("Statut", disabled=True),
-                        "Produit": st.column_config.TextColumn("Produit", disabled=True),
-                        "Variation": st.column_config.TextColumn("Variation", disabled=True),
-                        "Qté": st.column_config.NumberColumn("Qté", disabled=True),
-                        "Prix TTC": st.column_config.NumberColumn("Prix TTC", disabled=True),
-                        "SKU": st.column_config.TextColumn("SKU"),
+                        "ID Faire": st.column_config.TextColumn("ID Faire", disabled=True),
+                        "ID Produit Faire": st.column_config.TextColumn("ID Produit Faire", disabled=True),
+                        "Produit parent": st.column_config.TextColumn("Produit parent", disabled=True),
+                        "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
+                        "SKU actuel": st.column_config.TextColumn("SKU actuel", disabled=True),
+                        "Nouveau SKU": st.column_config.TextColumn("Nouveau SKU"),
                     },
-                    hide_index=True,
-                    use_container_width=True,
-                    key=f"editor_lignes_{commande_choisie}"
+                    hide_index=True, use_container_width=True, key="editor_sku_faire"
                 )
 
-                edit_skus = df_result["SKU"].tolist()
-                lignes_modifiees = [
-                    {"id": ids_lignes[i], "sku": edit_skus[i]}
-                    for i in range(len(ids_lignes))
-                    if orig_skus[i] != edit_skus[i]
+                lignes_a_corriger = df_result[
+                    df_result["Nouveau SKU"].notna() & (df_result["Nouveau SKU"].str.strip() != "")
                 ]
-                st.caption(f"{len(lignes_modifiees)} ligne(s) modifiée(s).")
+                st.caption(f"{len(lignes_a_corriger)} correction(s) à appliquer "
+                           f"sur {lignes_a_corriger['ID Produit Faire'].nunique()} produit(s).")
 
-                if st.button("Enregistrer les corrections", type="primary",
-                             disabled=len(lignes_modifiees) == 0):
+                if st.button("Mettre à jour sur Faire", type="primary",
+                             disabled=len(lignes_a_corriger) == 0, key="btn_corriger_skus"):
+                    progress = st.progress(0)
+                    groupes = lignes_a_corriger.groupby("ID Produit Faire")
+                    nb_produits = len(groupes)
                     succes = 0
-                    for ligne in lignes_modifiees:
-                        ok = update("lignes_commande",
-                                    f"id=eq.{ligne['id']}",
-                                    {"sku": ligne["sku"] or None})
-                        if ok:
-                            succes += 1
-                    st.success(f"✅ {succes} ligne(s) corrigée(s).")
-                    st.rerun()
-            else:
-                st.info("Aucune ligne pour cette commande.")
+                    erreurs = 0
+                    for i, (product_id, groupe) in enumerate(groupes):
+                        variants_payload = [
+                            {"id": row["ID Faire"], "sku": row["Nouveau SKU"].strip()}
+                            for _, row in groupe.iterrows()
+                        ]
+                        try:
+                            r = faire_api_patch(f"/products/{product_id}", {"variants": variants_payload})
+                            if r.status_code == 200:
+                                succes += len(variants_payload)
+                            else:
+                                erreurs += len(variants_payload)
+                                skus_concernes = ", ".join(
+                                    row["SKU actuel"] or "(vide)" for _, row in groupe.iterrows())
+                                st.error(f"❌ Produit {product_id} ({skus_concernes}) : "
+                                         f"{r.status_code} — {r.text[:200]}")
+                        except Exception as e:
+                            erreurs += len(variants_payload)
+                            st.error(f"❌ Produit {product_id} : {e}")
+                        progress.progress((i + 1) / nb_produits)
+                    if succes > 0:
+                        st.success(f"✅ {succes} variant(s) corrigé(s).")
+                        st.info("💡 Relance la **8️⃣ Sync Produits Faire** pour mettre à jour la base.")
+                    if erreurs > 0:
+                        st.warning(f"⚠️ {erreurs} variant(s) en erreur.")
 
-elif page == "💰 Vérification prix Faire":
-    st.subheader("💰 Vérification prix Faire")
+    # ── Onglet 2 : Mapping SKUs ───────────────────────────────────────────────
+    with tab2:
+        st.caption("Associe les anciens SKUs Faire aux SKUs Wizishop corrects pour la réconciliation.")
 
-    with st.sidebar:
-        st.divider()
-        filtre = st.selectbox("Filtre", [
-            "Tous",
-            "Écart prix vente",
-            "Coefficient anormal",
-            "Sans prix conseillé"
-        ])
+        commandes_faire_map = select("commandes",
+            "select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)"
+            "&date_commande=gte.2026-01-01")
+        skus_data_map = select("skus", "select=sku&statut=eq.visible")
+        mapping_existant = select("sku_mapping_faire", "select=id,sku_faire,sku_wizishop&order=sku_faire.asc")
+        faire_variants_data = select("produits_faire_variants", "select=sku,nom,id_produit_faire")
+        produits_faire_data2 = select("produits_faire", "select=id_faire,nom")
 
-    faire_variants = select("produits_faire_variants",
-        "select=id_faire,sku,nom,prix_grossiste,prix_vente_conseille,sale_state,lifecycle_state")
-    produits_data = select("produits", "select=sku,nom,prix_vente_ht")
-    prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+        variant_map = {v["sku"]: v for v in faire_variants_data if v.get("sku")} if faire_variants_data else {}
+        produits_faire_map2 = {p["id_faire"]: p["nom"] for p in produits_faire_data2} if produits_faire_data2 else {}
+        skus_valides_map = {s["sku"] for s in skus_data_map} if skus_data_map else set()
+        mapping_connu = {m["sku_faire"] for m in mapping_existant} if mapping_existant else set()
 
-    variants_avec_sku = [v for v in faire_variants if v.get("sku")] if faire_variants else []
+        skus_inconnus = {}
+        if commandes_faire_map:
+            ids_str_map = ",".join(str(c["id_faire"]) for c in commandes_faire_map if c.get("id_faire"))
+            lignes_map = select("lignes_commande", f"select=sku&id_commande=in.({ids_str_map})", limit=50000)
+            if lignes_map:
+                for ligne in lignes_map:
+                    sku = ligne.get("sku") or ""
+                    if sku and sku not in skus_valides_map:
+                        skus_inconnus[sku] = skus_inconnus.get(sku, 0) + 1
 
-    if not variants_avec_sku:
-        st.info("Aucun variant avec SKU. Lance d'abord la sync 8️⃣ Produits Faire.")
-    else:
-        COEFF_CIBLE = 2.50
-        rows = []
-        for v in variants_avec_sku:
-            sku = v["sku"]
-            prod_wizi = get_prod_parent(sku, prod_map)
-            nom = prod_wizi.get("nom", "") or v.get("nom", "") or sku
-            prix_wizi_ttc = round(float(prod_wizi.get("prix_vente_ht") or 0) * 1.20, 2)
-            prix_conseille = float(v.get("prix_vente_conseille") or 0)
-            prix_grossiste = float(v.get("prix_grossiste") or 0)
-            ecart_prix = round(prix_conseille - prix_wizi_ttc, 2)
-            coeff = round(prix_conseille / prix_grossiste, 2) if prix_grossiste else 0
-            ecart_coeff = round(coeff - COEFF_CIBLE, 2) if coeff else 0
-
-            rows.append({
-                "SKU": sku,
-                "Produit": nom,
-                "Prix vente Wizi TTC": prix_wizi_ttc,
-                "Prix conseillé Faire": prix_conseille,
-                "Écart prix vente": ecart_prix,
-                "Prix revendeur Faire": prix_grossiste,
-                "Coefficient": coeff,
-                "Coefficient cible": COEFF_CIBLE,
-                "Écart coefficient": ecart_coeff,
-            })
-
-        df = pd.DataFrame(rows).sort_values("SKU").reset_index(drop=True)
-
-        nb_ecart_prix = len(df[df["Écart prix vente"].abs() > 0.05])
-        nb_coeff_anormal = len(df[(df["Coefficient"] > 0) & ((df["Coefficient"] < 2.40) | (df["Coefficient"] > 2.60))])
-        nb_sans_prix = len(df[df["Prix conseillé Faire"] == 0])
+        skus_a_mapper = {sku: nb for sku, nb in skus_inconnus.items() if sku not in mapping_connu}
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Écart prix vente > 0.05€", nb_ecart_prix)
+            st.metric("SKUs inconnus depuis 2026", len(skus_inconnus))
         with col2:
-            st.metric("Coefficient anormal (< 2.40 ou > 2.60)", nb_coeff_anormal)
+            st.metric("Déjà mappés", len(mapping_connu))
         with col3:
-            st.metric("Sans prix conseillé", nb_sans_prix)
+            st.metric("Restant à mapper", len(skus_a_mapper))
 
-        if filtre == "Écart prix vente":
-            df = df[df["Écart prix vente"].abs() > 0.05]
-        elif filtre == "Coefficient anormal":
-            df = df[(df["Coefficient"] > 0) & ((df["Coefficient"] < 2.40) | (df["Coefficient"] > 2.60))]
-        elif filtre == "Sans prix conseillé":
-            df = df[df["Prix conseillé Faire"] == 0]
+        if skus_a_mapper:
+            st.divider()
+            st.subheader("SKUs à mapper")
+            df_edit_map = pd.DataFrame([{
+                "SKU Faire": sku,
+                "Nb commandes": nb,
+                "Nom produit": produits_faire_map2.get(
+                    (variant_map.get(sku) or {}).get("id_produit_faire", ""), ""),
+                "Nom variant": (variant_map.get(sku) or {}).get("nom", ""),
+                "Nouveau SKU Wizishop": "",
+            } for sku, nb in sorted(skus_a_mapper.items(), key=lambda x: -x[1])])
 
-        def color_ecart_prix(val):
-            return "color: red" if abs(val) > 0.05 else ""
+            df_result_map = st.data_editor(
+                df_edit_map,
+                column_config={
+                    "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
+                    "Nb commandes": st.column_config.NumberColumn("Nb commandes", disabled=True),
+                    "Nom produit": st.column_config.TextColumn("Nom produit", disabled=True),
+                    "Nom variant": st.column_config.TextColumn("Nom variant", disabled=True),
+                    "Nouveau SKU Wizishop": st.column_config.TextColumn("Nouveau SKU Wizishop"),
+                },
+                hide_index=True, use_container_width=True, key="editor_mapping_faire"
+            )
 
-        def color_ecart_coeff(val):
-            return "color: red" if val != 0 and (val < -0.10 or val > 0.10) else ""
+            lignes_remplies = df_result_map[
+                df_result_map["Nouveau SKU Wizishop"].notna() &
+                (df_result_map["Nouveau SKU Wizishop"].str.strip() != "")
+            ]
+            st.caption(f"{len(lignes_remplies)} mapping(s) à enregistrer.")
 
-        st.divider()
-        styled = df.style.map(color_ecart_prix, subset=["Écart prix vente"]) \
-                         .map(color_ecart_coeff, subset=["Écart coefficient"])
-        st.dataframe(styled, use_container_width=True, hide_index=True)
-
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("📥 Télécharger en CSV", csv, "verification_prix_faire.csv", "text/csv")
-
-elif page == "🔍 Vérification Faire":
-    st.subheader("🔍 Vérification des ventes Faire")
-
-    with st.sidebar:
-        st.divider()
-        nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
-
-    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    commandes_faire = select("commandes",
-        f"select=id_faire&statut_code=not.in.(0,45,50)&source=eq.faire&date_commande=gte.{date_limite}")
-
-    if commandes_faire:
-        ids = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
-        ids_str = ",".join(ids)
-
-        lignes = select("lignes_commande",
-            f"select=sku,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
-            limit=50000)
-
-        produits_data = select("produits", "select=sku,nom,nom_categorie")
-        prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
-        mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
-        sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
-
-        if lignes:
-            df = pd.DataFrame(lignes)
-            df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
-            df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
-            df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
-            df["sku_resolu"] = df["sku"].map(lambda x: sku_mapping.get(x, x) if x else x)
-            df["nom_affiche"] = df["sku_resolu"].map(
-                lambda x: get_prod_parent(x, prod_map).get("nom", "") or "")
-            df["nom_affiche"] = df.apply(
-                lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
-            df["categorie"] = df["sku_resolu"].map(
-                lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
-
-            result = df.groupby(["sku_resolu", "nom_affiche", "categorie"]).agg(
-                unites_vendues=("quantite", "sum"),
-                ca_total=("ca", "sum"),
-                nb_commandes=("id_commande", "nunique")
-            ).reset_index().sort_values("unites_vendues", ascending=False)
-
-            result.columns = ["SKU", "Produit", "Catégorie",
-                              "Unités vendues", "CA (€)", "Nb commandes"]
-            result["CA (€)"] = result["CA (€)"].apply(lambda x: f"{x:.2f}")
-
-            st.info(f"{len(result)} produits vendus sur Faire sur les {nb_mois} derniers mois")
-            st.dataframe(result, use_container_width=True, hide_index=True)
-            csv = result.to_csv(index=False).encode("utf-8")
-            st.download_button("Télécharger en CSV", csv, "verification_faire.csv", "text/csv")
+            if st.button("Enregistrer le mapping", type="primary",
+                         disabled=len(lignes_remplies) == 0, key="btn_enreg_mapping"):
+                payload = [
+                    {"sku_faire": row["SKU Faire"], "sku_wizishop": row["Nouveau SKU Wizishop"].strip()}
+                    for _, row in lignes_remplies.iterrows()
+                ]
+                if upsert("sku_mapping_faire", payload, "sku_faire"):
+                    st.success(f"✅ {len(payload)} mapping(s) enregistré(s).")
+                    st.rerun()
+                else:
+                    st.error("Erreur lors de l'enregistrement.")
         else:
-            st.info("Aucune ligne de commande trouvée.")
-    else:
-        st.info("Aucune commande Faire trouvée.")
+            st.success("✅ Tous les SKUs inconnus depuis 2026 sont déjà mappés.")
+
+        if mapping_existant:
+            st.divider()
+            st.subheader("Mappings enregistrés")
+            df_mapping = pd.DataFrame(mapping_existant)
+            df_mapping_edit = st.data_editor(
+                df_mapping[["sku_faire", "sku_wizishop"]].rename(columns={
+                    "sku_faire": "SKU Faire", "sku_wizishop": "SKU Wizishop"}),
+                column_config={
+                    "SKU Faire": st.column_config.TextColumn("SKU Faire", disabled=True),
+                    "SKU Wizishop": st.column_config.TextColumn("SKU Wizishop"),
+                },
+                hide_index=True, use_container_width=True, key="editor_mapping_existant"
+            )
+            if st.button("Mettre à jour les mappings", type="secondary", key="btn_maj_mapping"):
+                payload = [
+                    {"sku_faire": row["SKU Faire"], "sku_wizishop": row["SKU Wizishop"].strip()}
+                    for _, row in df_mapping_edit.iterrows()
+                    if row["SKU Wizishop"].strip()
+                ]
+                if upsert("sku_mapping_faire", payload, "sku_faire"):
+                    st.success(f"✅ {len(payload)} mapping(s) mis à jour.")
+                    st.rerun()
+                else:
+                    st.error("Erreur lors de la mise à jour.")
+
+    # ── Onglet 3 : Correction lignes commandes ────────────────────────────────
+    with tab3:
+        commandes_faire_corr = select("commandes",
+            "select=id_faire,date_commande,nom_facturation,montant_ttc"
+            "&source=eq.faire&statut_code=not.in.(0,45,50)"
+            "&date_commande=gte.2026-01-01&order=date_commande.desc")
+        skus_data_corr = select("skus", "select=sku&statut=eq.visible")
+        skus_valides_corr = {s["sku"] for s in skus_data_corr} if skus_data_corr else set()
+
+        if not commandes_faire_corr:
+            st.info("Aucune commande Faire depuis le 1er janvier 2026.")
+        else:
+            ids_corr = [str(c["id_faire"]) for c in commandes_faire_corr if c.get("id_faire")]
+            ids_str_corr = ",".join(ids_corr)
+            all_lignes_corr = select("lignes_commande",
+                f"select=id_commande,sku&id_commande=in.({ids_str_corr})", limit=50000)
+
+            cmds_avec_probleme = set()
+            nb_lignes_a_corriger = 0
+            if all_lignes_corr:
+                for ligne in all_lignes_corr:
+                    sku = ligne.get("sku") or ""
+                    id_cmd = str(ligne.get("id_commande", ""))
+                    if not sku or sku not in skus_valides_corr:
+                        cmds_avec_probleme.add(id_cmd)
+                        nb_lignes_a_corriger += 1
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Commandes avec lignes à corriger", len(cmds_avec_probleme))
+            with col2:
+                st.metric("Total lignes à corriger", nb_lignes_a_corriger)
+
+            st.divider()
+
+            def format_cmd(id_faire):
+                if not id_faire:
+                    return "Choisir une commande..."
+                cmd = next((c for c in commandes_faire_corr if c["id_faire"] == id_faire), {})
+                try:
+                    date = pd.to_datetime(cmd.get("date_commande", "")).strftime("%d/%m/%Y")
+                except Exception:
+                    date = "?"
+                client = cmd.get("nom_facturation", "")
+                montant = float(cmd.get("montant_ttc") or 0)
+                alerte = "⚠️ " if id_faire in cmds_avec_probleme else ""
+                return f"{alerte}{date} — {client} — {montant:.2f}€"
+
+            commande_choisie = st.selectbox(
+                "Commande", options=[""] + ids_corr,
+                format_func=format_cmd, key="sel_cmd_corr"
+            )
+
+            if commande_choisie:
+                lignes_cmd = select("lignes_commande",
+                    f"select=id,nom_produit,libelle_variation,quantite,prix_unitaire_ttc,sku"
+                    f"&id_commande=eq.{commande_choisie}")
+
+                if lignes_cmd:
+                    ids_lignes = [row["id"] for row in lignes_cmd]
+                    orig_skus = [row.get("sku") or "" for row in lignes_cmd]
+
+                    df_edit_corr = pd.DataFrame([{
+                        "Statut SKU": ("✅" if (row.get("sku") and row["sku"] in skus_valides_corr)
+                                       else ("❌" if not row.get("sku") else "⚠️")),
+                        "Produit": row.get("nom_produit", ""),
+                        "Variation": row.get("libelle_variation", "") or "",
+                        "Qté": row.get("quantite", 0),
+                        "Prix TTC": float(row.get("prix_unitaire_ttc") or 0),
+                        "SKU": row.get("sku") or "",
+                    } for row in lignes_cmd])
+
+                    df_result_corr = st.data_editor(
+                        df_edit_corr,
+                        column_config={
+                            "Statut SKU": st.column_config.TextColumn("Statut", disabled=True),
+                            "Produit": st.column_config.TextColumn("Produit", disabled=True),
+                            "Variation": st.column_config.TextColumn("Variation", disabled=True),
+                            "Qté": st.column_config.NumberColumn("Qté", disabled=True),
+                            "Prix TTC": st.column_config.NumberColumn("Prix TTC", disabled=True),
+                            "SKU": st.column_config.TextColumn("SKU"),
+                        },
+                        hide_index=True, use_container_width=True,
+                        key=f"editor_lignes_{commande_choisie}"
+                    )
+
+                    edit_skus = df_result_corr["SKU"].tolist()
+                    lignes_modifiees = [
+                        {"id": ids_lignes[i], "sku": edit_skus[i]}
+                        for i in range(len(ids_lignes))
+                        if orig_skus[i] != edit_skus[i]
+                    ]
+                    st.caption(f"{len(lignes_modifiees)} ligne(s) modifiée(s).")
+
+                    if st.button("Enregistrer les corrections", type="primary",
+                                 disabled=len(lignes_modifiees) == 0, key="btn_enreg_corr"):
+                        succes = 0
+                        for ligne in lignes_modifiees:
+                            ok = update("lignes_commande", f"id=eq.{ligne['id']}",
+                                        {"sku": ligne["sku"] or None})
+                            if ok:
+                                succes += 1
+                        st.success(f"✅ {succes} ligne(s) corrigée(s).")
+                        st.rerun()
+                else:
+                    st.info("Aucune ligne pour cette commande.")
+
+    # ── Onglet 4 : Vérification prix ──────────────────────────────────────────
+    with tab4:
+        filtre_prix = st.selectbox("Filtre", [
+            "Tous", "Écart prix vente", "Coefficient anormal", "Sans prix conseillé"
+        ], key="sel_filtre_prix_faire")
+
+        faire_variants_prix = select("produits_faire_variants",
+            "select=id_faire,sku,nom,prix_grossiste,prix_vente_conseille,sale_state,lifecycle_state")
+        produits_data_prix = select("produits", "select=sku,nom,prix_vente_ht")
+        prod_map_prix = {p["sku"]: p for p in produits_data_prix} if produits_data_prix else {}
+
+        variants_avec_sku = [v for v in faire_variants_prix if v.get("sku")] if faire_variants_prix else []
+
+        if not variants_avec_sku:
+            st.info("Aucun variant avec SKU. Lance d'abord la sync 8️⃣ Produits Faire.")
+        else:
+            COEFF_CIBLE = 2.50
+            rows_prix = []
+            for v in variants_avec_sku:
+                sku = v["sku"]
+                prod_wizi = get_prod_parent(sku, prod_map_prix)
+                nom = prod_wizi.get("nom", "") or v.get("nom", "") or sku
+                prix_wizi_ttc = round(float(prod_wizi.get("prix_vente_ht") or 0) * 1.20, 2)
+                prix_conseille = float(v.get("prix_vente_conseille") or 0)
+                prix_grossiste = float(v.get("prix_grossiste") or 0)
+                ecart_prix = round(prix_conseille - prix_wizi_ttc, 2)
+                coeff = round(prix_conseille / prix_grossiste, 2) if prix_grossiste else 0
+                ecart_coeff = round(coeff - COEFF_CIBLE, 2) if coeff else 0
+                rows_prix.append({
+                    "SKU": sku, "Produit": nom,
+                    "Prix vente Wizi TTC": prix_wizi_ttc,
+                    "Prix conseillé Faire": prix_conseille,
+                    "Écart prix vente": ecart_prix,
+                    "Prix revendeur Faire": prix_grossiste,
+                    "Coefficient": coeff,
+                    "Coefficient cible": COEFF_CIBLE,
+                    "Écart coefficient": ecart_coeff,
+                })
+
+            df_prix = pd.DataFrame(rows_prix).sort_values("SKU").reset_index(drop=True)
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Écart prix vente > 0.05€", len(df_prix[df_prix["Écart prix vente"].abs() > 0.05]))
+            with col2:
+                st.metric("Coefficient anormal",
+                          len(df_prix[(df_prix["Coefficient"] > 0) &
+                                      ((df_prix["Coefficient"] < 2.40) | (df_prix["Coefficient"] > 2.60))]))
+            with col3:
+                st.metric("Sans prix conseillé", len(df_prix[df_prix["Prix conseillé Faire"] == 0]))
+
+            if filtre_prix == "Écart prix vente":
+                df_prix = df_prix[df_prix["Écart prix vente"].abs() > 0.05]
+            elif filtre_prix == "Coefficient anormal":
+                df_prix = df_prix[(df_prix["Coefficient"] > 0) &
+                                  ((df_prix["Coefficient"] < 2.40) | (df_prix["Coefficient"] > 2.60))]
+            elif filtre_prix == "Sans prix conseillé":
+                df_prix = df_prix[df_prix["Prix conseillé Faire"] == 0]
+
+            styled = df_prix.style \
+                .map(lambda v: "color: red" if abs(v) > 0.05 else "", subset=["Écart prix vente"]) \
+                .map(lambda v: "color: red" if v != 0 and (v < -0.10 or v > 0.10) else "",
+                     subset=["Écart coefficient"])
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+            csv_prix = df_prix.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Télécharger en CSV", csv_prix, "verification_prix_faire.csv",
+                               "text/csv", key="dl_prix_faire")
 
 elif page == "📒 Réconciliation Faire":
     st.subheader("📒 Réconciliation Faire")
