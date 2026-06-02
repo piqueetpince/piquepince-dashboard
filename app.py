@@ -102,11 +102,11 @@ def _get_produits_reap():
 @st.cache_data(ttl=300)
 def _get_ventes_reap(date_limite):
     cmds_wizi = select("commandes",
-        f"select=id_wizi&source=eq.wizishop&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+        f"select=id_wizi&source=eq.wizishop&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite}")
     cmds_etsy = select("commandes",
-        f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+        f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite}")
     cmds_faire = select("commandes",
-        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite}")
 
     nom_par_sku = {}
     ventes_wizi = {}
@@ -413,7 +413,7 @@ elif page == "📊 Vue d'ensemble":
 
     date_limite_str = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes = select("commandes",
-        f"select=date_commande,montant_ttc,statut_code,source&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite_str}&order=date_commande.desc")
+        f"select=date_commande,montant_ttc,statut_code,source&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite_str}&order=date_commande.desc")
 
     if commandes:
         df = pd.DataFrame(commandes)
@@ -499,7 +499,7 @@ elif page == "📦 Commandes":
         source_filtre = st.selectbox("Source", ["Toutes", "Wizishop", "Etsy"])
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    query = f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi,source&date_commande=gte.{date_limite}&statut_code=not.in.(0,45,50)&order=date_commande.desc&limit=500"
+    query = f"select=date_commande,numero_commande,nom_facturation,prenom_facturation,montant_ttc,statut_texte,pays_facturation_iso,zone_tva,numero_suivi,source&date_commande=gte.{date_limite}&statut_code=not.in.(0,45,46,50)&order=date_commande.desc&limit=500"
     if source_filtre == "Wizishop":
         query += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -527,7 +527,7 @@ elif page == "⭐ Best-sellers":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
 
-    query_cmd = f"select=id_wizi,source&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}"
+    query_cmd = f"select=id_wizi,source&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite}"
     if source_filtre == "Wizishop":
         query_cmd += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -1019,12 +1019,12 @@ elif page == "⭐ Best-sellers Etsy":
     st.subheader("⭐ Best-sellers Etsy")
 
     if periode_etsy == "Tout":
-        query_cmds = "select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)"
+        query_cmds = "select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,46,50)"
         nb_mois_etsy = None
     else:
         nb_mois_etsy = int(periode_etsy.split()[0])
         date_limite_etsy = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_etsy)).strftime("%Y-%m-%dT%H:%M:%S")
-        query_cmds = f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite_etsy}"
+        query_cmds = f"select=id_wizi&source=eq.etsy&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite_etsy}"
 
     # Catalogue complet Etsy (base du left join)
     catalogue_etsy = select("produits_etsy_variations",
@@ -1122,7 +1122,7 @@ elif page == "📊 Gestion stock Etsy":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_valides = select("commandes",
-        f"select=id_wizi,source&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+        f"select=id_wizi,source&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite}")
 
     if variations:
         listing_map = {l["listing_id"]: l["titre"] for l in listings} if listings else {}
@@ -1319,7 +1319,7 @@ elif page == "🌍 Comptabilité TVA":
         annee = st.selectbox("Année", [2026, 2025, 2024, 2023], index=0)
         source_filtre = st.selectbox("Source", ["Toutes", "Wizishop", "Etsy"])
 
-    query = f"select=zone_tva,pays_facturation,pays_facturation_iso,montant_ttc,montant_ht,source&statut_code=not.in.(0,45,50)&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01"
+    query = f"select=zone_tva,pays_facturation,pays_facturation_iso,montant_ttc,montant_ht,source&statut_code=not.in.(0,45,46,50)&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01"
     if source_filtre == "Wizishop":
         query += "&source=eq.wizishop"
     elif source_filtre == "Etsy":
@@ -1369,7 +1369,7 @@ elif page == "🔍 Vérification Wizishop":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_wizi = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,45,50)&source=eq.wizishop&date_commande=gte.{date_limite}")
+        f"select=id_wizi&statut_code=not.in.(0,45,46,50)&source=eq.wizishop&date_commande=gte.{date_limite}")
 
     if commandes_wizi:
         ids = [str(c["id_wizi"]) for c in commandes_wizi]
@@ -1429,7 +1429,7 @@ elif page == "📈 Évolution CA annuelle":
         rows = select("commandes",
             "select=date_commande,montant_ht"
             "&source=eq.wizishop"
-            "&statut_code=not.in.(0,45,50)"
+            "&statut_code=not.in.(0,45,46,50)"
             "&date_commande=gte.2025-01-01"
             "&montant_ht=not.is.null")
         return rows or []
@@ -1765,7 +1765,7 @@ elif page == "🔍 Vérification Faire":
         st.caption("Associe les anciens SKUs Faire aux SKUs Wizishop corrects pour la réconciliation.")
 
         commandes_faire_map = select("commandes",
-            "select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)"
+            "select=id_faire&source=eq.faire&statut_code=not.in.(0,45,46,50)"
             "&date_commande=gte.2026-01-01")
         skus_data_map = select("skus", "select=sku&statut=eq.visible")
         mapping_existant = select("sku_mapping_faire", "select=id,sku_faire,sku_wizishop&order=sku_faire.asc")
@@ -1870,7 +1870,7 @@ elif page == "🔍 Vérification Faire":
     with tab3:
         commandes_faire_corr = select("commandes",
             "select=id_faire,date_commande,nom_facturation,montant_ttc"
-            "&source=eq.faire&statut_code=not.in.(0,45,50)"
+            "&source=eq.faire&statut_code=not.in.(0,45,46,50)"
             "&date_commande=gte.2026-01-01&order=date_commande.desc")
         skus_data_corr = select("skus", "select=sku&statut=eq.visible")
         skus_valides_corr = {s["sku"] for s in skus_data_corr} if skus_data_corr else set()
@@ -2051,7 +2051,7 @@ elif page == "📒 Réconciliation Faire":
     commandes_faire = select("commandes",
         f"select=id_faire,date_commande,nom_facturation,prenom_facturation,"
         f"montant_ttc,frais_port,tva_client,montant_net_recu,frais_expedition_faire,commission_faire"
-        f"&source=eq.faire&statut_code=not.in.(0,45,50)"
+        f"&source=eq.faire&statut_code=not.in.(0,45,46,50)"
         f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee+1}-01-01"
         f"&order=date_commande.desc")
 
@@ -2194,7 +2194,7 @@ elif page == "📊 Gestion stock Faire":
 
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     commandes_faire = select("commandes",
-        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+        f"select=id_faire&source=eq.faire&statut_code=not.in.(0,45,46,50)&date_commande=gte.{date_limite}")
 
     if faire_variants:
         sku_stock_wizi = {s["sku"]: int(s["stock"] or 0) for s in skus_data} if skus_data else {}
