@@ -2758,47 +2758,59 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
                 continue
             catalogue_ff[sku] = v.get("nom_complet") or sku
 
-    # Agréger les ventes par SKU
-    ventes_ff = {}
+    # Jeu d'IDs numériques valides (extrait depuis id_shopify, qui peut être
+    # un GID "gid://shopify/Order/XXXXX" ou directement un entier/string numérique)
+    ids_valides_ff = set()
     if cmds_ff:
-        ids_ff = ",".join(str(c["id_shopify"]) for c in cmds_ff if c.get("id_shopify"))
-        lignes_ff = select(
-            "lignes_commande_shopify",
-            f"select=sku,quantite,prix_unitaire_original"
-            f"&boutique=eq.foulard_frenchy"
-            f"&id_commande_shopify=in.({ids_ff})",
-            limit=50000,
-        )
-        # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────
-        st.write(f"**[DEBUG] Lignes chargées :** {len(lignes_ff) if lignes_ff else 0}")
-        if lignes_ff:
-            exemples_lignes = [
-                {"id_commande_shopify": l.get("id_commande_shopify"),
-                 "type_id": type(l.get("id_commande_shopify")).__name__,
-                 "sku": l.get("sku"),
-                 "quantite": l.get("quantite")}
-                for l in lignes_ff[:3]
-            ]
-            st.write(f"**[DEBUG] 3 premières lignes :** {exemples_lignes}")
-            # Vérification format : id_shopify commandes vs id_commande_shopify lignes
-            if cmds_ff:
-                id_cmd_exemple = cmds_ff[0].get("id_shopify")
-                id_ligne_exemple = lignes_ff[0].get("id_commande_shopify") if lignes_ff else None
-                st.write(f"**[DEBUG] Format commande id_shopify=`{id_cmd_exemple}` ({type(id_cmd_exemple).__name__}) "
-                         f"vs ligne id_commande_shopify=`{id_ligne_exemple}` ({type(id_ligne_exemple).__name__})")
-        # ─────────────────────────────────────────────────────────────────────
+        for c in cmds_ff:
+            raw = str(c.get("id_shopify") or "")
+            ids_valides_ff.add(raw.rsplit("/", 1)[-1])
 
-        if lignes_ff:
-            for l in lignes_ff:
-                sku = (l.get("sku") or "").strip()
-                if not sku:
-                    continue
-                qty = l.get("quantite") or 0
-                ca = float(l.get("prix_unitaire_original") or 0) * qty
-                if sku not in ventes_ff:
-                    ventes_ff[sku] = {"quantite": 0, "ca": 0.0}
-                ventes_ff[sku]["quantite"] += qty
-                ventes_ff[sku]["ca"] += ca
+    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
+    st.write(f"**[DEBUG] Commandes dans ids_valides_ff :** {len(ids_valides_ff)}")
+    exemples_ids_valides = list(ids_valides_ff)[:3]
+    st.write(f"**[DEBUG] 3 premiers ids_valides_ff :** {exemples_ids_valides}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Toutes les lignes de la boutique (pas de filtre id_commande — évite le
+    # problème de format GID vs numérique dans la clause in.())
+    lignes_ff = select(
+        "lignes_commande_shopify",
+        "select=id_commande_shopify,sku,quantite,prix_unitaire_original"
+        "&boutique=eq.foulard_frenchy",
+        limit=50000,
+    )
+
+    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
+    st.write(f"**[DEBUG] Lignes totales boutique :** {len(lignes_ff) if lignes_ff else 0}")
+    if lignes_ff:
+        exemples_lignes = [
+            {"id_commande_shopify": l.get("id_commande_shopify"),
+             "type": type(l.get("id_commande_shopify")).__name__,
+             "sku": l.get("sku"),
+             "quantite": l.get("quantite")}
+            for l in lignes_ff[:3]
+        ]
+        st.write(f"**[DEBUG] 3 premières lignes :** {exemples_lignes}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Agréger les ventes par SKU en joignant en Python
+    ventes_ff = {}
+    if lignes_ff:
+        for l in lignes_ff:
+            # Normalise id_commande_shopify au format numérique pour comparer
+            raw_id = str(l.get("id_commande_shopify") or "").rsplit("/", 1)[-1]
+            if raw_id not in ids_valides_ff:
+                continue
+            sku = (l.get("sku") or "").strip()
+            if not sku:
+                continue
+            qty = l.get("quantite") or 0
+            ca = float(l.get("prix_unitaire_original") or 0) * qty
+            if sku not in ventes_ff:
+                ventes_ff[sku] = {"quantite": 0, "ca": 0.0}
+            ventes_ff[sku]["quantite"] += qty
+            ventes_ff[sku]["ca"] += ca
 
     if not catalogue_ff:
         st.info("Aucune donnée catalogue. Lance d'abord la sync Produits Foulard Frenchy.")

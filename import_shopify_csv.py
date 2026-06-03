@@ -147,6 +147,13 @@ with CSV_PATH.open(newline="", encoding="utf-8-sig") as fh:
 
 print(f"  → {len(commandes)} commandes distinctes, {len(lignes)} lignes articles")
 
+# ── DEBUG : aperçu des 3 premières lignes construites ─────────────────────────
+print("\n[DEBUG] 3 premières lignes construites avant envoi Supabase :")
+for l in lignes[:3]:
+    print(f"  id_shopify={l['id_shopify']!r}  id_commande_shopify={l['id_commande_shopify']!r}"
+          f"  sku={l['sku']!r}  quantite={l['quantite']}")
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── Upsert ────────────────────────────────────────────────────────────────────
 
 print("\nImport commandes_shopify …")
