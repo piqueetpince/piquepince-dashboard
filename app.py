@@ -2731,7 +2731,7 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     query_cmds_ff = (
         "select=id_shopify"
         "&boutique=eq.foulard_frenchy"
-        "&statut_financier=not.in.(refunded,partially_refunded)"
+        "&or=(statut_financier.is.null,statut_financier.not.in.(refunded,partially_refunded))"
         "&annule_le=is.null"
         + filtre_date_ff
     )

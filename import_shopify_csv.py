@@ -128,6 +128,7 @@ with CSV_PATH.open(newline="", encoding="utf-8-sig") as fh:
                 "ville_facturation": _str(row.get("Billing city")),
                 "cp_facturation":    _str(row.get("Billing postal code")),
                 "pays_facturation_iso": _str(row.get("Billing country")),
+                "cree_le":           (f"{row['Day']}T00:00:00+00:00" if _str(row.get("Day")) else None),
             }
 
         # ── Ligne article ─────────────────────────────────────────────────────
@@ -159,15 +160,16 @@ for l in lignes[:3]:
 print("\nImport commandes_shopify …")
 err_cmd = upsert_batch("commandes_shopify", list(commandes.values()), "id_shopify,boutique")
 
-print("Import lignes_commande_shopify …")
-err_lig = upsert_batch("lignes_commande_shopify", lignes, "id_shopify,boutique")
+lignes_dedup = list({l["id_shopify"]: l for l in lignes}.values())
+print(f"Import lignes_commande_shopify … ({len(lignes)} lignes → {len(lignes_dedup)} après dédoublonnage)")
+err_lig = upsert_batch("lignes_commande_shopify", lignes_dedup, "id_shopify,boutique")
 
 # ── Résumé ────────────────────────────────────────────────────────────────────
 
 total_erreurs = err_cmd + err_lig
 print("\n" + "─" * 45)
 print(f"  Commandes importées  : {len(commandes) - err_cmd} / {len(commandes)}")
-print(f"  Lignes importées     : {len(lignes) - err_lig} / {len(lignes)}")
+print(f"  Lignes importées     : {len(lignes_dedup) - err_lig} / {len(lignes_dedup)}")
 print(f"  Erreurs              : {total_erreurs}")
 print("─" * 45)
 
