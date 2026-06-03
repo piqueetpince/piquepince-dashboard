@@ -2816,6 +2816,28 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
         with col3:
             st.metric("🔢 SKUs vendus", f"{nb_skus_vendus_ff} / {len(df_ff)}")
 
+        def _categorie_ff(sku):
+            s = (sku or "").upper()
+            if s.startswith("CHIM"):  return "Foulard Chimio"
+            if s.startswith("CH"):    return "Chouchou Foulard"
+            if s.startswith("CF"):    return "Ceinture Foulard"
+            if s.startswith("FCAR") or s.startswith("FC"): return "Foulard Carré"
+            if s.startswith("FF"):    return "Foulard Femme"
+            return "Autre"
+
+        cats_ff = {}
+        for row in rows_ff:
+            cat = _categorie_ff(row["SKU"])
+            cats_ff[cat] = cats_ff.get(cat, 0) + row["Unités vendues"]
+
+        cats_sorted = sorted(cats_ff.items(), key=lambda x: x[1], reverse=True)
+        if cats_sorted:
+            st.divider()
+            cols_cat = st.columns(len(cats_sorted))
+            for col, (cat, qty) in zip(cols_cat, cats_sorted):
+                pct = f"{qty / total_unites_ff * 100:.0f}%" if total_unites_ff else "—"
+                col.metric(cat, f"{qty:,}", pct)
+
         st.dataframe(df_ff, use_container_width=True, hide_index=True)
         csv_ff = df_ff.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exporter CSV", csv_ff, "bestsellers_foulard_frenchy.csv", "text/csv",
