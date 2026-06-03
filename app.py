@@ -2784,14 +2784,17 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
     st.write(f"**[DEBUG] Lignes totales boutique :** {len(lignes_ff) if lignes_ff else 0}")
     if lignes_ff:
-        exemples_lignes = [
-            {"id_commande_shopify": l.get("id_commande_shopify"),
-             "type": type(l.get("id_commande_shopify")).__name__,
-             "sku": l.get("sku"),
-             "quantite": l.get("quantite")}
+        ids_lignes_normalises = [
+            str(l.get("id_commande_shopify") or "").rsplit("/", 1)[-1]
             for l in lignes_ff[:3]
         ]
-        st.write(f"**[DEBUG] 3 premières lignes :** {exemples_lignes}")
+        st.write(f"**[DEBUG] 3 premiers id_commande_shopify normalisés :** {ids_lignes_normalises}")
+        intersection = ids_valides_ff & {
+            str(l.get("id_commande_shopify") or "").rsplit("/", 1)[-1]
+            for l in lignes_ff
+        }
+        st.write(f"**[DEBUG] Intersection commandes ∩ lignes :** {len(intersection)} IDs en commun "
+                 f"(exemples : {list(intersection)[:3]})")
     # ─────────────────────────────────────────────────────────────────────────
 
     # Agréger les ventes par SKU en joignant en Python
