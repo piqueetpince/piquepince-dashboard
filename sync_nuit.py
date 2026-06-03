@@ -2,7 +2,17 @@
 Synchronisation nocturne de toutes les sources de données.
 
 Usage:
-    python sync_nuit.py
+    python sync_nuit.py                              # tout synchroniser
+    python sync_nuit.py --only wizishop-commandes    # une seule sync
+    python sync_nuit.py --only etsy faire            # groupes entiers
+    python sync_nuit.py --only wizishop-produits wizishop-commandes
+
+Slugs disponibles :
+    wizishop  wizishop-categories  wizishop-marques  wizishop-skus
+    wizishop-produits  wizishop-commandes
+    etsy  etsy-commandes  etsy-produits
+    faire  faire-commandes  faire-produits
+    shopify  shopify-produits  shopify-commandes
 
 Credentials lus depuis .env :
     SUPABASE_URL, SUPABASE_KEY
@@ -13,6 +23,7 @@ Credentials lus depuis .env :
     GMAIL_USER, GMAIL_PASSWORD
 """
 
+import argparse
 import os
 import smtplib
 import sys
@@ -25,6 +36,16 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# ── Arguments CLI ─────────────────────────────────────────────────────────────
+
+_parser = argparse.ArgumentParser(description="Sync nocturne Pique&Pince")
+_parser.add_argument(
+    "--only", nargs="+", metavar="SLUG",
+    help="Lancer uniquement ces syncs (ex: wizishop-commandes etsy faire)"
+)
+_args = _parser.parse_args()
+only: list[str] = [s.lower() for s in (_args.only or [])]
 
 # ── Mock Streamlit (avant tout import des modules sync) ───────────────────────
 # Tous les modules sync appellent st.secrets, st.session_state, st.warning, etc.
@@ -108,27 +129,48 @@ def run(nom, fn):
         print(f"   ❌ Erreur en {duree:.1f}s : {e}")
 
 
+def _active(slug: str) -> bool:
+    """Retourne True si ce slug doit être exécuté.
+
+    Sans --only : tout est actif.
+    Avec --only : actif si slug correspond exactement ou si un groupe préfixe le slug
+    (ex: 'wizishop' active 'wizishop-commandes', 'wizishop-produits', etc.)
+    """
+    if not only:
+        return True
+    return any(slug == o or slug.startswith(o + "-") for o in only)
+
+
 # ── 1. Wizishop ───────────────────────────────────────────────────────────────
 
-print("Authentification Wizishop …")
-token_wizi, account_id_wizi, shop_id_wizi = get_wizi_token()
-if not token_wizi:
-    print("❌ Impossible d'obtenir le token Wizishop — syncs Wizishop ignorées.")
-    for nom in ["Wizishop — catégories", "Wizishop — marques",
-                "Wizishop — SKUs/stocks", "Wizishop — produits", "Wizishop — commandes"]:
-        resultats.append({"nom": nom, "statut": "⏭️", "duree": 0,
-                          "detail": "token Wizishop absent"})
-else:
-    run("Wizishop — catégories",
-        lambda: f"{sync_categories(token_wizi, shop_id_wizi)} catégories")
-    run("Wizishop — marques",
-        lambda: f"{sync_marques(token_wizi, shop_id_wizi)} marques")
-    run("Wizishop — SKUs/stocks",
-        lambda: f"{sync_skus(token_wizi, shop_id_wizi)} SKUs")
-    run("Wizishop — produits",
-        lambda: f"{sync_produits(token_wizi, shop_id_wizi)} produits")
-    run("Wizishop — commandes",
-        lambda: f"{sync_commandes(token_wizi, shop_id_wizi)} commandes")
+_wizi_slugs = ["wizishop-categories", "wizishop-marques",
+               "wizishop-skus", "wizishop-produits", "wizishop-commandes"]
+
+if any(_active(s) for s in _wizi_slugs):
+    print("Authentification Wizishop …")
+    token_wizi, account_id_wizi, shop_id_wizi = get_wizi_token()
+    if not token_wizi:
+        print("❌ Impossible d'obtenir le token Wizishop — syncs Wizishop ignorées.")
+        for nom in ["Wizishop — catégories", "Wizishop — marques",
+                    "Wizishop — SKUs/stocks", "Wizishop — produits", "Wizishop — commandes"]:
+            resultats.append({"nom": nom, "statut": "⏭️", "duree": 0,
+                              "detail": "token Wizishop absent"})
+    else:
+        if _active("wizishop-categories"):
+            run("Wizishop — catégories",
+                lambda: f"{sync_categories(token_wizi, shop_id_wizi)} catégories")
+        if _active("wizishop-marques"):
+            run("Wizishop — marques",
+                lambda: f"{sync_marques(token_wizi, shop_id_wizi)} marques")
+        if _active("wizishop-skus"):
+            run("Wizishop — SKUs/stocks",
+                lambda: f"{sync_skus(token_wizi, shop_id_wizi)} SKUs")
+        if _active("wizishop-produits"):
+            run("Wizishop — produits",
+                lambda: f"{sync_produits(token_wizi, shop_id_wizi)} produits")
+        if _active("wizishop-commandes"):
+            run("Wizishop — commandes",
+                lambda: f"{sync_commandes(token_wizi, shop_id_wizi)} commandes")
 
 # ── 2. Etsy commandes ─────────────────────────────────────────────────────────
 
@@ -139,7 +181,8 @@ def _etsy_commandes():
     nb = sync_etsy_commandes(shop_id)
     return f"{nb} commandes"
 
-run("Etsy — commandes", _etsy_commandes)
+if _active("etsy-commandes"):
+    run("Etsy — commandes", _etsy_commandes)
 
 # ── 3. Etsy produits ──────────────────────────────────────────────────────────
 
@@ -150,12 +193,14 @@ def _etsy_produits():
     nb_l, nb_v = sync_produits_etsy(shop_id)
     return f"{nb_l} listings, {nb_v} variantes"
 
-run("Etsy — produits", _etsy_produits)
+if _active("etsy-produits"):
+    run("Etsy — produits", _etsy_produits)
 
 # ── 4. Faire commandes ────────────────────────────────────────────────────────
 
-run("Faire — commandes",
-    lambda: f"{sync_faire_commandes()} commandes")
+if _active("faire-commandes"):
+    run("Faire — commandes",
+        lambda: f"{sync_faire_commandes()} commandes")
 
 # ── 5. Faire produits ─────────────────────────────────────────────────────────
 
@@ -163,29 +208,35 @@ def _faire_produits():
     nb_p, nb_v = sync_faire_produits()
     return f"{nb_p} produits, {nb_v} variantes"
 
-run("Faire — produits", _faire_produits)
+if _active("faire-produits"):
+    run("Faire — produits", _faire_produits)
 
 # ── 6. Shopify Foulard Frenchy ────────────────────────────────────────────────
 
-shop_ff  = os.environ.get("SHOPIFY_FOULARD_FRENCHY_SHOP", "")
-token_ff = os.environ.get("SHOPIFY_FOULARD_FRENCHY_TOKEN", "")
+_shopify_slugs = ["shopify-produits", "shopify-commandes"]
 
-if not shop_ff or not token_ff:
-    for nom in ["Shopify FF — produits", "Shopify FF — commandes"]:
-        resultats.append({"nom": nom, "statut": "⏭️", "duree": 0,
-                          "detail": "SHOPIFY_FOULARD_FRENCHY_SHOP / TOKEN absent"})
-    print("\n⏭️  Shopify Foulard Frenchy ignoré (credentials manquants)")
-else:
-    def _shopify_produits():
-        nb_p, nb_v = sync_shopify_produits("foulard_frenchy", shop_ff, token_ff)
-        return f"{nb_p} produits, {nb_v} variantes"
+if any(_active(s) for s in _shopify_slugs):
+    shop_ff  = os.environ.get("SHOPIFY_FOULARD_FRENCHY_SHOP", "")
+    token_ff = os.environ.get("SHOPIFY_FOULARD_FRENCHY_TOKEN", "")
 
-    def _shopify_commandes():
-        nb = sync_shopify_commandes("foulard_frenchy", shop_ff, token_ff)
-        return f"{nb} commandes"
+    if not shop_ff or not token_ff:
+        for nom in ["Shopify FF — produits", "Shopify FF — commandes"]:
+            resultats.append({"nom": nom, "statut": "⏭️", "duree": 0,
+                              "detail": "SHOPIFY_FOULARD_FRENCHY_SHOP / TOKEN absent"})
+        print("\n⏭️  Shopify Foulard Frenchy ignoré (credentials manquants)")
+    else:
+        def _shopify_produits():
+            nb_p, nb_v = sync_shopify_produits("foulard_frenchy", shop_ff, token_ff)
+            return f"{nb_p} produits, {nb_v} variantes"
 
-    run("Shopify FF — produits",  _shopify_produits)
-    run("Shopify FF — commandes", _shopify_commandes)
+        def _shopify_commandes():
+            nb = sync_shopify_commandes("foulard_frenchy", shop_ff, token_ff)
+            return f"{nb} commandes"
+
+        if _active("shopify-produits"):
+            run("Shopify FF — produits",  _shopify_produits)
+        if _active("shopify-commandes"):
+            run("Shopify FF — commandes", _shopify_commandes)
 
 # ── Résumé console ────────────────────────────────────────────────────────────
 
