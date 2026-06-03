@@ -2737,7 +2737,13 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     )
     cmds_ff = select("commandes_shopify", query_cmds_ff)
 
-    # Catalogue Foulard Frenchy
+    # Catalogue Foulard Frenchy — variants de produits ACTIVE uniquement
+    produits_actifs_ff = select(
+        "produits_shopify",
+        "select=id_shopify&boutique=eq.foulard_frenchy&statut=eq.ACTIVE",
+    )
+    ids_produits_actifs_ff = {r["id_shopify"] for r in (produits_actifs_ff or [])}
+
     variants_ff = select(
         "produits_shopify_variants",
         "select=sku,nom_complet,id_produit_shopify&boutique=eq.foulard_frenchy&sku=not.is.null",
@@ -2745,6 +2751,8 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     catalogue_ff = {}
     if variants_ff:
         for v in variants_ff:
+            if ids_produits_actifs_ff and v.get("id_produit_shopify") not in ids_produits_actifs_ff:
+                continue
             sku = (v.get("sku") or "").strip()
             if not sku or sku in catalogue_ff:
                 continue
@@ -2790,14 +2798,11 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
         rows_ff = []
         for sku, nom in catalogue_ff.items():
             data = ventes_ff.get(sku, {"quantite": 0, "ca": 0.0})
-            v_mois = round(data["quantite"] / nb_mois_ff, 1) if nb_mois_ff else (
-                "—" if data["quantite"] == 0 else data["quantite"])
             rows_ff.append({
                 "SKU":            sku,
                 "Produit":        nom,
                 "Unités vendues": data["quantite"],
                 "CA (€)":         round(data["ca"], 2),
-                "Ventes/mois":    v_mois,
             })
 
         df_ff = pd.DataFrame(rows_ff).sort_values(
