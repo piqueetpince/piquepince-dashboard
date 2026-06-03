@@ -2737,6 +2737,14 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     )
     cmds_ff = select("commandes_shopify", query_cmds_ff)
 
+    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
+    st.write(f"**[DEBUG] Commandes chargées :** {len(cmds_ff) if cmds_ff else 0}")
+    if cmds_ff:
+        exemples_ids = [c.get("id_shopify") for c in cmds_ff[:3]]
+        st.write(f"**[DEBUG] 3 premiers id_shopify :** {exemples_ids}")
+        st.write(f"**[DEBUG] Types :** {[type(v).__name__ for v in exemples_ids]}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Catalogue Foulard Frenchy
     variants_ff = select(
         "produits_shopify_variants",
@@ -2761,6 +2769,25 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
             f"&id_commande_shopify=in.({ids_ff})",
             limit=50000,
         )
+        # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────
+        st.write(f"**[DEBUG] Lignes chargées :** {len(lignes_ff) if lignes_ff else 0}")
+        if lignes_ff:
+            exemples_lignes = [
+                {"id_commande_shopify": l.get("id_commande_shopify"),
+                 "type_id": type(l.get("id_commande_shopify")).__name__,
+                 "sku": l.get("sku"),
+                 "quantite": l.get("quantite")}
+                for l in lignes_ff[:3]
+            ]
+            st.write(f"**[DEBUG] 3 premières lignes :** {exemples_lignes}")
+            # Vérification format : id_shopify commandes vs id_commande_shopify lignes
+            if cmds_ff:
+                id_cmd_exemple = cmds_ff[0].get("id_shopify")
+                id_ligne_exemple = lignes_ff[0].get("id_commande_shopify") if lignes_ff else None
+                st.write(f"**[DEBUG] Format commande id_shopify=`{id_cmd_exemple}` ({type(id_cmd_exemple).__name__}) "
+                         f"vs ligne id_commande_shopify=`{id_ligne_exemple}` ({type(id_ligne_exemple).__name__})")
+        # ─────────────────────────────────────────────────────────────────────
+
         if lignes_ff:
             for l in lignes_ff:
                 sku = (l.get("sku") or "").strip()
