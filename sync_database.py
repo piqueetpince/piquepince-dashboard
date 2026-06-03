@@ -242,6 +242,7 @@ def get_max_commande_id():
 
 def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
     page, total = 1, 0
+    _debug_done = False
     while True:
         params = {"page": page, "limit": 100, "sort": "id", **extra_params}
         r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
@@ -252,7 +253,25 @@ def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
         results = data.get("results", [])
         if not results:
             break
+
+        # DEBUG — clés disponibles dans la réponse de listing (une seule fois)
+        if not _debug_done and results:
+            st.warning(f"[DEBUG listing keys] {list(results[0].keys())}")
+            _debug_done = True
+
         for cmd in results:
+            # Passe 2 (insert_lignes=False) : si status_code est présent dans le listing,
+            # on évite l'appel detail — upsert minimal sur le statut uniquement
+            if not insert_lignes and "status_code" in cmd:
+                upsert("commandes", [{
+                    "id_wizi":      cmd["id"],
+                    "statut_code":  cmd.get("status_code"),
+                    "statut_texte": cmd.get("status_text"),
+                }], "id_wizi")
+                total += 1
+                continue
+
+            # Passe 1 (ou fallback si status_code absent du listing) : appel détail complet
             detail_r = requests.get(
                 f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders/{cmd['id']}",
                 headers=headers
@@ -395,8 +414,8 @@ def sync_commandes(token, shop_id):
         params_new["id_greater_than"] = depuis_id
     total += _sync_commandes_paginated(headers, shop_id, params_new, insert_lignes=True)
 
-    date_30j = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00+00:00")
-    total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_30j}, insert_lignes=False)
+    date_14j = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00+00:00")
+    total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_14j}, insert_lignes=False)
 
     return total
 
