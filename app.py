@@ -2798,7 +2798,6 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     ventes_ff = {}
     if lignes_ff:
         for l in lignes_ff:
-            # Normalise id_commande_shopify au format numérique pour comparer
             raw_id = str(l.get("id_commande_shopify") or "").rsplit("/", 1)[-1]
             if raw_id not in ids_valides_ff:
                 continue
