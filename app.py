@@ -2737,14 +2737,6 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
     )
     cmds_ff = select("commandes_shopify", query_cmds_ff)
 
-    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
-    st.write(f"**[DEBUG] Commandes chargées :** {len(cmds_ff) if cmds_ff else 0}")
-    if cmds_ff:
-        exemples_ids = [c.get("id_shopify") for c in cmds_ff[:3]]
-        st.write(f"**[DEBUG] 3 premiers id_shopify :** {exemples_ids}")
-        st.write(f"**[DEBUG] Types :** {[type(v).__name__ for v in exemples_ids]}")
-    # ─────────────────────────────────────────────────────────────────────────
-
     # Catalogue Foulard Frenchy
     variants_ff = select(
         "produits_shopify_variants",
@@ -2766,12 +2758,6 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
             raw = str(c.get("id_shopify") or "")
             ids_valides_ff.add(raw.rsplit("/", 1)[-1])
 
-    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
-    st.write(f"**[DEBUG] Commandes dans ids_valides_ff :** {len(ids_valides_ff)}")
-    exemples_ids_valides = list(ids_valides_ff)[:3]
-    st.write(f"**[DEBUG] 3 premiers ids_valides_ff :** {exemples_ids_valides}")
-    # ─────────────────────────────────────────────────────────────────────────
-
     # Toutes les lignes de la boutique (pas de filtre id_commande — évite le
     # problème de format GID vs numérique dans la clause in.())
     lignes_ff = select(
@@ -2780,22 +2766,6 @@ elif page == "⭐ Best-sellers Foulard Frenchy":
         "&boutique=eq.foulard_frenchy",
         limit=50000,
     )
-
-    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
-    st.write(f"**[DEBUG] Lignes totales boutique :** {len(lignes_ff) if lignes_ff else 0}")
-    if lignes_ff:
-        ids_lignes_normalises = [
-            str(l.get("id_commande_shopify") or "").rsplit("/", 1)[-1]
-            for l in lignes_ff[:3]
-        ]
-        st.write(f"**[DEBUG] 3 premiers id_commande_shopify normalisés :** {ids_lignes_normalises}")
-        intersection = ids_valides_ff & {
-            str(l.get("id_commande_shopify") or "").rsplit("/", 1)[-1]
-            for l in lignes_ff
-        }
-        st.write(f"**[DEBUG] Intersection commandes ∩ lignes :** {len(intersection)} IDs en commun "
-                 f"(exemples : {list(intersection)[:3]})")
-    # ─────────────────────────────────────────────────────────────────────────
 
     # Agréger les ventes par SKU en joignant en Python
     ventes_ff = {}
