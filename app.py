@@ -174,7 +174,7 @@ _NAV_GROUPES = {
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire"],
-    "🧣 Foulard Frenchy": ["🚨 Réapprovisionnement Foulard Frenchy"],
+    "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
 }
 
@@ -2710,6 +2710,105 @@ elif page == "⭐ Best-sellers Faire":
         csv_faire = df_faire.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exporter CSV", csv_faire, "bestsellers_faire.csv", "text/csv",
                            key="bs_faire_csv")
+
+elif page == "⭐ Best-sellers Foulard Frenchy":
+    with st.sidebar:
+        st.divider()
+        periode_ff = st.selectbox("Période", ["3 mois", "6 mois", "12 mois", "Tout"],
+                                  key="bs_ff_periode")
+
+    st.subheader("⭐ Best-sellers Foulard Frenchy")
+
+    if periode_ff == "Tout":
+        nb_mois_ff = None
+        filtre_date_ff = ""
+    else:
+        nb_mois_ff = int(periode_ff.split()[0])
+        date_limite_ff = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_ff)).strftime("%Y-%m-%dT%H:%M:%S")
+        filtre_date_ff = f"&cree_le=gte.{date_limite_ff}"
+
+    # Commandes valides (hors remboursées / annulées)
+    query_cmds_ff = (
+        "select=id_shopify"
+        "&boutique=eq.foulard_frenchy"
+        "&statut_financier=not.in.(refunded,partially_refunded)"
+        "&annule_le=is.null"
+        + filtre_date_ff
+    )
+    cmds_ff = select("commandes_shopify", query_cmds_ff)
+
+    # Catalogue Foulard Frenchy
+    variants_ff = select(
+        "produits_shopify_variants",
+        "select=sku,nom_complet,id_produit_shopify&boutique=eq.foulard_frenchy&sku=not.is.null",
+    )
+    catalogue_ff = {}
+    if variants_ff:
+        for v in variants_ff:
+            sku = (v.get("sku") or "").strip()
+            if not sku or sku in catalogue_ff:
+                continue
+            catalogue_ff[sku] = v.get("nom_complet") or sku
+
+    # Agréger les ventes par SKU
+    ventes_ff = {}
+    if cmds_ff:
+        ids_ff = ",".join(str(c["id_shopify"]) for c in cmds_ff if c.get("id_shopify"))
+        lignes_ff = select(
+            "lignes_commande_shopify",
+            f"select=sku,quantite,prix_unitaire_original"
+            f"&boutique=eq.foulard_frenchy"
+            f"&id_commande_shopify=in.({ids_ff})",
+            limit=50000,
+        )
+        if lignes_ff:
+            for l in lignes_ff:
+                sku = (l.get("sku") or "").strip()
+                if not sku:
+                    continue
+                qty = l.get("quantite") or 0
+                ca = float(l.get("prix_unitaire_original") or 0) * qty
+                if sku not in ventes_ff:
+                    ventes_ff[sku] = {"quantite": 0, "ca": 0.0}
+                ventes_ff[sku]["quantite"] += qty
+                ventes_ff[sku]["ca"] += ca
+
+    if not catalogue_ff:
+        st.info("Aucune donnée catalogue. Lance d'abord la sync Produits Foulard Frenchy.")
+    else:
+        rows_ff = []
+        for sku, nom in catalogue_ff.items():
+            data = ventes_ff.get(sku, {"quantite": 0, "ca": 0.0})
+            v_mois = round(data["quantite"] / nb_mois_ff, 1) if nb_mois_ff else (
+                "—" if data["quantite"] == 0 else data["quantite"])
+            rows_ff.append({
+                "SKU":            sku,
+                "Produit":        nom,
+                "Unités vendues": data["quantite"],
+                "CA (€)":         round(data["ca"], 2),
+                "Ventes/mois":    v_mois,
+            })
+
+        df_ff = pd.DataFrame(rows_ff).sort_values(
+            ["Unités vendues", "SKU"], ascending=[False, True]
+        )
+
+        total_unites_ff = int(df_ff["Unités vendues"].sum())
+        total_ca_ff     = df_ff["CA (€)"].sum()
+        nb_skus_vendus_ff = int((df_ff["Unités vendues"] > 0).sum())
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("📦 Unités vendues", f"{total_unites_ff:,}")
+        with col2:
+            st.metric("💶 CA", f"{total_ca_ff:,.2f} €")
+        with col3:
+            st.metric("🔢 SKUs vendus", f"{nb_skus_vendus_ff} / {len(df_ff)}")
+
+        st.dataframe(df_ff, use_container_width=True, hide_index=True)
+        csv_ff = df_ff.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv_ff, "bestsellers_foulard_frenchy.csv", "text/csv",
+                           key="bs_ff_csv")
 
 elif page == "🔗 Connexion Faire/Shopify":
     st.subheader("🔗 Connexion Faire/Shopify")
