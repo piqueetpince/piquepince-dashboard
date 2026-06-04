@@ -1,0 +1,45 @@
+name: Sync nocturne
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 3h00 UTC = 4h hiver / 5h été (heure française)
+  workflow_dispatch:        # déclenchement manuel depuis GitHub Actions
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests python-dotenv
+
+      - name: Create .env from secrets
+        run: |
+          cat > .env << 'EOF'
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}
+          GMAIL_USER=${{ secrets.GMAIL_USER }}
+          GMAIL_PASSWORD=${{ secrets.GMAIL_PASSWORD }}
+          WIZISHOP_EMAIL=${{ secrets.WIZISHOP_EMAIL }}
+          WIZISHOP_PASSWORD=${{ secrets.WIZISHOP_PASSWORD }}
+          ETSY_API_KEY=${{ secrets.ETSY_API_KEY }}
+          ETSY_REFRESH_TOKEN=${{ secrets.ETSY_REFRESH_TOKEN }}
+          ETSY_SHARED_SECRET=${{ secrets.ETSY_SHARED_SECRET }}
+          FAIRE_TOKEN=${{ secrets.FAIRE_TOKEN }}
+          SHOPIFY_FOULARD_FRENCHY_SHOP=${{ secrets.SHOPIFY_FOULARD_FRENCHY_SHOP }}
+          SHOPIFY_FOULARD_FRENCHY_TOKEN=${{ secrets.SHOPIFY_FOULARD_FRENCHY_TOKEN }}
+          EOF
+
+      - name: Sync toutes les sources
+        run: python3 sync_nuit.py
+
+      - name: Envoyer emails réapprovisionnement
+        run: python3 send_reapprovisionnement.py
