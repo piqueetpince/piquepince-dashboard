@@ -1,0 +1,20 @@
+# Credentials
+.env
+.env.*
+!.env.example
+
+# Streamlit secrets (locaux)
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+logs/
