@@ -242,7 +242,6 @@ def get_max_commande_id():
 
 def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
     page, total = 1, 0
-    _debug_done = False
     while True:
         params = {"page": page, "limit": 100, "sort": "id", **extra_params}
         r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders",
@@ -253,11 +252,6 @@ def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
         results = data.get("results", [])
         if not results:
             break
-
-        # DEBUG — clés disponibles dans la réponse de listing (une seule fois)
-        if not _debug_done and results:
-            st.warning(f"[DEBUG listing keys] {list(results[0].keys())}")
-            _debug_done = True
 
         for cmd in results:
             # Passe 2 (insert_lignes=False) : si status_code est présent dans le listing,

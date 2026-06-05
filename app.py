@@ -1937,55 +1937,142 @@ elif page == "🔎 Produits manquants sur Faire":
         fournisseurs_fixes = ["Tous", "VEINIERE", "NPC", "NPGL", "NAVARRO", "BAVOUX", "DELORME"]
         fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_fixes)
 
-    skus_data = select("skus", "select=sku,stock&statut=eq.visible")
-    faire_variants = select("produits_faire_variants", "select=sku")
+    skus_data    = select("skus", "select=sku,stock&statut=eq.visible")
     produits_data = select("produits",
         "select=sku,nom,fournisseur,nom_categorie,prix_vente_ht,reference_fournisseur")
 
+    # Variants Faire — uniquement ceux dont le produit parent est PUBLIÉ
+    produits_faire_publis = select("produits_faire",
+        "select=id_faire&lifecycle_state=eq.PUBLISHED")
+    ids_publis = {p["id_faire"] for p in (produits_faire_publis or [])}
+
+    faire_variants = select("produits_faire_variants",
+        "select=sku,id_produit_faire")
+    if faire_variants and ids_publis:
+        skus_faire = {
+            v["sku"] for v in faire_variants
+            if v.get("sku") and v.get("id_produit_faire") in ids_publis
+        }
+    else:
+        skus_faire = {v["sku"] for v in (faire_variants or []) if v.get("sku")}
+
+    # SKUs à ignorer
+    faire_ignores_data = select("faire_ignores",
+        "select=sku,raison,created_at&order=created_at.desc")
+    faire_ignores_set = {r["sku"] for r in faire_ignores_data} if faire_ignores_data else set()
+
     if skus_data:
         skus_wizi = {s["sku"] for s in skus_data}
-        skus_faire = {v["sku"] for v in faire_variants if v.get("sku")} if faire_variants else set()
-        prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
+        prod_map  = {p["sku"]: p for p in produits_data} if produits_data else {}
         sku_stock = {s["sku"]: int(s["stock"] or 0) for s in skus_data}
 
         rows = []
-        for sku in skus_wizi - skus_faire:
+        for sku in skus_wizi - skus_faire - faire_ignores_set:
             prod = get_prod_parent(sku, prod_map)
             rows.append({
-                "SKU": sku,
-                "Produit": prod.get("nom") or "",
-                "Fournisseur": prod.get("fournisseur") or "",
-                "Catégorie": prod.get("nom_categorie") or "",
-                "Prix vente HT": prod.get("prix_vente_ht") or 0,
-                "Stock": sku_stock.get(sku, 0),
-                "Réf. fournisseur": prod.get("reference_fournisseur") or ""
+                "SKU":              sku,
+                "Produit":          prod.get("nom") or "",
+                "Fournisseur":      prod.get("fournisseur") or "",
+                "Catégorie":        prod.get("nom_categorie") or "",
+                "Prix vente HT":    prod.get("prix_vente_ht") or 0,
+                "Stock":            sku_stock.get(sku, 0),
+                "Réf. fournisseur": prod.get("reference_fournisseur") or "",
             })
 
         df_manquants = pd.DataFrame(rows) if rows else pd.DataFrame()
-        total_manquants = len(df_manquants)
 
         if fournisseur_filtre != "Tous" and not df_manquants.empty:
             df_filtre = df_manquants[df_manquants["Fournisseur"] == fournisseur_filtre]
         else:
-            df_filtre = df_manquants
+            df_filtre = df_manquants.copy()
 
-        nb_filtre = len(df_filtre)
-
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total SKUs manquants sur Faire", total_manquants)
+            st.metric("Total SKUs manquants", len(df_manquants))
         with col2:
-            label = f"Manquants — {fournisseur_filtre}" if fournisseur_filtre != "Tous" else "Manquants (tous fournisseurs)"
-            st.metric(label, nb_filtre)
+            label = f"Manquants — {fournisseur_filtre}" if fournisseur_filtre != "Tous" else "Affichés"
+            st.metric(label, len(df_filtre))
+        with col3:
+            st.metric("🚫 Ignorés", len(faire_ignores_set))
 
         if not df_filtre.empty:
-            df_show = df_filtre.sort_values("SKU").reset_index(drop=True)
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
-            csv = df_show.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Télécharger en CSV", csv, "produits_manquants_faire.csv", "text/csv")
+            df_editor = df_filtre.sort_values("SKU").reset_index(drop=True).copy()
+            df_editor["Ignorer ?"] = False
+
+            with st.form("form_faire_ignores"):
+                edited = st.data_editor(
+                    df_editor,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "SKU":              st.column_config.TextColumn(disabled=True),
+                        "Produit":          st.column_config.TextColumn(disabled=True),
+                        "Fournisseur":      st.column_config.TextColumn(disabled=True),
+                        "Catégorie":        st.column_config.TextColumn(disabled=True),
+                        "Prix vente HT":    st.column_config.NumberColumn(disabled=True),
+                        "Stock":            st.column_config.NumberColumn(disabled=True),
+                        "Réf. fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Ignorer ?":        st.column_config.CheckboxColumn(),
+                    }
+                )
+                col_sub1, col_sub2 = st.columns([3, 1])
+                with col_sub1:
+                    submitted_ign = st.form_submit_button(
+                        "🚫 Ignorer les produits sélectionnés", type="secondary")
+                with col_sub2:
+                    csv = df_filtre.drop(columns=["Ignorer ?"], errors="ignore").to_csv(
+                        index=False).encode("utf-8")
+                    st.download_button("📥 Exporter CSV", csv,
+                        "produits_manquants_faire.csv", "text/csv",
+                        key="dl_faire_manquants")
+
+            if submitted_ign:
+                a_ignorer = edited[edited["Ignorer ?"] == True]
+                if a_ignorer.empty:
+                    st.warning("Aucun produit sélectionné.")
+                else:
+                    nb_ign = 0
+                    for _, r in a_ignorer.iterrows():
+                        upsert("faire_ignores", [{
+                            "sku": r["SKU"],
+                            "raison": None,
+                        }], "sku")
+                        nb_ign += 1
+                    st.success(f"✓ {nb_ign} produit(s) ignoré(s) !")
+                    st.rerun()
         else:
             st.info("Aucun SKU manquant pour ce filtre." if fournisseur_filtre != "Tous"
-                    else "Tous les SKUs Wizishop sont présents sur Faire.")
+                    else "Tous les SKUs Wizishop sont présents sur Faire (publiés).")
+
+        # ── Produits exclus ───────────────────────────────────────────────────
+        st.divider()
+        st.subheader("🚫 Produits exclus de Faire")
+
+        if faire_ignores_data:
+            df_ign = pd.DataFrame(faire_ignores_data)
+            df_ign["created_at"] = pd.to_datetime(
+                df_ign["created_at"]).dt.strftime("%d/%m/%Y")
+            df_ign_show = df_ign[["sku", "raison", "created_at"]].copy()
+            df_ign_show.columns = ["SKU", "Raison", "Date"]
+            st.dataframe(df_ign_show, use_container_width=True, hide_index=True)
+
+            col_ret1, col_ret2 = st.columns([3, 1])
+            with col_ret1:
+                sku_retirer = st.selectbox(
+                    "Sélectionner un SKU à réintégrer",
+                    options=[""] + df_ign["sku"].tolist(),
+                    format_func=lambda x: x if x else "Choisir un SKU…",
+                    key="faire_ignores_retirer"
+                )
+            with col_ret2:
+                st.write("")
+                st.write("")
+                if sku_retirer and st.button("↩️ Réintégrer", type="secondary"):
+                    delete("faire_ignores", f"sku=eq.{sku_retirer}")
+                    st.success(f"✓ {sku_retirer} réintégré !")
+                    st.rerun()
+        else:
+            st.info("Aucun produit exclu.")
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation.")
 
