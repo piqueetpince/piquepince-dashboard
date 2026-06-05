@@ -1999,6 +1999,11 @@ elif page == "🔎 Produits manquants sur Faire":
             df_editor = df_filtre.sort_values("SKU").reset_index(drop=True).copy()
             df_editor["Ignorer ?"] = False
 
+            csv = df_filtre.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Exporter CSV", csv,
+                "produits_manquants_faire.csv", "text/csv",
+                key="dl_faire_manquants")
+
             with st.form("form_faire_ignores"):
                 edited = st.data_editor(
                     df_editor,
@@ -2015,16 +2020,8 @@ elif page == "🔎 Produits manquants sur Faire":
                         "Ignorer ?":        st.column_config.CheckboxColumn(),
                     }
                 )
-                col_sub1, col_sub2 = st.columns([3, 1])
-                with col_sub1:
-                    submitted_ign = st.form_submit_button(
-                        "🚫 Ignorer les produits sélectionnés", type="secondary")
-                with col_sub2:
-                    csv = df_filtre.drop(columns=["Ignorer ?"], errors="ignore").to_csv(
-                        index=False).encode("utf-8")
-                    st.download_button("📥 Exporter CSV", csv,
-                        "produits_manquants_faire.csv", "text/csv",
-                        key="dl_faire_manquants")
+                submitted_ign = st.form_submit_button(
+                    "🚫 Ignorer les produits sélectionnés", type="secondary")
 
             if submitted_ign:
                 a_ignorer = edited[edited["Ignorer ?"] == True]
