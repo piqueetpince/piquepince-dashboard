@@ -12,7 +12,7 @@ load_dotenv()
 from ankorstore_api import api_get, get_headers  # noqa: E402 (mock injection side-effect)
 
 import streamlit as st
-from supabase_api import upsert, upsert_ignore, select
+from supabase_api import upsert, upsert_ignore, select, delete
 
 import requests
 
@@ -99,6 +99,9 @@ def sync_ankorstore_produits():
         prod_id   = product.get("id")
         prod_attr = product.get("attributes") or {}
 
+        if prod_attr.get("archived") == True:
+            continue
+
         upsert("produits_ankorstore", [{
             "id_ankorstore":         prod_id,
             "nom":                   prod_attr.get("name"),
@@ -112,6 +115,10 @@ def sync_ankorstore_produits():
 
     for variant in variants:
         v_attr   = variant.get("attributes") or {}
+
+        if v_attr.get("archivedAt") is not None:
+            continue
+
         prod_ref = (
             (variant.get("relationships") or {})
             .get("product", {})
@@ -130,7 +137,30 @@ def sync_ankorstore_produits():
         }], "id_ankorstore")
         nb_variants += 1
 
-    print(f"  → {nb_produits} produits, {nb_variants} variants synchronisés")
+    # ── Nettoyage : produits absents de l'API (archivés ou supprimés) ────────
+    # prod_ids ne contient que les produits non-archivés — not.in. couvre donc
+    # à la fois les produits archivés et les produits définitivement supprimés.
+    prod_ids_str  = ",".join(p.get("id") for p in products
+                             if p.get("id") and not (p.get("attributes") or {}).get("archived"))
+    nb_prod_suppr = 0
+    nb_var_suppr  = 0
+
+    if prod_ids_str:
+        a_supprimer = select("produits_ankorstore",
+            f"select=id_ankorstore&id_ankorstore=not.in.({prod_ids_str})")
+        if a_supprimer:
+            nb_prod_suppr = len(a_supprimer)
+            delete("produits_ankorstore", f"id_ankorstore=not.in.({prod_ids_str})")
+
+        orphelins = select("produits_ankorstore_variants",
+            f"select=id_ankorstore&id_produit_ankorstore=not.in.({prod_ids_str})")
+        if orphelins:
+            nb_var_suppr = len(orphelins)
+            delete("produits_ankorstore_variants",
+                   f"id_produit_ankorstore=not.in.({prod_ids_str})")
+
+    print(f"  → {nb_produits} produits, {nb_variants} variants synchronisés"
+          f" | supprimés : {nb_prod_suppr} produits, {nb_var_suppr} variants")
     return nb_produits, nb_variants
 
 
