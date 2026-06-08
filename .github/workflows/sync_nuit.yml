@@ -37,6 +37,8 @@ jobs:
           SHOPIFY_FOULARD_FRENCHY_SHOP=${{ secrets.SHOPIFY_FOULARD_FRENCHY_SHOP }}
           SHOPIFY_FOULARD_FRENCHY_TOKEN=${{ secrets.SHOPIFY_FOULARD_FRENCHY_TOKEN }}
           ETSY_SHOP_ID=${{ secrets.ETSY_SHOP_ID }}
+          ANKORSTORE_CLIENT_ID=${{ secrets.ANKORSTORE_CLIENT_ID }}
+          ANKORSTORE_CLIENT_SECRET=${{ secrets.ANKORSTORE_CLIENT_SECRET }}
           EOF
 
       - name: Sync toutes les sources

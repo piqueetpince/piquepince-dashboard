@@ -13,6 +13,7 @@ Slugs disponibles :
     etsy  etsy-commandes  etsy-produits
     faire  faire-commandes  faire-produits
     shopify  shopify-produits  shopify-commandes
+    ankorstore  ankorstore-produits  ankorstore-commandes
 
 Credentials lus depuis .env :
     SUPABASE_URL, SUPABASE_KEY
@@ -99,6 +100,7 @@ from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
+from sync_ankorstore import sync_ankorstore_produits, sync_ankorstore_commandes
 import etsy_api
 
 # ── Config email ──────────────────────────────────────────────────────────────
@@ -237,6 +239,24 @@ if any(_active(s) for s in _shopify_slugs):
             run("Shopify FF — produits",  _shopify_produits)
         if _active("shopify-commandes"):
             run("Shopify FF — commandes", _shopify_commandes)
+
+# ── 7. Ankorstore ─────────────────────────────────────────────────────────────
+
+_ankorstore_slugs = ["ankorstore-produits", "ankorstore-commandes"]
+
+if any(_active(s) for s in _ankorstore_slugs):
+    def _ankorstore_produits():
+        nb_p, nb_v = sync_ankorstore_produits()
+        return f"{nb_p} produits, {nb_v} variants"
+
+    def _ankorstore_commandes():
+        nb_c, nb_l = sync_ankorstore_commandes()
+        return f"{nb_c} commandes, {nb_l} lignes"
+
+    if _active("ankorstore-produits"):
+        run("Ankorstore — produits",  _ankorstore_produits)
+    if _active("ankorstore-commandes"):
+        run("Ankorstore — commandes", _ankorstore_commandes)
 
 # ── Résumé console ────────────────────────────────────────────────────────────
 
