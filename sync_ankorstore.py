@@ -88,6 +88,11 @@ def sync_ankorstore_produits():
     """
     # ── Passe 1 : produits ────────────────────────────────────────────────────
     products, _ = _get_all_pages_with_included("/api/v1/products")
+
+    # ── Passe 2 : variants ────────────────────────────────────────────────────
+    variants, _ = _get_all_pages_with_included(
+        "/api/v1/product-variants", {"include": "product"})
+
     nb_produits = 0
 
     for product in products:
@@ -103,8 +108,6 @@ def sync_ankorstore_produits():
         }], "id_ankorstore")
         nb_produits += 1
 
-    # ── Passe 2 : variants ────────────────────────────────────────────────────
-    variants, _ = _get_all_pages_with_included("/api/v1/product-variants")
     nb_variants = 0
 
     for variant in variants:
