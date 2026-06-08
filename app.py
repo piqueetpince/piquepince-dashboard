@@ -175,6 +175,8 @@ _NAV_GROUPES = {
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
+    "🛍️ Ankorstore":    ["⭐ Best-sellers Ankorstore", "📊 Gestion stock Ankorstore",
+                         "🔎 Produits manquants sur Ankorstore", "🔍 Vérification Ankorstore"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
 }
 
@@ -3331,3 +3333,377 @@ elif page == "🚨 Réapprovisionnement Foulard Frenchy":
                      use_container_width=True, hide_index=True)
     else:
         st.info("Aucune commande fournisseur en cours.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 🛍️ ANKORSTORE
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif page == "⭐ Best-sellers Ankorstore":
+    with st.sidebar:
+        st.divider()
+        periode_ank = st.selectbox("Période", ["3 mois", "6 mois", "12 mois", "Tout"],
+                                   key="bs_ank_periode")
+
+    st.subheader("⭐ Best-sellers Ankorstore")
+
+    if periode_ank == "Tout":
+        query_cmds_ank = (
+            "select=id_ankorstore"
+            "&source=eq.ankorstore"
+            "&statut_texte=not.eq.cancelled"
+        )
+        nb_mois_ank = None
+    else:
+        nb_mois_ank = int(periode_ank.split()[0])
+        date_limite_ank = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_ank)).strftime("%Y-%m-%dT%H:%M:%S")
+        query_cmds_ank = (
+            "select=id_ankorstore"
+            "&source=eq.ankorstore"
+            "&statut_texte=not.eq.cancelled"
+            f"&date_commande=gte.{date_limite_ank}"
+        )
+
+    # Catalogue Ankorstore — variants + nom produit parent
+    variants_ank_bs = select("produits_ankorstore_variants",
+        "select=sku,nom,prix_grossiste,id_produit_ankorstore&sku=not.is.null")
+    produits_ank_bs = select("produits_ankorstore", "select=id_ankorstore,nom")
+    produit_map_ank = {p["id_ankorstore"]: p.get("nom") for p in (produits_ank_bs or [])}
+
+    catalogue_ank = {}
+    for v in (variants_ank_bs or []):
+        sku = (v.get("sku") or "").strip()
+        if not sku or sku in catalogue_ank:
+            continue
+        nom = produit_map_ank.get(v.get("id_produit_ankorstore")) or v.get("nom") or sku
+        catalogue_ank[sku] = nom
+
+    cmds_ank_bs = select("commandes", query_cmds_ank)
+
+    ventes_ank = {}
+    if cmds_ank_bs:
+        ids_ank_bs = ",".join(c["id_ankorstore"] for c in cmds_ank_bs if c.get("id_ankorstore"))
+        if ids_ank_bs:
+            lignes_ank_bs = select(
+                "lignes_commande",
+                f"select=sku,quantite,prix_unitaire_ttc"
+                f"&source=eq.ankorstore&id_commande=in.({ids_ank_bs})",
+                limit=50000,
+            )
+            for l in (lignes_ank_bs or []):
+                sku = (l.get("sku") or "").strip()
+                if not sku:
+                    continue
+                qty   = l.get("quantite") or 0
+                ca_ht = float(l.get("prix_unitaire_ttc") or 0) / 1.2 * qty
+                if sku not in ventes_ank:
+                    ventes_ank[sku] = {"quantite": 0, "ca_ht": 0.0}
+                ventes_ank[sku]["quantite"] += qty
+                ventes_ank[sku]["ca_ht"]    += ca_ht
+
+    if not catalogue_ank:
+        st.info("Aucune donnée catalogue. Lance d'abord la sync Produits Ankorstore.")
+    else:
+        rows_ank_bs = []
+        for sku, nom in catalogue_ank.items():
+            d = ventes_ank.get(sku, {"quantite": 0, "ca_ht": 0.0})
+            rows_ank_bs.append({
+                "SKU":            sku,
+                "Produit":        nom,
+                "Unités vendues": d["quantite"],
+                "CA HT (€)":      round(d["ca_ht"], 2),
+            })
+
+        df_ank_bs = pd.DataFrame(rows_ank_bs).sort_values(
+            ["Unités vendues", "SKU"], ascending=[False, True])
+
+        total_u_ank  = int(df_ank_bs["Unités vendues"].sum())
+        total_ca_ank = df_ank_bs["CA HT (€)"].sum()
+        nb_skus_ank  = int((df_ank_bs["Unités vendues"] > 0).sum())
+
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric("📦 Unités vendues", f"{total_u_ank:,}")
+        with col2: st.metric("💶 CA HT", f"{total_ca_ank:,.2f} €")
+        with col3: st.metric("🔢 SKUs vendus", f"{nb_skus_ank} / {len(df_ank_bs)}")
+
+        st.dataframe(df_ank_bs, use_container_width=True, hide_index=True)
+        st.download_button("📥 Exporter CSV",
+            df_ank_bs.to_csv(index=False).encode("utf-8"),
+            "bestsellers_ankorstore.csv", "text/csv", key="bs_ank_csv")
+
+
+elif page == "📊 Gestion stock Ankorstore":
+    st.subheader("📊 Gestion stock Ankorstore")
+
+    with st.sidebar:
+        st.divider()
+        nb_mois_ga   = st.slider("Période ventes (mois)", 1, 24, 12, key="gs_ank_mois")
+        seuil_j_ga   = st.slider("Seuil alerte jours de stock", 7, 90, 30, key="gs_ank_seuil")
+        alerte_ga    = st.selectbox("Filtre alerte",
+            ["Toutes", "🔴 Urgent uniquement", "🔴 + 🟡 Attention"], key="gs_ank_alerte")
+
+    produits_ank_actifs_ga = select("produits_ankorstore",
+        "select=id_ankorstore&active=eq.true&archived=eq.false")
+    ids_actifs_ga = {p["id_ankorstore"] for p in (produits_ank_actifs_ga or [])}
+
+    ank_vars_ga   = select("produits_ankorstore_variants",
+        "select=sku,nom,stock,id_produit_ankorstore")
+    skus_ga       = select("skus", "select=sku,stock")
+    prod_wizi_ga  = select("produits", "select=sku,nom")
+    prod_map_ga   = {p["sku"]: p for p in (prod_wizi_ga or [])}
+    sku_stock_wizi_ga = {s["sku"]: int(s["stock"] or 0) for s in (skus_ga or [])}
+
+    date_lim_ga = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_ga)).strftime("%Y-%m-%dT%H:%M:%S")
+    cmds_ga = select("commandes",
+        f"select=id_ankorstore&source=eq.ankorstore&statut_texte=not.eq.cancelled"
+        f"&date_commande=gte.{date_lim_ga}")
+
+    if ank_vars_ga:
+        ventes_ga = {}
+        if cmds_ga:
+            ids_ga = ",".join(c["id_ankorstore"] for c in cmds_ga if c.get("id_ankorstore"))
+            if ids_ga:
+                lignes_ga = select("lignes_commande",
+                    f"select=sku,quantite&source=eq.ankorstore&id_commande=in.({ids_ga})",
+                    limit=50000)
+                for l in (lignes_ga or []):
+                    k = l.get("sku") or ""
+                    if k:
+                        ventes_ga[k] = ventes_ga.get(k, 0) + (l.get("quantite") or 0)
+
+        rows_ga = []
+        for v in ank_vars_ga:
+            sku = (v.get("sku") or "").strip()
+            if not sku:
+                continue
+            is_active  = v.get("id_produit_ankorstore") in ids_actifs_ga
+            stock_ank  = int(v.get("stock") or 0)
+            stock_wizi = sku_stock_wizi_ga.get(sku, 0)
+            nom        = get_prod_parent(sku, prod_map_ga).get("nom", "") or v.get("nom", "") or sku
+            v_ank      = round(ventes_ga.get(sku, 0) / nb_mois_ga, 1)
+            ventes_j   = v_ank / 30
+            jours_stk  = round(stock_wizi / ventes_j) if ventes_j > 0 else 999
+            ecart      = stock_wizi - stock_ank
+
+            if is_active and jours_stk < seuil_j_ga and v_ank > 0:
+                alerte, prio = "🔴 URGENT", 1
+            elif is_active and ecart > 0 and v_ank > 0:
+                alerte, prio = "🟡 ATTENTION", 2
+            elif not is_active and v_ank > 0:
+                alerte, prio = "🟡 ATTENTION", 2
+            else:
+                alerte, prio = "🟢 OK", 4
+
+            rows_ga.append({
+                "SKU": sku, "Produit": nom,
+                "Stock Wizishop": stock_wizi, "Stock Ankorstore": stock_ank,
+                "Écart": ecart, "Ventes/mois": v_ank,
+                "Jours de stock": jours_stk if jours_stk < 999 else "—",
+                "Actif": "✅" if is_active else "⏸️",
+                "Alerte": alerte, "_priorite": prio,
+            })
+
+        df_ga = pd.DataFrame(rows_ga)
+        df_ga = df_ga[~((df_ga["Stock Wizishop"] == 0) & (df_ga["Stock Ankorstore"] == 0))]
+
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric("🔴 Urgent",    len(df_ga[df_ga["Alerte"] == "🔴 URGENT"]))
+        with col2: st.metric("🟡 Attention", len(df_ga[df_ga["Alerte"] == "🟡 ATTENTION"]))
+        with col3: st.metric("🟢 OK",        len(df_ga[df_ga["Alerte"] == "🟢 OK"]))
+
+        if alerte_ga == "🔴 Urgent uniquement":
+            df_ga = df_ga[df_ga["Alerte"] == "🔴 URGENT"]
+        elif alerte_ga == "🔴 + 🟡 Attention":
+            df_ga = df_ga[df_ga["Alerte"].isin(["🔴 URGENT", "🟡 ATTENTION"])]
+
+        df_ga = df_ga.sort_values("_priorite").drop(columns=["_priorite"]).reset_index(drop=True)
+        st.dataframe(df_ga, use_container_width=True, hide_index=True)
+        st.download_button("📥 Télécharger en CSV",
+            df_ga.to_csv(index=False).encode("utf-8"),
+            "gestion_stock_ankorstore.csv", "text/csv", key="dl_gs_ank")
+    else:
+        st.info("Aucune donnée. Lance d'abord la sync Produits Ankorstore.")
+
+
+elif page == "🔎 Produits manquants sur Ankorstore":
+    st.subheader("🔎 Produits manquants sur Ankorstore")
+
+    with st.sidebar:
+        st.divider()
+        fournisseurs_ank_ma = ["Tous", "VEINIERE", "NPC", "NPGL", "NAVARRO", "BAVOUX", "DELORME"]
+        fourn_ank_ma = st.selectbox("Fournisseur", fournisseurs_ank_ma, key="manquants_ank_fourn")
+
+    skus_data_ma   = select("skus", "select=sku,stock&statut=eq.visible")
+    prod_data_ma   = select("produits",
+        "select=sku,nom,fournisseur,nom_categorie,prix_vente_ht,reference_fournisseur")
+
+    prod_ank_actifs_ma = select("produits_ankorstore",
+        "select=id_ankorstore&active=eq.true&archived=eq.false")
+    ids_actifs_ma = {p["id_ankorstore"] for p in (prod_ank_actifs_ma or [])}
+
+    ank_vars_ma = select("produits_ankorstore_variants",
+        "select=sku,id_produit_ankorstore&sku=not.is.null")
+    if ank_vars_ma and ids_actifs_ma:
+        skus_ank_ma = {
+            v["sku"] for v in ank_vars_ma
+            if v.get("sku") and v.get("id_produit_ankorstore") in ids_actifs_ma
+        }
+    else:
+        skus_ank_ma = {v["sku"] for v in (ank_vars_ma or []) if v.get("sku")}
+
+    ank_ignores_data = select("ankorstore_ignores",
+        "select=sku,raison,created_at&order=created_at.desc")
+    ank_ignores_set = {r["sku"] for r in ank_ignores_data} if ank_ignores_data else set()
+
+    if skus_data_ma:
+        skus_wizi_ma  = {s["sku"] for s in skus_data_ma}
+        prod_map_ma   = {p["sku"]: p for p in prod_data_ma} if prod_data_ma else {}
+        sku_stock_ma  = {s["sku"]: int(s["stock"] or 0) for s in skus_data_ma}
+
+        rows_ma = []
+        for sku in skus_wizi_ma - skus_ank_ma - ank_ignores_set:
+            prod = get_prod_parent(sku, prod_map_ma)
+            rows_ma.append({
+                "SKU":              sku,
+                "Produit":          prod.get("nom") or "",
+                "Fournisseur":      prod.get("fournisseur") or "",
+                "Catégorie":        prod.get("nom_categorie") or "",
+                "Prix vente HT":    prod.get("prix_vente_ht") or 0,
+                "Stock":            sku_stock_ma.get(sku, 0),
+                "Réf. fournisseur": prod.get("reference_fournisseur") or "",
+            })
+
+        df_ma = pd.DataFrame(rows_ma) if rows_ma else pd.DataFrame()
+        df_ma_filtre = (df_ma[df_ma["Fournisseur"] == fourn_ank_ma]
+                        if fourn_ank_ma != "Tous" and not df_ma.empty else df_ma.copy())
+
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric("Total SKUs manquants", len(df_ma))
+        with col2:
+            lbl = f"Manquants — {fourn_ank_ma}" if fourn_ank_ma != "Tous" else "Affichés"
+            st.metric(lbl, len(df_ma_filtre))
+        with col3: st.metric("🚫 Ignorés", len(ank_ignores_set))
+
+        if not df_ma_filtre.empty:
+            df_ed_ma = df_ma_filtre.sort_values("SKU").reset_index(drop=True).copy()
+            df_ed_ma["Ignorer ?"] = False
+
+            st.download_button("📥 Exporter CSV",
+                df_ma_filtre.to_csv(index=False).encode("utf-8"),
+                "produits_manquants_ankorstore.csv", "text/csv", key="dl_manquants_ank")
+
+            with st.form("form_ank_ignores"):
+                ed_ma = st.data_editor(df_ed_ma, use_container_width=True, hide_index=True,
+                    column_config={
+                        "SKU":              st.column_config.TextColumn(disabled=True),
+                        "Produit":          st.column_config.TextColumn(disabled=True),
+                        "Fournisseur":      st.column_config.TextColumn(disabled=True),
+                        "Catégorie":        st.column_config.TextColumn(disabled=True),
+                        "Prix vente HT":    st.column_config.NumberColumn(disabled=True),
+                        "Stock":            st.column_config.NumberColumn(disabled=True),
+                        "Réf. fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Ignorer ?":        st.column_config.CheckboxColumn(),
+                    })
+                submitted_ma = st.form_submit_button(
+                    "🚫 Ignorer les produits sélectionnés", type="secondary")
+
+            if submitted_ma:
+                a_ign = ed_ma[ed_ma["Ignorer ?"] == True]
+                if a_ign.empty:
+                    st.warning("Aucun produit sélectionné.")
+                else:
+                    for _, r in a_ign.iterrows():
+                        upsert("ankorstore_ignores", [{"sku": r["SKU"], "raison": None}], "sku")
+                    st.success(f"✓ {len(a_ign)} produit(s) ignoré(s) !")
+                    st.rerun()
+        else:
+            st.info("Aucun SKU manquant pour ce filtre." if fourn_ank_ma != "Tous"
+                    else "Tous les SKUs Wizishop sont présents sur Ankorstore (actifs).")
+
+        st.divider()
+        st.subheader("🚫 Produits exclus d'Ankorstore")
+
+        if ank_ignores_data:
+            df_ign_ma = pd.DataFrame(ank_ignores_data)
+            df_ign_ma["created_at"] = pd.to_datetime(
+                df_ign_ma["created_at"]).dt.strftime("%d/%m/%Y")
+            df_ign_ma = df_ign_ma[["sku", "raison", "created_at"]].rename(
+                columns={"sku": "SKU", "raison": "Raison", "created_at": "Date"})
+            st.dataframe(df_ign_ma, use_container_width=True, hide_index=True)
+
+            col_r1, col_r2 = st.columns([3, 1])
+            with col_r1:
+                sku_ret_ma = st.selectbox("Sélectionner un SKU à réintégrer",
+                    options=[""] + df_ign_ma["SKU"].tolist(),
+                    format_func=lambda x: x if x else "Choisir un SKU…",
+                    key="ank_ignores_retirer")
+            with col_r2:
+                st.write(""); st.write("")
+                if sku_ret_ma and st.button("↩️ Réintégrer", type="secondary",
+                                             key="btn_ank_reintegrer"):
+                    delete("ankorstore_ignores", f"sku=eq.{sku_ret_ma}")
+                    st.success(f"✓ {sku_ret_ma} réintégré !")
+                    st.rerun()
+        else:
+            st.info("Aucun produit exclu.")
+    else:
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+
+
+elif page == "🔍 Vérification Ankorstore":
+    st.subheader("🔍 Vérification Ankorstore")
+
+    tab_vp, = st.tabs(["💰 Vérification prix"])
+
+    with tab_vp:
+        COEFF_GROSSISTE_ANK = 2.50   # coefficient retail / grossiste cible
+        SEUIL_ECART_ANK     = 2.0    # seuil alerte en %
+
+        ank_vars_vp   = select("produits_ankorstore_variants",
+            "select=sku,nom,prix_grossiste,id_produit_ankorstore&sku=not.is.null")
+        prod_wizi_vp  = select("produits", "select=sku,nom,prix_vente_ht")
+        prod_map_vp   = {p["sku"]: p for p in (prod_wizi_vp or [])}
+
+        vars_vp = [v for v in (ank_vars_vp or []) if v.get("sku")]
+
+        if not vars_vp:
+            st.info("Aucun variant avec SKU. Lance d'abord la sync Produits Ankorstore.")
+        else:
+            rows_vp = []
+            for v in vars_vp:
+                sku            = v["sku"]
+                prod_wizi      = get_prod_parent(sku, prod_map_vp)
+                nom            = prod_wizi.get("nom", "") or v.get("nom", "") or sku
+                prix_ank       = float(v.get("prix_grossiste") or 0)
+                prix_wizi_ht   = float(prod_wizi.get("prix_vente_ht") or 0)
+                prix_wizi_gros = round(prix_wizi_ht / COEFF_GROSSISTE_ANK, 2) if COEFF_GROSSISTE_ANK else 0
+                if prix_ank > 0 and prix_wizi_gros > 0:
+                    ecart_pct = round((prix_ank - prix_wizi_gros) / prix_wizi_gros * 100, 1)
+                else:
+                    ecart_pct = None
+                rows_vp.append({
+                    "SKU": sku, "Nom": nom,
+                    "Prix Ankorstore (€)":       prix_ank,
+                    "Prix Wizishop grossiste (€)": prix_wizi_gros,
+                    "Écart (%)": ecart_pct,
+                })
+
+            df_vp      = pd.DataFrame(rows_vp)
+            df_vp_ecart = df_vp[
+                df_vp["Écart (%)"].notna() & (df_vp["Écart (%)"].abs() > SEUIL_ECART_ANK)
+            ]
+
+            col1, col2 = st.columns(2)
+            with col1: st.metric("Total variants", len(df_vp))
+            with col2: st.metric(f"Écart > {SEUIL_ECART_ANK}%", len(df_vp_ecart))
+
+            afficher_tous_vp = st.checkbox("Afficher tous les variants",
+                                           key="vp_ank_tous")
+            df_disp = (df_vp.sort_values("SKU") if afficher_tous_vp
+                       else df_vp_ecart.sort_values("Écart (%)",
+                            ascending=False, key=lambda s: s.abs()))
+
+            st.dataframe(df_disp.reset_index(drop=True),
+                         use_container_width=True, hide_index=True)
+            st.download_button("📥 Exporter CSV",
+                df_disp.to_csv(index=False).encode("utf-8"),
+                "verification_prix_ankorstore.csv", "text/csv", key="dl_vp_ank")
