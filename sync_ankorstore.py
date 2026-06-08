@@ -202,6 +202,83 @@ def sync_ankorstore_commandes():
     return nb_commandes, nb_lignes
 
 
+# ── Sync stock ───────────────────────────────────────────────────────────────
+
+def sync_ankorstore_stock():
+    """
+    Pousse le stock Wizishop vers Ankorstore pour chaque variant dont le SKU
+    existe dans la table skus. Ne met à jour que si le stock diffère.
+    Retourne (nb_mis_a_jour, nb_erreurs, nb_sku_inconnus).
+    """
+    # Variants Ankorstore avec stock actuel
+    ank_variants = select(
+        "produits_ankorstore_variants",
+        "select=id_ankorstore,sku,stock&sku=not.is.null",
+    )
+    if not ank_variants:
+        print("  → Aucun variant Ankorstore en base.")
+        return 0, 0, 0
+
+    # Stock Wizishop (tous les SKUs visibles)
+    wizi_skus = select("skus", "select=sku,stock&statut=eq.visible")
+    stock_wizi_map = {
+        r["sku"]: int(r.get("stock") or 0)
+        for r in (wizi_skus or [])
+    }
+
+    nb_maj      = 0
+    nb_erreurs  = 0
+    nb_inconnus = 0
+
+    patch_headers = {
+        **get_headers(),
+        "Content-Type": "application/vnd.api+json",
+    }
+
+    for variant in ank_variants:
+        variant_id  = variant.get("id_ankorstore")
+        sku         = (variant.get("sku") or "").strip()
+        stock_ank   = int(variant.get("stock") or 0)
+
+        if sku not in stock_wizi_map:
+            nb_inconnus += 1
+            continue
+
+        stock_wizi = stock_wizi_map[sku]
+
+        if stock_wizi == stock_ank:
+            continue  # pas de changement — évite l'appel inutile
+
+        url = f"https://www.ankorstore.com/api/v1/product-variants/{variant_id}/stock"
+        body = {
+            "data": {
+                "type":       "product-variants",
+                "id":         variant_id,
+                "attributes": {"stockQuantity": stock_wizi},
+            }
+        }
+        r = requests.patch(url, headers=patch_headers, json=body, timeout=15)
+
+        if r.status_code in (200, 204):
+            nb_maj += 1
+            # Met à jour le stock local pour éviter les recalculs si appelé en boucle
+            upsert("produits_ankorstore_variants", [{
+                "id_ankorstore": variant_id,
+                "stock":         stock_wizi,
+            }], "id_ankorstore")
+        else:
+            nb_erreurs += 1
+            print(f"  ⚠️  Erreur stock {sku} ({variant_id}): "
+                  f"HTTP {r.status_code} — {r.text[:150]}")
+
+        time.sleep(0.1)  # respecte le rate-limit Ankorstore
+
+    print(f"  → {nb_maj} variants mis à jour, "
+          f"{nb_erreurs} erreur(s), "
+          f"{nb_inconnus} SKU(s) non trouvés dans Wizishop")
+    return nb_maj, nb_erreurs, nb_inconnus
+
+
 # ── Log ───────────────────────────────────────────────────────────────────────
 
 def log_sync_ankorstore(table: str, nb: int, statut: str, message: str, duree: float):

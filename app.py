@@ -3652,18 +3652,289 @@ elif page == "🔎 Produits manquants sur Ankorstore":
 elif page == "🔍 Vérification Ankorstore":
     st.subheader("🔍 Vérification Ankorstore")
 
-    tab_vp, = st.tabs(["💰 Vérification prix"])
+    tab1_ank, tab2_ank, tab3_ank, tab4_ank = st.tabs([
+        "✏️ Correction SKUs",
+        "🔗 Mapping SKUs",
+        "🔧 Correction lignes commandes",
+        "💰 Vérification prix",
+    ])
 
-    with tab_vp:
-        COEFF_GROSSISTE_ANK = 2.50   # coefficient retail / grossiste cible
-        SEUIL_ECART_ANK     = 2.0    # seuil alerte en %
+    # ── Onglet 1 : Correction SKUs ────────────────────────────────────────────
+    with tab1_ank:
+        ank_vars_t1    = select("produits_ankorstore_variants",
+            "select=id_ankorstore,id_produit_ankorstore,sku,nom")
+        skus_valides_t1 = {s["sku"] for s in (select("skus", "select=sku&statut=eq.visible") or [])}
+        prod_ank_t1    = select("produits_ankorstore", "select=id_ankorstore,nom")
+        prod_ank_map_t1 = {p["id_ankorstore"]: p["nom"] for p in (prod_ank_t1 or [])}
 
-        ank_vars_vp   = select("produits_ankorstore_variants",
+        if not ank_vars_t1:
+            st.info("Aucun variant Ankorstore trouvé. Lance d'abord la sync Produits Ankorstore.")
+        else:
+            incorrects_t1 = [
+                v for v in ank_vars_t1
+                if not v.get("sku") or v.get("sku") not in skus_valides_t1
+            ]
+            col1, col2 = st.columns(2)
+            with col1: st.metric("SKUs incorrects sur Ankorstore", len(incorrects_t1))
+            with col2: st.metric("SKUs vides (NULL ou vide)",
+                                 len([v for v in incorrects_t1 if not v.get("sku")]))
+
+            if not incorrects_t1:
+                st.success("✅ Tous les SKUs Ankorstore correspondent à des SKUs Wizishop valides !")
+            else:
+                df_edit_t1 = pd.DataFrame([{
+                    "ID Ankorstore":         v.get("id_ankorstore", ""),
+                    "ID Produit Ankorstore": v.get("id_produit_ankorstore", ""),
+                    "Produit parent":        prod_ank_map_t1.get(
+                                                v.get("id_produit_ankorstore", ""), v.get("nom", "")),
+                    "Nom variant":           v.get("nom", ""),
+                    "SKU actuel":            v.get("sku", ""),
+                    "Nouveau SKU":           "",
+                } for v in incorrects_t1])
+
+                df_result_t1 = st.data_editor(
+                    df_edit_t1,
+                    column_config={
+                        "ID Ankorstore":         st.column_config.TextColumn(disabled=True),
+                        "ID Produit Ankorstore": st.column_config.TextColumn(disabled=True),
+                        "Produit parent":        st.column_config.TextColumn(disabled=True),
+                        "Nom variant":           st.column_config.TextColumn(disabled=True),
+                        "SKU actuel":            st.column_config.TextColumn(disabled=True),
+                        "Nouveau SKU":           st.column_config.TextColumn("Nouveau SKU"),
+                    },
+                    hide_index=True, use_container_width=True, key="editor_sku_ank"
+                )
+
+                a_corriger_t1 = df_result_t1[
+                    df_result_t1["Nouveau SKU"].notna() &
+                    (df_result_t1["Nouveau SKU"].str.strip() != "")
+                ]
+                st.caption(f"{len(a_corriger_t1)} correction(s) à appliquer.")
+
+                if st.button("Mettre à jour dans Supabase", type="primary",
+                             disabled=len(a_corriger_t1) == 0, key="btn_corriger_skus_ank"):
+                    succes_t1, erreurs_t1 = 0, 0
+                    for _, row in a_corriger_t1.iterrows():
+                        ok = update("produits_ankorstore_variants",
+                                    f"id_ankorstore=eq.{row['ID Ankorstore']}",
+                                    {"sku": row["Nouveau SKU"].strip()})
+                        if ok:
+                            succes_t1 += 1
+                        else:
+                            erreurs_t1 += 1
+                    if succes_t1:
+                        st.success(f"✅ {succes_t1} variant(s) corrigé(s).")
+                        st.info("💡 Relance la sync Produits Ankorstore pour mettre à jour le catalogue.")
+                    if erreurs_t1:
+                        st.warning(f"⚠️ {erreurs_t1} erreur(s).")
+
+    # ── Onglet 2 : Mapping SKUs ───────────────────────────────────────────────
+    with tab2_ank:
+        st.caption("Associe les anciens SKUs Ankorstore aux SKUs Wizishop corrects.")
+
+        cmds_ank_t2   = select("commandes",
+            "select=id_ankorstore&source=eq.ankorstore&statut_texte=not.eq.cancelled")
+        skus_val_t2   = {s["sku"] for s in (select("skus", "select=sku&statut=eq.visible") or [])}
+        mapping_ank   = select("sku_mapping_ankorstore",
+            "select=sku_ankorstore,sku_wizishop&order=sku_ankorstore.asc")
+        ank_vars_t2   = select("produits_ankorstore_variants",
+            "select=sku,nom,id_produit_ankorstore")
+        prod_ank_t2   = select("produits_ankorstore", "select=id_ankorstore,nom")
+
+        variant_map_t2   = {v["sku"]: v for v in (ank_vars_t2 or []) if v.get("sku")}
+        prod_ank_map_t2  = {p["id_ankorstore"]: p["nom"] for p in (prod_ank_t2 or [])}
+        mapping_connu_t2 = {m["sku_ankorstore"] for m in (mapping_ank or [])}
+
+        skus_inconnus_t2 = {}
+        if cmds_ank_t2:
+            ids_t2   = ",".join(c["id_ankorstore"] for c in cmds_ank_t2 if c.get("id_ankorstore"))
+            lignes_t2 = select("lignes_commande",
+                f"select=sku&source=eq.ankorstore&id_commande=in.({ids_t2})", limit=50000)
+            for l in (lignes_t2 or []):
+                sku = l.get("sku") or ""
+                if sku and sku not in skus_val_t2:
+                    skus_inconnus_t2[sku] = skus_inconnus_t2.get(sku, 0) + 1
+
+        skus_a_mapper_t2 = {s: n for s, n in skus_inconnus_t2.items()
+                            if s not in mapping_connu_t2}
+
+        col1, col2, col3 = st.columns(3)
+        with col1: st.metric("SKUs inconnus", len(skus_inconnus_t2))
+        with col2: st.metric("Déjà mappés", len(mapping_connu_t2))
+        with col3: st.metric("Restant à mapper", len(skus_a_mapper_t2))
+
+        if skus_a_mapper_t2:
+            st.divider()
+            st.subheader("SKUs à mapper")
+            df_edit_t2 = pd.DataFrame([{
+                "SKU Ankorstore":      sku,
+                "Nb commandes":        nb,
+                "Nom produit":         prod_ank_map_t2.get(
+                    (variant_map_t2.get(sku) or {}).get("id_produit_ankorstore", ""), ""),
+                "Nom variant":         (variant_map_t2.get(sku) or {}).get("nom", ""),
+                "Nouveau SKU Wizishop": "",
+            } for sku, nb in sorted(skus_a_mapper_t2.items(), key=lambda x: -x[1])])
+
+            df_result_t2 = st.data_editor(df_edit_t2,
+                column_config={
+                    "SKU Ankorstore":       st.column_config.TextColumn(disabled=True),
+                    "Nb commandes":         st.column_config.NumberColumn(disabled=True),
+                    "Nom produit":          st.column_config.TextColumn(disabled=True),
+                    "Nom variant":          st.column_config.TextColumn(disabled=True),
+                    "Nouveau SKU Wizishop": st.column_config.TextColumn("Nouveau SKU Wizishop"),
+                },
+                hide_index=True, use_container_width=True, key="editor_mapping_ank")
+
+            lignes_t2_remplies = df_result_t2[
+                df_result_t2["Nouveau SKU Wizishop"].notna() &
+                (df_result_t2["Nouveau SKU Wizishop"].str.strip() != "")
+            ]
+            st.caption(f"{len(lignes_t2_remplies)} mapping(s) à enregistrer.")
+
+            if st.button("Enregistrer le mapping", type="primary",
+                         disabled=len(lignes_t2_remplies) == 0, key="btn_enreg_mapping_ank"):
+                payload_t2 = [
+                    {"sku_ankorstore": row["SKU Ankorstore"],
+                     "sku_wizishop":   row["Nouveau SKU Wizishop"].strip()}
+                    for _, row in lignes_t2_remplies.iterrows()
+                ]
+                if upsert("sku_mapping_ankorstore", payload_t2, "sku_ankorstore"):
+                    st.success(f"✅ {len(payload_t2)} mapping(s) enregistré(s).")
+                    st.rerun()
+                else:
+                    st.error("Erreur lors de l'enregistrement.")
+        else:
+            st.success("✅ Tous les SKUs inconnus sont déjà mappés.")
+
+        if mapping_ank:
+            st.divider()
+            st.subheader("Mappings enregistrés")
+            df_mapping_ank = pd.DataFrame(mapping_ank)[["sku_ankorstore", "sku_wizishop"]].rename(
+                columns={"sku_ankorstore": "SKU Ankorstore", "sku_wizishop": "SKU Wizishop"})
+            df_mapping_ank_edit = st.data_editor(df_mapping_ank,
+                column_config={
+                    "SKU Ankorstore": st.column_config.TextColumn(disabled=True),
+                    "SKU Wizishop":   st.column_config.TextColumn("SKU Wizishop"),
+                },
+                hide_index=True, use_container_width=True, key="editor_mapping_ank_existant")
+            if st.button("Mettre à jour les mappings", type="secondary",
+                         key="btn_maj_mapping_ank"):
+                payload_maj = [
+                    {"sku_ankorstore": row["SKU Ankorstore"],
+                     "sku_wizishop":   row["SKU Wizishop"].strip()}
+                    for _, row in df_mapping_ank_edit.iterrows()
+                    if row["SKU Wizishop"].strip()
+                ]
+                if upsert("sku_mapping_ankorstore", payload_maj, "sku_ankorstore"):
+                    st.success(f"✅ {len(payload_maj)} mapping(s) mis à jour.")
+                    st.rerun()
+                else:
+                    st.error("Erreur lors de la mise à jour.")
+
+    # ── Onglet 3 : Correction lignes commandes ────────────────────────────────
+    with tab3_ank:
+        cmds_ank_t3   = select("commandes",
+            "select=id_ankorstore,date_commande,montant_ttc"
+            "&source=eq.ankorstore&statut_texte=not.eq.cancelled"
+            "&order=date_commande.desc")
+        skus_val_t3   = {s["sku"] for s in (select("skus", "select=sku&statut=eq.visible") or [])}
+
+        if not cmds_ank_t3:
+            st.info("Aucune commande Ankorstore.")
+        else:
+            ids_t3     = [c["id_ankorstore"] for c in cmds_ank_t3 if c.get("id_ankorstore")]
+            ids_str_t3 = ",".join(ids_t3)
+            all_lignes_t3 = select("lignes_commande",
+                f"select=id_commande,sku&source=eq.ankorstore&id_commande=in.({ids_str_t3})",
+                limit=50000)
+
+            cmds_pb_t3, nb_lig_pb_t3 = set(), 0
+            for l in (all_lignes_t3 or []):
+                sku = l.get("sku") or ""
+                if not sku or sku not in skus_val_t3:
+                    cmds_pb_t3.add(str(l.get("id_commande", "")))
+                    nb_lig_pb_t3 += 1
+
+            col1, col2 = st.columns(2)
+            with col1: st.metric("Commandes avec lignes à corriger", len(cmds_pb_t3))
+            with col2: st.metric("Total lignes à corriger", nb_lig_pb_t3)
+
+            st.divider()
+
+            def _fmt_cmd_ank(id_ank):
+                if not id_ank:
+                    return "Choisir une commande..."
+                cmd = next((c for c in cmds_ank_t3 if c["id_ankorstore"] == id_ank), {})
+                try:
+                    date = pd.to_datetime(cmd.get("date_commande", "")).strftime("%d/%m/%Y")
+                except Exception:
+                    date = "?"
+                montant = float(cmd.get("montant_ttc") or 0)
+                alerte  = "⚠️ " if id_ank in cmds_pb_t3 else ""
+                return f"{alerte}{date} — {montant:.2f}€ — {id_ank[:8]}…"
+
+            cmd_choisie_t3 = st.selectbox("Commande", options=[""] + ids_t3,
+                format_func=_fmt_cmd_ank, key="sel_cmd_corr_ank")
+
+            if cmd_choisie_t3:
+                lignes_cmd_t3 = select("lignes_commande",
+                    f"select=id,id_ankorstore,nom_produit,quantite,prix_unitaire_ttc,sku"
+                    f"&source=eq.ankorstore&id_commande=eq.{cmd_choisie_t3}")
+
+                if lignes_cmd_t3:
+                    ids_lig_t3  = [row["id"] for row in lignes_cmd_t3]
+                    orig_skus_t3 = [row.get("sku") or "" for row in lignes_cmd_t3]
+
+                    df_edit_t3 = pd.DataFrame([{
+                        "Statut SKU": ("✅" if (row.get("sku") and row["sku"] in skus_val_t3)
+                                       else ("❌" if not row.get("sku") else "⚠️")),
+                        "Produit":    row.get("nom_produit", ""),
+                        "Qté":        row.get("quantite", 0),
+                        "Prix TTC":   float(row.get("prix_unitaire_ttc") or 0),
+                        "SKU":        row.get("sku") or "",
+                    } for row in lignes_cmd_t3])
+
+                    df_result_t3 = st.data_editor(df_edit_t3,
+                        column_config={
+                            "Statut SKU": st.column_config.TextColumn("Statut", disabled=True),
+                            "Produit":    st.column_config.TextColumn(disabled=True),
+                            "Qté":        st.column_config.NumberColumn(disabled=True),
+                            "Prix TTC":   st.column_config.NumberColumn(disabled=True),
+                            "SKU":        st.column_config.TextColumn("SKU"),
+                        },
+                        hide_index=True, use_container_width=True,
+                        key=f"editor_lignes_ank_{cmd_choisie_t3}")
+
+                    edit_skus_t3 = df_result_t3["SKU"].tolist()
+                    lignes_mod_t3 = [
+                        {"id": ids_lig_t3[i], "sku": edit_skus_t3[i]}
+                        for i in range(len(ids_lig_t3))
+                        if orig_skus_t3[i] != edit_skus_t3[i]
+                    ]
+                    st.caption(f"{len(lignes_mod_t3)} ligne(s) modifiée(s).")
+
+                    if st.button("Enregistrer les corrections", type="primary",
+                                 disabled=len(lignes_mod_t3) == 0, key="btn_enreg_corr_ank"):
+                        succes_t3 = 0
+                        for l in lignes_mod_t3:
+                            if update("lignes_commande", f"id=eq.{l['id']}",
+                                      {"sku": l["sku"] or None}):
+                                succes_t3 += 1
+                        st.success(f"✅ {succes_t3} ligne(s) corrigée(s).")
+                        st.rerun()
+                else:
+                    st.info("Aucune ligne pour cette commande.")
+
+    # ── Onglet 4 : Vérification prix ──────────────────────────────────────────
+    with tab4_ank:
+        COEFF_GROSSISTE_ANK = 2.50
+        SEUIL_ECART_ANK     = 2.0
+
+        ank_vars_vp  = select("produits_ankorstore_variants",
             "select=sku,nom,prix_grossiste,id_produit_ankorstore&sku=not.is.null")
-        prod_wizi_vp  = select("produits", "select=sku,nom,prix_vente_ht")
-        prod_map_vp   = {p["sku"]: p for p in (prod_wizi_vp or [])}
-
-        vars_vp = [v for v in (ank_vars_vp or []) if v.get("sku")]
+        prod_wizi_vp = select("produits", "select=sku,nom,prix_vente_ht")
+        prod_map_vp  = {p["sku"]: p for p in (prod_wizi_vp or [])}
+        vars_vp      = [v for v in (ank_vars_vp or []) if v.get("sku")]
 
         if not vars_vp:
             st.info("Aucun variant avec SKU. Lance d'abord la sync Produits Ankorstore.")
@@ -3676,34 +3947,29 @@ elif page == "🔍 Vérification Ankorstore":
                 prix_ank       = float(v.get("prix_grossiste") or 0)
                 prix_wizi_ht   = float(prod_wizi.get("prix_vente_ht") or 0)
                 prix_wizi_gros = round(prix_wizi_ht / COEFF_GROSSISTE_ANK, 2) if COEFF_GROSSISTE_ANK else 0
-                if prix_ank > 0 and prix_wizi_gros > 0:
-                    ecart_pct = round((prix_ank - prix_wizi_gros) / prix_wizi_gros * 100, 1)
-                else:
-                    ecart_pct = None
+                ecart_pct      = (round((prix_ank - prix_wizi_gros) / prix_wizi_gros * 100, 1)
+                                  if prix_ank > 0 and prix_wizi_gros > 0 else None)
                 rows_vp.append({
                     "SKU": sku, "Nom": nom,
-                    "Prix Ankorstore (€)":       prix_ank,
+                    "Prix Ankorstore (€)":        prix_ank,
                     "Prix Wizishop grossiste (€)": prix_wizi_gros,
                     "Écart (%)": ecart_pct,
                 })
 
-            df_vp      = pd.DataFrame(rows_vp)
-            df_vp_ecart = df_vp[
-                df_vp["Écart (%)"].notna() & (df_vp["Écart (%)"].abs() > SEUIL_ECART_ANK)
-            ]
+            df_vp       = pd.DataFrame(rows_vp)
+            df_vp_ecart = df_vp[df_vp["Écart (%)"].notna() &
+                                 (df_vp["Écart (%)"].abs() > SEUIL_ECART_ANK)]
 
             col1, col2 = st.columns(2)
             with col1: st.metric("Total variants", len(df_vp))
             with col2: st.metric(f"Écart > {SEUIL_ECART_ANK}%", len(df_vp_ecart))
 
-            afficher_tous_vp = st.checkbox("Afficher tous les variants",
-                                           key="vp_ank_tous")
+            afficher_tous_vp = st.checkbox("Afficher tous les variants", key="vp_ank_tous")
             df_disp = (df_vp.sort_values("SKU") if afficher_tous_vp
                        else df_vp_ecart.sort_values("Écart (%)",
                             ascending=False, key=lambda s: s.abs()))
 
-            st.dataframe(df_disp.reset_index(drop=True),
-                         use_container_width=True, hide_index=True)
+            st.dataframe(df_disp.reset_index(drop=True), use_container_width=True, hide_index=True)
             st.download_button("📥 Exporter CSV",
                 df_disp.to_csv(index=False).encode("utf-8"),
                 "verification_prix_ankorstore.csv", "text/csv", key="dl_vp_ank")
