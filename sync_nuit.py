@@ -11,7 +11,7 @@ Slugs disponibles :
     wizishop  wizishop-categories  wizishop-marques  wizishop-skus
     wizishop-produits  wizishop-commandes
     etsy  etsy-commandes  etsy-produits
-    faire  faire-commandes  faire-produits
+    faire  faire-commandes  faire-produits  faire-stock
     shopify  shopify-produits  shopify-commandes
     ankorstore  ankorstore-produits  ankorstore-commandes  ankorstore-stock
 
@@ -98,7 +98,7 @@ from sync_database import (get_wizi_token, sync_categories, sync_marques,
                             sync_skus, sync_produits, sync_commandes, log_sync)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
-from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
+from sync_faire import sync_faire_commandes, sync_faire_produits, sync_faire_stock, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
 from sync_ankorstore import sync_ankorstore_produits, sync_ankorstore_commandes, sync_ankorstore_stock
 import etsy_api
@@ -212,6 +212,12 @@ def _faire_produits():
 
 if _active("faire-produits"):
     run("Faire — produits", _faire_produits)
+
+if _active("faire-stock"):
+    def _faire_stock():
+        nb_maj, nb_err, nb_inc = sync_faire_stock()
+        return f"{nb_maj} mis à jour, {nb_err} erreur(s), {nb_inc} SKU(s) inconnus"
+    run("Faire — stock", _faire_stock)
 
 # ── 6. Shopify Foulard Frenchy ────────────────────────────────────────────────
 

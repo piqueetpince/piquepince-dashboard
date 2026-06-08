@@ -1,6 +1,6 @@
 import time
-from faire_api import get_orders, get_products
-from supabase_api import upsert, upsert_ignore
+from faire_api import get_orders, get_products, api_patch
+from supabase_api import upsert, upsert_ignore, select
 from sync_database import get_zone_tva
 
 STATUT_MAP = {
@@ -158,6 +158,65 @@ def sync_faire_produits():
         time.sleep(0.05)
 
     return total_produits, total_variants
+
+
+def sync_faire_stock():
+    """
+    Pousse le stock Wizishop vers Faire pour chaque variant dont le SKU
+    existe dans la table skus. Ne met à jour que si le stock diffère.
+    Retourne (nb_mis_a_jour, nb_erreurs, nb_sku_inconnus).
+    """
+    faire_variants = select(
+        "produits_faire_variants",
+        "select=id_faire,id_produit_faire,sku,available_quantity&sku=not.is.null",
+    )
+    if not faire_variants:
+        print("  → Aucun variant Faire en base.")
+        return 0, 0, 0
+
+    wizi_skus = select("skus", "select=sku,stock&statut=eq.visible")
+    stock_wizi_map = {
+        r["sku"]: int(r.get("stock") or 0)
+        for r in (wizi_skus or [])
+    }
+
+    nb_maj      = 0
+    nb_erreurs  = 0
+    nb_inconnus = 0
+
+    for variant in faire_variants:
+        variant_id  = variant.get("id_faire")
+        produit_id  = variant.get("id_produit_faire")
+        sku         = (variant.get("sku") or "").strip()
+        stock_faire = int(variant.get("available_quantity") or 0)
+
+        if sku not in stock_wizi_map:
+            nb_inconnus += 1
+            continue
+
+        stock_wizi = stock_wizi_map[sku]
+
+        if stock_wizi == stock_faire:
+            continue  # pas de changement — évite l'appel inutile
+
+        r = api_patch(
+            f"/products/{produit_id}/variants/{variant_id}",
+            {"inventory_levels": [{"quantity": stock_wizi}]},
+        )
+
+        if r.status_code in (200, 204):
+            nb_maj += 1
+        else:
+            nb_erreurs += 1
+            print(f"  ⚠️  Erreur stock Faire {sku} ({variant_id}): "
+                  f"HTTP {r.status_code} — {r.text[:150]}")
+
+        time.sleep(1.0)
+
+    print(f"  → {nb_maj} variants mis à jour, "
+          f"{nb_erreurs} erreur(s), "
+          f"{nb_inconnus} SKU(s) non trouvés dans Wizishop")
+    return nb_maj, nb_erreurs, nb_inconnus
 
 
 def log_sync_faire(table, nb, statut, message, duree):
