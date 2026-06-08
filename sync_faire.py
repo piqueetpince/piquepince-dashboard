@@ -1,6 +1,6 @@
 import time
 from faire_api import get_orders, get_products, api_patch
-from supabase_api import upsert, upsert_ignore, select
+from supabase_api import upsert, upsert_ignore, select, update
 from sync_database import get_zone_tva
 
 STATUT_MAP = {
@@ -206,6 +206,9 @@ def sync_faire_stock():
 
         if r.status_code in (200, 204):
             nb_maj += 1
+            update("produits_faire_variants",
+                   f"id_faire=eq.{variant_id}",
+                   {"available_quantity": stock_wizi})
         else:
             nb_erreurs += 1
             print(f"  ⚠️  Erreur stock Faire {sku} ({variant_id}): "
