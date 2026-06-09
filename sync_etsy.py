@@ -233,13 +233,6 @@ def sync_etsy_stock():
 
         r_get = api_get(
             f"{ETSY_API_URL}/application/listings/{listing_id}/inventory")
-        if r_get.status_code == 404:
-            # Listing supprimé sur Etsy → nettoyage en base
-            delete("produits_etsy_variations", f"listing_id=eq.{listing_id}")
-            delete("produits_etsy", f"listing_id=eq.{listing_id}")
-            print(f"  [sync_etsy_stock] Listing {listing_id} introuvable (404) → supprimé de la base")
-            time.sleep(0.5)
-            continue
         if r_get.status_code != 200:
             nb_erreurs += 1
             st.warning(f"[sync_etsy_stock] GET {listing_id}: "
@@ -275,9 +268,7 @@ def sync_etsy_stock():
                 if r_deact.status_code in (200, 204):
                     nb_maj += 1
                 elif r_deact.status_code == 404:
-                    delete("produits_etsy_variations", f"listing_id=eq.{listing_id}")
-                    delete("produits_etsy", f"listing_id=eq.{listing_id}")
-                    print(f"  [sync_etsy_stock] Listing {listing_id} introuvable (404) → supprimé de la base")
+                    st.warning(f"[sync_etsy_stock] Listing {listing_id} introuvable (404) — relance sync_produits_etsy pour nettoyer")
                 else:
                     st.warning(f"[sync_etsy_stock] PATCH inactive {listing_id}: "
                                f"HTTP {r_deact.status_code} — {r_deact.text[:200]}")
