@@ -276,6 +276,12 @@ def sync_etsy_stock():
                 )
                 if r_deact.status_code in (200, 204):
                     nb_maj += 1
+                    for product in products_clean:
+                        sku = (product.get("sku") or "").strip()
+                        if sku and sku in stock_wizi_map:
+                            update("produits_etsy_variations",
+                                   f"sku=eq.{sku}&listing_id=eq.{listing_id}",
+                                   {"stock_etsy": 0})
                 elif r_deact.status_code == 404:
                     st.warning(f"[sync_etsy_stock] Listing {listing_id} introuvable (404) — relance sync_produits_etsy pour nettoyer")
                 else:
