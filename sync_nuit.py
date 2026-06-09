@@ -10,7 +10,7 @@ Usage:
 Slugs disponibles :
     wizishop  wizishop-categories  wizishop-marques  wizishop-skus
     wizishop-produits  wizishop-commandes
-    etsy  etsy-commandes  etsy-produits
+    etsy  etsy-commandes  etsy-produits  etsy-stock
     faire  faire-commandes  faire-produits  faire-stock
     shopify  shopify-produits  shopify-commandes
     ankorstore  ankorstore-produits  ankorstore-commandes  ankorstore-stock
@@ -96,7 +96,7 @@ sys.modules["streamlit"] = _MockSt()  # type: ignore
 
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
                             sync_skus, sync_produits, sync_commandes, log_sync)
-from sync_etsy import sync_etsy_commandes, log_sync_etsy
+from sync_etsy import sync_etsy_commandes, sync_etsy_stock, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from sync_faire import sync_faire_commandes, sync_faire_produits, sync_faire_stock, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
@@ -197,6 +197,12 @@ def _etsy_produits():
 
 if _active("etsy-produits"):
     run("Etsy — produits", _etsy_produits)
+
+if _active("etsy-stock"):
+    def _etsy_stock():
+        nb_maj, nb_err, nb_inc = sync_etsy_stock()
+        return f"{nb_maj} listings mis à jour, {nb_err} erreur(s), {nb_inc} SKU(s) inconnus"
+    run("Etsy — stock", _etsy_stock)
 
 # ── 4. Faire commandes ────────────────────────────────────────────────────────
 
