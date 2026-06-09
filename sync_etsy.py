@@ -358,6 +358,7 @@ def sync_etsy_stock():
                     json={"state": "inactive", "quantity": 1}, timeout=15)
                 if r_deact.status_code in (200, 204):
                     nb_maj += 1
+                    update("produits_etsy_variations", f"listing_id=eq.{listing_id}", {"stock_etsy": 0})
                 elif r_deact.status_code == 404:
                     st.warning(f"[sync_etsy_stock] Listing simple {listing_id} introuvable (404) — relance sync_produits_etsy pour nettoyer")
                 else:
