@@ -1,6 +1,6 @@
 import streamlit as st
 import time
-from supabase_api import upsert, select
+from supabase_api import upsert, select, delete
 from etsy_api import api_get
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
@@ -34,11 +34,21 @@ def get_listing_inventory(listing_id):
     return []
 
 def sync_produits_etsy(shop_id):
-    listings_actifs = get_all_listings(shop_id, state="active")
+    listings_actifs   = get_all_listings(shop_id, state="active")
     listings_inactifs = get_all_listings(shop_id, state="inactive")
-    listings = listings_actifs + listings_inactifs
+    listings_soldout  = get_all_listings(shop_id, state="sold_out")
+    listings_expired  = get_all_listings(shop_id, state="expired")
+    listings = listings_actifs + listings_inactifs + listings_soldout + listings_expired
+
+    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
+    print(f"  [DEBUG] Listings récupérés depuis l'API : "
+          f"active={len(listings_actifs)} inactive={len(listings_inactifs)} "
+          f"sold_out={len(listings_soldout)} expired={len(listings_expired)} "
+          f"total={len(listings)}")
+    # ─────────────────────────────────────────────────────────────────────────
     total_listings = 0
     total_variations = 0
+    listing_ids_api = []  # collecte les IDs retournés par l'API
 
     skus_data = select("skus", "select=sku,stock&statut=eq.visible")
     sku_stock_map = {s["sku"]: int(s["stock"] or 0) for s in skus_data} if skus_data else {}
@@ -49,6 +59,10 @@ def sync_produits_etsy(shop_id):
         prix = listing.get("price", {})
         divisor = prix.get("divisor", 100) or 100
 
+        # SKU du listing (pour les listings sans variation)
+        skus_listing = listing.get("skus") or []
+        sku_simple = skus_listing[0] if skus_listing else None
+
         upsert("produits_etsy", [{
             "listing_id": listing_id,
             "titre": listing.get("title"),
@@ -56,6 +70,7 @@ def sync_produits_etsy(shop_id):
             "stock_total": listing.get("quantity", 0),
             "prix": prix.get("amount", 0) / divisor,
             "has_variations": listing.get("has_variations", False),
+            "sku": sku_simple,
             "url": listing.get("url"),
             "tags": listing.get("tags", []),
             "nb_favoris": listing.get("num_favorers", 0),
@@ -64,6 +79,7 @@ def sync_produits_etsy(shop_id):
             "date_maj": None,
             "source": "etsy"
         }], "listing_id")
+        listing_ids_api.append(listing_id)
         total_listings += 1
 
         if listing.get("has_variations"):
@@ -140,5 +156,26 @@ def sync_produits_etsy(shop_id):
                     "alerte_stock": alerte,
                 }], "listing_id,sku")
                 total_variations += 1
+
+    # ── Nettoyage : supprime les listings absents de l'API ───────────────────
+    # ── DEBUG TEMPORAIRE ──────────────────────────────────────────────────────
+    print(f"  [DEBUG] listing_ids_api collectés : {len(listing_ids_api)}")
+    tous_en_base = select("produits_etsy", "select=listing_id,has_variations")
+    nb_sans_var = len([r for r in (tous_en_base or []) if not r.get("has_variations")])
+    print(f"  [DEBUG] listings en base total : {len(tous_en_base or [])}, "
+          f"dont has_variations=false : {nb_sans_var}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    if listing_ids_api:
+        ids_str = ",".join(str(i) for i in listing_ids_api)
+        obsoletes = select("produits_etsy",
+            f"select=listing_id&listing_id=not.in.({ids_str})")
+        print(f"  [DEBUG] listings obsolètes détectés : {len(obsoletes or [])}")
+        print(f"  [DEBUG] exemples obsolètes : {[r['listing_id'] for r in (obsoletes or [])[:5]]}")
+        if obsoletes:
+            ok_var = delete("produits_etsy_variations", f"listing_id=not.in.({ids_str})")
+            ok_lst = delete("produits_etsy", f"listing_id=not.in.({ids_str})")
+            print(f"  [DEBUG] DELETE produits_etsy_variations : {ok_var}")
+            print(f"  [DEBUG] DELETE produits_etsy : {ok_lst}")
 
     return total_listings, total_variations

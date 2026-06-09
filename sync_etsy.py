@@ -3,7 +3,7 @@ import streamlit as st
 import time
 from datetime import datetime, timezone, timedelta
 from supabase_api import upsert, select, insert, update, delete
-from etsy_api import api_get, get_headers
+from etsy_api import api_get, get_headers, get_shop_id
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
 
@@ -214,10 +214,19 @@ def sync_etsy_stock():
     Gère automatiquement l'activation/désactivation selon le stock résultant.
     Retourne (nb_listings_maj, nb_erreurs, nb_skus_inconnus).
     """
-    # Tous statuts : on veut aussi réactiver les inactifs si stock disponible
-    listings = select("produits_etsy", "select=listing_id,statut")
+    # shop_id requis pour les PATCH /shops/{shop_id}/listings/{id}
+    shop_id = get_shop_id()
+    if not shop_id:
+        st.warning("[sync_etsy_stock] Impossible de récupérer le shop_id Etsy.")
+        return 0, 0, 0
+
+    # Tous statuts, uniquement les listings AVEC variations :
+    # GET/PUT /inventory n'existe que pour has_variations=True.
+    # Les listings sans variation nécessitent PATCH /shops/{shop_id}/listings/{id}.
+    listings = select("produits_etsy",
+        "select=listing_id,statut&has_variations=eq.true")
     if not listings:
-        print("  → Aucun listing Etsy en base.")
+        print("  → Aucun listing Etsy avec variations en base.")
         return 0, 0, 0
 
     wizi_skus = select("skus", "select=sku,stock&statut=eq.visible")
@@ -260,7 +269,7 @@ def sync_etsy_stock():
             # Solution : désactiver le listing directement, sans PUT inventory.
             if statut_actuel not in ("inactive", "edit"):
                 r_deact = requests.patch(
-                    f"https://api.etsy.com/v3/application/listings/{listing_id}",
+                    f"https://api.etsy.com/v3/application/shops/{shop_id}/listings/{listing_id}",
                     headers=get_headers(),
                     json={"state": "inactive"},
                     timeout=15,
@@ -303,7 +312,7 @@ def sync_etsy_stock():
             # Réactiver si le listing était inactif et qu'il y a du stock
             if statut_actuel == "inactive":
                 requests.patch(
-                    f"https://api.etsy.com/v3/application/listings/{listing_id}",
+                    f"https://api.etsy.com/v3/application/shops/{shop_id}/listings/{listing_id}",
                     headers=get_headers(),
                     json={"state": "active"},
                     timeout=15,
@@ -313,6 +322,64 @@ def sync_etsy_stock():
             nb_erreurs += 1
             st.warning(f"[sync_etsy_stock] PUT {listing_id}: "
                        f"HTTP {r_put.status_code} — {r_put.text[:200]}")
+
+        time.sleep(0.5)
+
+    # ── Listings sans variation : PATCH quantity directement ─────────────────
+    # GET/PUT inventory n'existe pas pour ces listings ; on met à jour
+    # la quantité via PATCH /listings/{id} avec le SKU stocké dans produits_etsy.
+    listings_simples = select("produits_etsy",
+        "select=listing_id,statut,sku&has_variations=eq.false&sku=not.is.null&statut=eq.active")
+
+    for listing in (listings_simples or []):
+        listing_id    = listing["listing_id"]
+        sku           = (listing.get("sku") or "").strip()
+        statut_actuel = listing.get("statut") or "active"
+
+        if not sku or sku not in stock_wizi_map:
+            nb_inconnus_total += 1
+            continue
+
+        stock_wizi  = stock_wizi_map[sku]
+        _url_listing = f"https://api.etsy.com/v3/application/shops/{shop_id}/listings/{listing_id}"
+
+        if stock_wizi == 0:
+            # Etsy refuse quantity=0 et exige quantity dans le body même pour state=inactive
+            # → on désactive avec quantity=1 comme placeholder
+            if statut_actuel not in ("inactive", "edit"):
+                r_deact = requests.patch(
+                    _url_listing, headers=get_headers(),
+                    json={"state": "inactive", "quantity": 1}, timeout=15)
+                if r_deact.status_code in (200, 204):
+                    nb_maj += 1
+                elif r_deact.status_code == 404:
+                    st.warning(f"[sync_etsy_stock] Listing simple {listing_id} introuvable (404) — relance sync_produits_etsy pour nettoyer")
+                else:
+                    nb_erreurs += 1
+                    st.warning(f"[sync_etsy_stock] PATCH inactive simple {listing_id}: "
+                               f"HTTP {r_deact.status_code} — {r_deact.text[:200]}")
+            time.sleep(0.5)
+            continue
+
+        # stock > 0 → mettre à jour la quantité + réactiver si inactif en un seul PATCH
+        # (Etsy refuse {"quantity": X} seul sur un listing inactif → il faut state=active dans le même body)
+        patch_body = {"quantity": stock_wizi}
+        if statut_actuel == "inactive":
+            patch_body["state"] = "active"
+
+        r_patch = requests.patch(
+            _url_listing, headers=get_headers(),
+            json=patch_body, timeout=15)
+
+        if r_patch.status_code in (200, 204):
+            nb_maj += 1
+            update("produits_etsy", f"listing_id=eq.{listing_id}", {"stock_total": stock_wizi})
+        elif r_patch.status_code == 404:
+            st.warning(f"[sync_etsy_stock] Listing simple {listing_id} introuvable (404) — relance sync_produits_etsy pour nettoyer")
+        else:
+            nb_erreurs += 1
+            st.warning(f"[sync_etsy_stock] PATCH simple {listing_id}: "
+                       f"HTTP {r_patch.status_code} — {r_patch.text[:200]}")
 
         time.sleep(0.5)
 
