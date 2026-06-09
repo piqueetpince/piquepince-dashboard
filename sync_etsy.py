@@ -2,7 +2,7 @@ import requests
 import streamlit as st
 import time
 from datetime import datetime, timezone, timedelta
-from supabase_api import upsert, select, insert, update
+from supabase_api import upsert, select, insert, update, delete
 from etsy_api import api_get, get_headers
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
@@ -233,6 +233,13 @@ def sync_etsy_stock():
 
         r_get = api_get(
             f"{ETSY_API_URL}/application/listings/{listing_id}/inventory")
+        if r_get.status_code == 404:
+            # Listing supprimé sur Etsy → nettoyage en base
+            delete("produits_etsy_variations", f"listing_id=eq.{listing_id}")
+            delete("produits_etsy", f"listing_id=eq.{listing_id}")
+            print(f"  [sync_etsy_stock] Listing {listing_id} introuvable (404) → supprimé de la base")
+            time.sleep(0.5)
+            continue
         if r_get.status_code != 200:
             nb_erreurs += 1
             st.warning(f"[sync_etsy_stock] GET {listing_id}: "
@@ -258,14 +265,22 @@ def sync_etsy_stock():
             # Tous les stocks sont à 0 — Etsy interdit un PUT avec tous les
             # offerings désactivés ("One offering must be enabled").
             # Solution : désactiver le listing directement, sans PUT inventory.
-            if statut_actuel != "inactive":
-                requests.patch(
-                    f"{ETSY_API_URL}/application/listings/{listing_id}",
+            if statut_actuel not in ("inactive", "edit"):
+                r_deact = requests.patch(
+                    f"https://api.etsy.com/v3/application/listings/{listing_id}",
                     headers=get_headers(),
                     json={"state": "inactive"},
                     timeout=15,
                 )
-                nb_maj += 1
+                if r_deact.status_code in (200, 204):
+                    nb_maj += 1
+                elif r_deact.status_code == 404:
+                    delete("produits_etsy_variations", f"listing_id=eq.{listing_id}")
+                    delete("produits_etsy", f"listing_id=eq.{listing_id}")
+                    print(f"  [sync_etsy_stock] Listing {listing_id} introuvable (404) → supprimé de la base")
+                else:
+                    st.warning(f"[sync_etsy_stock] PATCH inactive {listing_id}: "
+                               f"HTTP {r_deact.status_code} — {r_deact.text[:200]}")
                 time.sleep(0.3)
             time.sleep(0.5)
             continue
@@ -297,7 +312,7 @@ def sync_etsy_stock():
             # Réactiver si le listing était inactif et qu'il y a du stock
             if statut_actuel == "inactive":
                 requests.patch(
-                    f"{ETSY_API_URL}/application/listings/{listing_id}",
+                    f"https://api.etsy.com/v3/application/listings/{listing_id}",
                     headers=get_headers(),
                     json={"state": "active"},
                     timeout=15,
