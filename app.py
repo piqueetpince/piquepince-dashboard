@@ -1838,9 +1838,10 @@ elif page == "📊 CA par catégories":
 
             with st.expander("🔍 Debug - Produits sans catégorie"):
                 df_sans_cat = df[df["categorie"] == "Sans catégorie"][
-                    ["sku_effectif", "nom_produit", "nom_categorie_produits"]
+                    ["sku", "sku_variation", "sku_effectif", "nom_produit", "nom_categorie_produits"]
                 ].drop_duplicates().head(20)
-                df_sans_cat.columns = ["SKU", "Nom produit (lignes_commande)", "nom_categorie (produits)"]
+                df_sans_cat.columns = ["sku (lignes_commande)", "sku_variation (lignes_commande)",
+                                       "SKU effectif", "Nom produit (lignes_commande)", "nom_categorie (produits)"]
                 if df_sans_cat.empty:
                     st.success("✅ Tous les produits vendus ont une catégorie.")
                 else:
