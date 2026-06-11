@@ -1423,7 +1423,7 @@ elif page == "🔍 Vérification Wizishop":
 
     with tab2:
         produits_sans_prix = select("produits",
-            "select=sku,nom,nom_categorie,fournisseur,prix_vente_ht"
+            "select=sku,nom,nom_categorie,fournisseur,statut,prix_vente_ht"
             "&statut=eq.visible"
             "&or=(prix_achat_ht.is.null,prix_achat_ht.eq.0)"
             "&order=fournisseur.asc,nom.asc")
@@ -1437,15 +1437,16 @@ elif page == "🔍 Vérification Wizishop":
             df_pa = df_pa[df_pa["stock"] > 0]
 
             df_pa["prix_vente_ht"] = pd.to_numeric(df_pa["prix_vente_ht"], errors="coerce").fillna(0)
-            for col in ["nom", "nom_categorie", "fournisseur"]:
+            for col in ["nom", "nom_categorie", "fournisseur", "statut"]:
                 df_pa[col] = df_pa[col].fillna("")
             df_pa = df_pa.rename(columns={
                 "sku": "SKU",
                 "nom": "Nom produit",
                 "nom_categorie": "Catégorie",
                 "fournisseur": "Fournisseur",
+                "statut": "Statut",
                 "prix_vente_ht": "Prix vente HT",
-            })[["SKU", "Nom produit", "Catégorie", "Fournisseur", "Prix vente HT"]]
+            })[["SKU", "Nom produit", "Catégorie", "Fournisseur", "Statut", "Prix vente HT"]]
 
             st.metric("SKUs sans prix d'achat (stock > 0)", len(df_pa))
             if not df_pa.empty:
