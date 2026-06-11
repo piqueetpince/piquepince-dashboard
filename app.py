@@ -166,7 +166,7 @@ st.title("Pique&Pince — Dashboard ventes")
 
 _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble"],
-    "📊 Analytique":    ["🎨 Meilleures variations"],
+    "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "📈 Évolution CA annuelle"],
@@ -1721,6 +1721,110 @@ elif page == "📈 Évolution CA annuelle":
         height=480,
     )
     st.plotly_chart(fig, use_container_width=True)
+
+elif page == "📊 CA par catégories":
+    st.subheader("📊 CA HT par catégorie — Wizishop + Etsy")
+
+    import plotly.graph_objects as go
+
+    with st.sidebar:
+        st.divider()
+        periodes_cat = {"3 mois": 3, "6 mois": 6, "12 mois": 12, "24 mois": 24}
+        periode_label_cat = st.selectbox(
+            "Période", list(periodes_cat.keys()), index=1, key="sel_periode_ca_categories")
+        nb_mois_cat = periodes_cat[periode_label_cat]
+
+    date_limite_cat = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_cat)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    commandes_cat = select("commandes",
+        f"select=id_wizi"
+        f"&source=in.(wizishop,etsy)"
+        f"&statut_code=not.in.(0,45,46,50)"
+        f"&date_commande=gte.{date_limite_cat}")
+
+    if not commandes_cat:
+        st.info("Aucune commande trouvée sur la période.")
+    else:
+        ids = [str(c["id_wizi"]) for c in commandes_cat]
+        all_lignes = []
+        for i in range(0, len(ids), 500):
+            batch = ids[i:i + 500]
+            rows = select("lignes_commande",
+                f"select=sku,sku_variation,quantite,prix_unitaire_ttc"
+                f"&id_commande=in.({','.join(batch)})"
+                f"&quantite=gt.0")
+            if rows:
+                all_lignes.extend(rows)
+
+        if not all_lignes:
+            st.info("Aucune ligne de commande trouvée sur la période.")
+        else:
+            produits_cat = select("produits", "select=sku,nom_categorie")
+            prod_map_cat = {p["sku"]: p for p in produits_cat} if produits_cat else {}
+
+            df = pd.DataFrame(all_lignes)
+            df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
+            df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
+            df["ca_ht"] = df["prix_unitaire_ttc"] / 1.2 * df["quantite"]
+            df["sku_effectif"] = df.apply(
+                lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
+            df["categorie"] = df["sku_effectif"].map(
+                lambda x: get_prod_parent(x, prod_map_cat).get("nom_categorie") or "")
+            df["categorie"] = df["categorie"].replace("", "Sans catégorie")
+
+            result = df.groupby("categorie").agg(
+                ca_ht=("ca_ht", "sum"),
+                unites=("quantite", "sum"),
+            ).reset_index().sort_values("ca_ht", ascending=False).reset_index(drop=True)
+
+            total_ca = result["ca_ht"].sum()
+            total_unites = result["unites"].sum()
+            result["pct"] = (result["ca_ht"] / total_ca * 100) if total_ca else 0.0
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric(f"CA HT total ({periode_label_cat})", f"{total_ca:,.0f} €".replace(",", " "))
+            col2.metric("Nb catégories", len(result))
+            top1 = result.iloc[0]
+            col3.metric("Catégorie n°1", top1["categorie"],
+                        delta=f"{top1['ca_ht']:,.0f} €".replace(",", " "))
+
+            display_df = result.rename(columns={
+                "categorie": "Catégorie",
+                "ca_ht": "CA HT (€)",
+                "pct": "% du total",
+                "unites": "Unités vendues",
+            })[["Catégorie", "CA HT (€)", "% du total", "Unités vendues"]]
+
+            total_row = pd.DataFrame([{
+                "Catégorie": "Total",
+                "CA HT (€)": total_ca,
+                "% du total": 100.0,
+                "Unités vendues": total_unites,
+            }])
+            display_df_total = pd.concat([display_df, total_row], ignore_index=True)
+
+            st.dataframe(
+                display_df_total,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "CA HT (€)": st.column_config.NumberColumn(format="%.2f €"),
+                    "% du total": st.column_config.NumberColumn(format="%.1f %%"),
+                    "Unités vendues": st.column_config.NumberColumn(format="%.0f"),
+                },
+            )
+
+            csv = display_df_total.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "ca_par_categories.csv", "text/csv")
+
+            st.divider()
+            fig = go.Figure(go.Pie(
+                labels=result["categorie"],
+                values=result["ca_ht"],
+                hole=0.3,
+            ))
+            fig.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=480)
+            st.plotly_chart(fig, use_container_width=True)
 
 elif page == "🎨 Meilleures variations":
     st.subheader("🎨 Meilleures variations — Wizishop + Etsy")
