@@ -1433,6 +1433,7 @@ elif page == "🔍 Vérification Wizishop":
 
             # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
             tous_produits = select("produits", "select=sku,id_wizi,statut")
+            prod_map = {p["sku"]: p for p in tous_produits} if tous_produits else {}
             parent_par_id_wizi = {}
             if tous_produits:
                 for p in tous_produits:
@@ -1444,12 +1445,22 @@ elif page == "🔍 Vérification Wizishop":
                         parent_par_id_wizi[iw] = p
             prod_map_parents = {p["sku"]: p for p in parent_par_id_wizi.values()}
 
+            def _statut_parent(sku):
+                if sku in prod_map_parents:
+                    return prod_map_parents[sku].get("statut") or ""
+                # Fallback : préfixe le plus court trouvé parmi les SKUs parents
+                for longueur in range(4, len(sku)):
+                    prefixe = sku[:longueur]
+                    if prefixe in prod_map_parents:
+                        return prod_map_parents[prefixe].get("statut") or ""
+                # Aucun parent trouvé : statut du SKU lui-même
+                return (prod_map.get(sku) or {}).get("statut") or ""
+
             df_pa = pd.DataFrame(produits_sans_prix)
             df_pa["stock"] = df_pa["sku"].map(stock_map).fillna(0)
             df_pa = df_pa[df_pa["stock"] > 0]
 
-            df_pa["statut"] = df_pa["sku"].apply(
-                lambda sku: get_prod_parent(sku, prod_map_parents).get("statut") or "")
+            df_pa["statut"] = df_pa["sku"].apply(_statut_parent)
 
             df_pa["prix_vente_ht"] = pd.to_numeric(df_pa["prix_vente_ht"], errors="coerce").fillna(0)
             for col in ["nom", "nom_categorie", "fournisseur", "statut"]:
