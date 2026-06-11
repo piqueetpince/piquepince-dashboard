@@ -169,7 +169,8 @@ _NAV_GROUPES = {
     "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
-                         "💎 Valorisation du stock", "📈 Évolution CA annuelle"],
+                         "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
+                         "📈 Évolution CA annuelle"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
@@ -1592,6 +1593,81 @@ elif page == "💎 Valorisation du stock":
                 height=max(320, len(cat_valo) * 40 + 80),
             )
             st.plotly_chart(fig, use_container_width=True)
+
+elif page == "🗂️ Catalogue par catégories":
+    st.subheader("🗂️ Catalogue par catégories")
+
+    produits_data = select("produits", "select=sku,nom,nom_categorie,statut,prix_vente_ht,prix_achat_ht")
+    skus_data = select("skus", "select=sku,stock")
+
+    if not produits_data:
+        st.info("Données indisponibles. Lance d'abord une synchronisation depuis le menu 🔄.")
+    else:
+        stock_map = {s["sku"]: s.get("stock") or 0 for s in skus_data} if skus_data else {}
+
+        categories = sorted({p["nom_categorie"] for p in produits_data if p.get("nom_categorie")})
+
+        if not categories:
+            st.info("Aucune catégorie trouvée dans les produits.")
+        else:
+            col_cat, col_statut = st.columns(2)
+            with col_cat:
+                categorie_choisie = st.selectbox("Catégorie", categories)
+            with col_statut:
+                statuts_options = {
+                    "Tous": None,
+                    "Affiché (visible)": "visible",
+                    "Indisponible (unavailable)": "unavailable",
+                    "Non affiché (hidden)": "hidden",
+                }
+                statut_label = st.selectbox("Statut", list(statuts_options.keys()))
+                statut_filtre = statuts_options[statut_label]
+
+            produits_filtres = [p for p in produits_data if p.get("nom_categorie") == categorie_choisie]
+            if statut_filtre:
+                produits_filtres = [p for p in produits_filtres if p.get("statut") == statut_filtre]
+
+            rows = []
+            for p in produits_filtres:
+                stock = int(stock_map.get(p.get("sku")) or 0)
+                prix_achat = float(p.get("prix_achat_ht") or 0)
+                rows.append({
+                    "SKU": p.get("sku"),
+                    "Nom produit": p.get("nom") or "",
+                    "Statut": p.get("statut") or "",
+                    "Stock": stock,
+                    "Prix vente HT": float(p.get("prix_vente_ht") or 0),
+                    "Prix achat HT": prix_achat,
+                    "Valorisation (€)": stock * prix_achat,
+                })
+
+            df = pd.DataFrame(rows)
+            stock_total = int(df["Stock"].sum()) if not df.empty else 0
+            valo_totale = df["Valorisation (€)"].sum() if not df.empty else 0.0
+
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Nb produits", len(df))
+            col2.metric("Stock total", stock_total)
+            col3.metric("Valorisation totale", f"{valo_totale:,.2f} €".replace(",", " "))
+
+            if df.empty:
+                st.info("Aucun produit pour cette catégorie / ce statut.")
+            else:
+                display_df = df.sort_values("Nom produit").reset_index(drop=True)[
+                    ["SKU", "Nom produit", "Statut", "Stock", "Prix vente HT", "Prix achat HT"]]
+
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Prix vente HT": st.column_config.NumberColumn(format="%.2f €"),
+                        "Prix achat HT": st.column_config.NumberColumn(format="%.2f €"),
+                    },
+                )
+
+                csv = display_df.to_csv(index=False).encode("utf-8")
+                st.download_button("Télécharger en CSV", csv, "catalogue_par_categorie.csv", "text/csv")
 
 elif page == "📈 Évolution CA annuelle":
     st.subheader("📈 Évolution CA HT Wizishop + Etsy — 2025 vs 2026")

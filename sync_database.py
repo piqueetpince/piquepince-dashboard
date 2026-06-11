@@ -33,6 +33,25 @@ def clean_date(date_str):
     except:
         return None
 
+def _flatten_categories(cats, id_parent=None):
+    """Aplatit l'arborescence de catégories Wizishop (champ "children" imbriqué)
+    en une liste plate, en déduisant id_parent depuis la position dans l'arbre."""
+    batch = []
+    for cat in cats:
+        batch.append({
+            "id_wizi": cat.get("id"),
+            "id_parent": id_parent,
+            "nom": cat.get("name"),
+            "url": cat.get("url"),
+            "menu_title": cat.get("menu_title"),
+            "visible": cat.get("visible"),
+            "source": "wizishop"
+        })
+        enfants = cat.get("children") or []
+        if enfants:
+            batch.extend(_flatten_categories(enfants, id_parent=cat.get("id")))
+    return batch
+
 def sync_categories(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     page, total = 1, 0
@@ -45,17 +64,7 @@ def sync_categories(token, shop_id):
         results = data if isinstance(data, list) else data.get("results", [])
         if not results:
             break
-        batch = []
-        for cat in results:
-            batch.append({
-                "id_wizi": cat.get("id"),
-                "id_parent": cat.get("id_parent"),
-                "nom": cat.get("name"),
-                "url": cat.get("url"),
-                "menu_title": cat.get("menu_title"),
-                "visible": cat.get("visible"),
-                "source": "wizishop"
-            })
+        batch = _flatten_categories(results)
         if batch:
             upsert("categories", batch, "id_wizi")
             total += len(batch)
@@ -141,8 +150,18 @@ def get_zone_tva(country_iso):
 def sync_produits(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    categories_list = select("categories", "select=id_wizi,nom&source=eq.wizishop")
+    categories_list = select("categories", "select=id_wizi,nom,id_parent&source=eq.wizishop")
     cat_map = {c["id_wizi"]: c["nom"] for c in categories_list} if categories_list else {}
+    cat_parent_map = {c["id_wizi"]: c["id_parent"] for c in categories_list} if categories_list else {}
+
+    def _resolve_nom_categorie(id_cat):
+        if not id_cat:
+            return ""
+        nom = cat_map.get(id_cat, "")
+        if nom:
+            return nom
+        id_parent = cat_parent_map.get(id_cat)
+        return cat_map.get(id_parent, "") if id_parent else ""
 
     page, total = 1, 0
     while True:
@@ -162,7 +181,12 @@ def sync_produits(token, shop_id):
             )
             prod = detail_r.json() if detail_r.status_code == 200 else p
             id_cat = prod.get("category_id")
-            nom_cat = cat_map.get(id_cat, "") if id_cat else ""
+            nom_cat = _resolve_nom_categorie(id_cat)
+
+            if total < 3:
+                print(f"[DEBUG categorie] produit={prod.get('sku')} category_id={id_cat!r} "
+                      f"cat_map={cat_map.get(id_cat)!r} cat_parent_map={cat_parent_map.get(id_cat)!r} "
+                      f"nom_cat={nom_cat!r}")
             nom = prod.get("name") or prod.get("label") or ""
             fournisseur = prod.get("supplier") or ""
             ref_fourn = prod.get("supplier_reference") or ""
