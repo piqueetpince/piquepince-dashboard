@@ -1943,6 +1943,11 @@ elif page == "📊 CA par catégories":
             if statut_filtre_detail:
                 produits_categorie = [p for p in produits_categorie if p.get("statut") == statut_filtre_detail]
 
+            # Exclure les SKUs parents : seuls les SKUs présents dans la table skus
+            # (variations vendables, ou SKU unique si pas de variation) sont conservés
+            skus_set_cat = set(stock_map_cat.keys())
+            produits_categorie = [p for p in produits_categorie if p.get("sku") in skus_set_cat]
+
             ventes_par_sku = df.groupby("sku_effectif").agg(
                 unites_vendues=("quantite", "sum"),
                 ca_ht_sku=("ca_ht", "sum"),
