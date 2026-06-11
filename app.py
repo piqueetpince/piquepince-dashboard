@@ -169,7 +169,7 @@ _NAV_GROUPES = {
     "📊 Analytique":    ["🎨 Meilleures variations"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
-                         "📈 Évolution CA annuelle"],
+                         "💎 Valorisation du stock", "📈 Évolution CA annuelle"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
@@ -1483,6 +1483,115 @@ elif page == "🔍 Vérification Wizishop":
                 st.success("✅ Tous les produits visibles avec du stock ont un prix d'achat renseigné.")
         else:
             st.success("✅ Tous les produits visibles ont un prix d'achat renseigné.")
+
+elif page == "💎 Valorisation du stock":
+    st.subheader("💎 Valorisation du stock")
+
+    import plotly.graph_objects as go
+
+    skus_data = select("skus", "select=sku,stock,statut")
+    produits_data = select("produits", "select=sku,nom,prix_achat_ht,statut,nom_categorie,fournisseur")
+
+    if not skus_data or not produits_data:
+        st.info("Données indisponibles. Lance d'abord une synchronisation depuis le menu 🔄.")
+    else:
+        prod_map = {p["sku"]: p for p in produits_data}
+
+        rows = []
+        nb_sans_prix = 0
+        for s in skus_data:
+            stock = int(s.get("stock") or 0)
+            if stock <= 0:
+                continue
+            prod = prod_map.get(s.get("sku"), {})
+            prix_achat = prod.get("prix_achat_ht") or 0
+            if not prix_achat:
+                nb_sans_prix += 1
+                continue
+            prix_achat = float(prix_achat)
+            rows.append({
+                "SKU": s.get("sku"),
+                "Nom produit": prod.get("nom") or "",
+                "Catégorie": prod.get("nom_categorie") or "",
+                "Fournisseur": prod.get("fournisseur") or "",
+                "Statut": prod.get("statut") or "",
+                "Stock": stock,
+                "Prix achat HT": prix_achat,
+                "Valorisation (€)": stock * prix_achat,
+            })
+
+        df = pd.DataFrame(rows)
+        total_valo = df["Valorisation (€)"].sum() if not df.empty else 0.0
+        valo_visible = df.loc[df["Statut"] == "visible", "Valorisation (€)"].sum() if not df.empty else 0.0
+        valo_unavailable = df.loc[df["Statut"] == "unavailable", "Valorisation (€)"].sum() if not df.empty else 0.0
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Valorisation totale", f"{total_valo:,.0f} €".replace(",", " "))
+        col2.metric("Valorisation \"visible\"", f"{valo_visible:,.0f} €".replace(",", " "))
+        col3.metric("Valorisation \"unavailable\"", f"{valo_unavailable:,.0f} €".replace(",", " "))
+        with col4:
+            st.metric("SKUs sans prix d'achat (stock > 0)", nb_sans_prix)
+            if st.button("➡️ Voir le détail", use_container_width=True):
+                st.session_state["page"] = "🔍 Vérification Wizishop"
+                st.session_state[_NAV_KEYS["🛍️ Wizishop"]] = "🔍 Vérification Wizishop"
+                for k in _NAV_KEYS.values():
+                    if k != _NAV_KEYS["🛍️ Wizishop"]:
+                        st.session_state[k] = None
+                st.rerun()
+
+        if df.empty:
+            st.info("Aucun SKU valorisable (stock > 0 et prix d'achat renseigné).")
+        else:
+            df_sorted = df.sort_values("Valorisation (€)", ascending=False).reset_index(drop=True)
+
+            st.divider()
+            st.subheader("📋 Détail par statut")
+
+            ordre_statuts = ["visible", "unavailable", "hidden"]
+            tous_statuts = ordre_statuts + sorted(set(df_sorted["Statut"]) - set(ordre_statuts))
+            for statut_val in tous_statuts:
+                df_grp = df_sorted[df_sorted["Statut"] == statut_val]
+                if df_grp.empty:
+                    continue
+                label = statut_val if statut_val else "(non renseigné)"
+                total_grp = df_grp["Valorisation (€)"].sum()
+                st.markdown(f"**{label}** — {len(df_grp)} SKU(s) — "
+                             f"Total : {total_grp:,.0f} €".replace(",", " "))
+                st.dataframe(
+                    df_grp,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Prix achat HT": st.column_config.NumberColumn(format="%.2f €"),
+                        "Valorisation (€)": st.column_config.NumberColumn(format="%.2f €"),
+                    },
+                )
+
+            csv = df_sorted.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "valorisation_stock.csv", "text/csv")
+
+            st.divider()
+            st.subheader("📊 Top 10 catégories par valorisation")
+            cat_valo = (df.groupby("Catégorie")["Valorisation (€)"].sum()
+                          .sort_values(ascending=False).head(10))
+            cat_valo = cat_valo.iloc[::-1]
+            fig = go.Figure(go.Bar(
+                x=cat_valo.values,
+                y=cat_valo.index,
+                orientation="h",
+                marker_color="#4C78A8",
+                text=[f"{v:,.0f} €".replace(",", " ") for v in cat_valo.values],
+                textposition="outside",
+            ))
+            fig.update_layout(
+                xaxis_title="Valorisation (€)",
+                yaxis_title="",
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(t=20, b=40, l=150, r=80),
+                height=max(320, len(cat_valo) * 40 + 80),
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 elif page == "📈 Évolution CA annuelle":
     st.subheader("📈 Évolution CA HT Wizishop + Etsy — 2025 vs 2026")
