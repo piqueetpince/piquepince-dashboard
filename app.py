@@ -1423,8 +1423,7 @@ elif page == "🔍 Vérification Wizishop":
 
     with tab2:
         produits_sans_prix = select("produits",
-            "select=sku,nom,nom_categorie,fournisseur,statut,prix_vente_ht"
-            "&statut=eq.visible"
+            "select=sku,nom,nom_categorie,fournisseur,prix_vente_ht"
             "&or=(prix_achat_ht.is.null,prix_achat_ht.eq.0)"
             "&order=fournisseur.asc,nom.asc")
 
@@ -1432,9 +1431,25 @@ elif page == "🔍 Vérification Wizishop":
             skus_stock = select("skus", "select=sku,stock")
             stock_map = {s["sku"]: s.get("stock") or 0 for s in skus_stock} if skus_stock else {}
 
+            # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
+            tous_produits = select("produits", "select=sku,id_wizi,statut")
+            parent_par_id_wizi = {}
+            if tous_produits:
+                for p in tous_produits:
+                    iw, sku = p.get("id_wizi"), p.get("sku")
+                    if iw is None or not sku:
+                        continue
+                    courant = parent_par_id_wizi.get(iw)
+                    if courant is None or len(sku) < len(courant["sku"]):
+                        parent_par_id_wizi[iw] = p
+            prod_map_parents = {p["sku"]: p for p in parent_par_id_wizi.values()}
+
             df_pa = pd.DataFrame(produits_sans_prix)
             df_pa["stock"] = df_pa["sku"].map(stock_map).fillna(0)
             df_pa = df_pa[df_pa["stock"] > 0]
+
+            df_pa["statut"] = df_pa["sku"].apply(
+                lambda sku: get_prod_parent(sku, prod_map_parents).get("statut") or "")
 
             df_pa["prix_vente_ht"] = pd.to_numeric(df_pa["prix_vente_ht"], errors="coerce").fillna(0)
             for col in ["nom", "nom_categorie", "fournisseur", "statut"]:
