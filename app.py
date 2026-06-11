@@ -1916,19 +1916,32 @@ elif page == "📊 CA par catégories":
             st.divider()
             st.subheader("📋 Détail par produit")
 
-            categories_liste = result["categorie"].tolist()
-            categorie_detail = st.selectbox(
-                "Catégorie à détailler", categories_liste, key="sel_categorie_detail_ca")
+            col_cat_detail, col_statut_detail = st.columns(2)
+            with col_cat_detail:
+                categories_liste = result["categorie"].tolist()
+                categorie_detail = st.selectbox(
+                    "Catégorie à détailler", categories_liste, key="sel_categorie_detail_ca")
+            with col_statut_detail:
+                statuts_options_detail = {
+                    "Tous": None,
+                    "Affiché (visible)": "visible",
+                    "Indisponible (unavailable)": "unavailable",
+                    "Non affiché (hidden)": "hidden",
+                }
+                statut_label_detail = st.selectbox(
+                    "Statut", list(statuts_options_detail.keys()), key="sel_statut_detail_ca")
+                statut_filtre_detail = statuts_options_detail[statut_label_detail]
 
             skus_data_cat = select("skus", "select=sku,stock")
             stock_map_cat = {s["sku"]: s.get("stock") or 0 for s in skus_data_cat} if skus_data_cat else {}
 
             if categorie_detail == "Sans catégorie":
-                produits_categorie = [p for p in (produits_cat or [])
-                                       if not p.get("nom_categorie") and p.get("statut") in ("visible", "unavailable")]
+                produits_categorie = [p for p in (produits_cat or []) if not p.get("nom_categorie")]
             else:
-                produits_categorie = [p for p in (produits_cat or [])
-                                       if p.get("nom_categorie") == categorie_detail and p.get("statut") in ("visible", "unavailable")]
+                produits_categorie = [p for p in (produits_cat or []) if p.get("nom_categorie") == categorie_detail]
+
+            if statut_filtre_detail:
+                produits_categorie = [p for p in produits_categorie if p.get("statut") == statut_filtre_detail]
 
             ventes_par_sku = df.groupby("sku_effectif").agg(
                 unites_vendues=("quantite", "sum"),
