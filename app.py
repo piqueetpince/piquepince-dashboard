@@ -1759,8 +1759,26 @@ elif page == "📊 CA par catégories":
         if not all_lignes:
             st.info("Aucune ligne de commande trouvée sur la période.")
         else:
-            produits_cat = select("produits", "select=sku,nom_categorie")
+            produits_cat = select("produits", "select=sku,nom_categorie,id_wizi")
             prod_map_cat = {p["sku"]: p for p in produits_cat} if produits_cat else {}
+
+            # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
+            parent_par_id_wizi_cat = {}
+            if produits_cat:
+                for p in produits_cat:
+                    iw, sku = p.get("id_wizi"), p.get("sku")
+                    if iw is None or not sku:
+                        continue
+                    courant = parent_par_id_wizi_cat.get(iw)
+                    if courant is None or len(sku) < len(courant["sku"]):
+                        parent_par_id_wizi_cat[iw] = p
+            prod_map_parents_cat = {p["sku"]: p for p in parent_par_id_wizi_cat.values()}
+
+            def _get_categorie_cat(sku):
+                cat = (prod_map_cat.get(sku) or {}).get("nom_categorie") or ""
+                if not cat:
+                    cat = get_prod_parent(sku, prod_map_parents_cat).get("nom_categorie") or ""
+                return cat
 
             df = pd.DataFrame(all_lignes)
             df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
@@ -1768,8 +1786,7 @@ elif page == "📊 CA par catégories":
             df["ca_ht"] = df["prix_unitaire_ttc"] / 1.2 * df["quantite"]
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
-            df["categorie"] = df["sku_effectif"].map(
-                lambda x: get_prod_parent(x, prod_map_cat).get("nom_categorie") or "")
+            df["categorie"] = df["sku_effectif"].apply(_get_categorie_cat)
             df["categorie"] = df["categorie"].replace("", "Sans catégorie")
 
             result = df.groupby("categorie").agg(
