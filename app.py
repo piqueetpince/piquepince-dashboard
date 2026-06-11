@@ -1835,7 +1835,7 @@ elif page == "📊 CA par catégories":
         if not all_lignes:
             st.info("Aucune ligne de commande trouvée sur la période.")
         else:
-            produits_cat = select("produits", "select=sku,nom_categorie,id_wizi")
+            produits_cat = select("produits", "select=sku,nom,nom_categorie,statut,id_wizi")
             prod_map_cat = {p["sku"]: p for p in produits_cat} if produits_cat else {}
 
             # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
@@ -1912,6 +1912,67 @@ elif page == "📊 CA par catégories":
 
             csv = display_df_total.to_csv(index=False).encode("utf-8")
             st.download_button("Télécharger en CSV", csv, "ca_par_categories.csv", "text/csv")
+
+            st.divider()
+            st.subheader("📋 Détail par produit")
+
+            categories_liste = result["categorie"].tolist()
+            categorie_detail = st.selectbox(
+                "Catégorie à détailler", categories_liste, key="sel_categorie_detail_ca")
+
+            skus_data_cat = select("skus", "select=sku,stock")
+            stock_map_cat = {s["sku"]: s.get("stock") or 0 for s in skus_data_cat} if skus_data_cat else {}
+
+            if categorie_detail == "Sans catégorie":
+                produits_categorie = [p for p in (produits_cat or [])
+                                       if not p.get("nom_categorie") and p.get("statut") in ("visible", "unavailable")]
+            else:
+                produits_categorie = [p for p in (produits_cat or [])
+                                       if p.get("nom_categorie") == categorie_detail and p.get("statut") in ("visible", "unavailable")]
+
+            ventes_par_sku = df.groupby("sku_effectif").agg(
+                unites_vendues=("quantite", "sum"),
+                ca_ht_sku=("ca_ht", "sum"),
+            )
+            ventes_map_sku = ventes_par_sku.to_dict("index")
+
+            rows_detail = []
+            for p in produits_categorie:
+                sku = p.get("sku")
+                ventes = ventes_map_sku.get(sku, {})
+                rows_detail.append({
+                    "SKU": sku,
+                    "Nom produit": p.get("nom") or "",
+                    "Statut": p.get("statut") or "",
+                    "Stock": int(stock_map_cat.get(sku) or 0),
+                    "Unités vendues": ventes.get("unites_vendues", 0.0),
+                    "CA HT (€)": ventes.get("ca_ht_sku", 0.0),
+                })
+
+            df_detail = pd.DataFrame(rows_detail)
+
+            nb_skus_total = len(df_detail)
+            nb_skus_vendus = int((df_detail["Unités vendues"] > 0).sum()) if not df_detail.empty else 0
+            nb_skus_sans_vente = nb_skus_total - nb_skus_vendus
+
+            col1d, col2d, col3d = st.columns(3)
+            col1d.metric("Nb SKUs dans la catégorie", nb_skus_total)
+            col2d.metric("Nb SKUs vendus", nb_skus_vendus)
+            col3d.metric("Nb SKUs sans vente", nb_skus_sans_vente)
+
+            if df_detail.empty:
+                st.info("Aucun SKU visible/indisponible trouvé pour cette catégorie.")
+            else:
+                df_detail = df_detail.sort_values("Unités vendues", ascending=False).reset_index(drop=True)
+                st.dataframe(
+                    df_detail,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Unités vendues": st.column_config.NumberColumn(format="%.0f"),
+                        "CA HT (€)": st.column_config.NumberColumn(format="%.2f €"),
+                    },
+                )
 
             with st.expander("🔍 Debug - Produits sans catégorie"):
                 df_sans_cat = df[df["categorie"] == "Sans catégorie"][
