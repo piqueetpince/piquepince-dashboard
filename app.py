@@ -536,7 +536,7 @@ elif page == "👥 Clients":
     else:
         df = pd.DataFrame(commandes_clients)
         df = df[df["email_client"].notna() & (df["email_client"] != "")]
-        df["date_commande"] = pd.to_datetime(df["date_commande"], errors="coerce")
+        df["date_commande"] = pd.to_datetime(df["date_commande"], errors="coerce", utc=True).dt.tz_localize(None)
         df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
 
         date_2024 = pd.Timestamp("2024-01-01")
