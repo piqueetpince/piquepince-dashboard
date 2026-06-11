@@ -166,7 +166,7 @@ st.title("Pique&Pince — Dashboard ventes")
 
 _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble"],
-    "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories"],
+    "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories", "🐌 Produits peu vendus"],
     "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
@@ -2011,6 +2011,135 @@ elif page == "📊 CA par catégories":
             ))
             fig.update_layout(margin=dict(t=20, b=20, l=20, r=20), height=480)
             st.plotly_chart(fig, use_container_width=True)
+
+elif page == "🐌 Produits peu vendus":
+    st.subheader("🐌 Produits peu vendus")
+
+    skus_data_pv = select("skus", "select=sku,stock,statut&statut=eq.visible")
+    produits_data_pv = select("produits", "select=sku,nom,nom_categorie,statut,prix_achat_ht")
+
+    if not skus_data_pv or not produits_data_pv:
+        st.info("Données indisponibles. Lance d'abord une synchronisation depuis le menu 🔄.")
+    else:
+        prod_map_pv = {p["sku"]: p for p in produits_data_pv}
+
+        with st.sidebar:
+            st.divider()
+            seuil_ventes_mois = st.number_input(
+                "Seuil ventes/mois", min_value=0.0, value=0.5, step=0.1, key="seuil_pv")
+            periodes_pv = {"3 mois": 3, "6 mois": 6, "12 mois": 12}
+            periode_label_pv = st.selectbox(
+                "Période de calcul", list(periodes_pv.keys()), index=1, key="periode_pv")
+            nb_mois_pv = periodes_pv[periode_label_pv]
+            categories_pv = ["Toutes"] + sorted(
+                {p["nom_categorie"] for p in produits_data_pv if p.get("nom_categorie")})
+            categorie_pv = st.selectbox("Catégorie", categories_pv, key="categorie_pv")
+            statuts_options_pv = {
+                "Tous": None,
+                "Affiché (visible)": "visible",
+                "Indisponible (unavailable)": "unavailable",
+                "Non affiché (hidden)": "hidden",
+            }
+            statut_label_pv = st.selectbox(
+                "Statut", list(statuts_options_pv.keys()), index=1, key="statut_pv")
+            statut_filtre_pv = statuts_options_pv[statut_label_pv]
+
+        date_limite_pv = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_pv)).strftime("%Y-%m-%dT%H:%M:%S")
+
+        commandes_pv = select("commandes",
+            f"select=id_wizi"
+            f"&source=in.(wizishop,etsy)"
+            f"&statut_code=not.in.(0,45,46,50)"
+            f"&date_commande=gte.{date_limite_pv}")
+
+        ventes_map_pv = {}
+        if commandes_pv:
+            ids_pv = [str(c["id_wizi"]) for c in commandes_pv]
+            all_lignes_pv = []
+            for i in range(0, len(ids_pv), 500):
+                batch = ids_pv[i:i + 500]
+                rows = select("lignes_commande",
+                    f"select=sku,sku_variation,quantite,prix_unitaire_ttc"
+                    f"&id_commande=in.({','.join(batch)})"
+                    f"&quantite=gt.0")
+                if rows:
+                    all_lignes_pv.extend(rows)
+
+            if all_lignes_pv:
+                df_ventes_pv = pd.DataFrame(all_lignes_pv)
+                df_ventes_pv["quantite"] = pd.to_numeric(df_ventes_pv["quantite"], errors="coerce").fillna(0)
+                df_ventes_pv["prix_unitaire_ttc"] = pd.to_numeric(df_ventes_pv["prix_unitaire_ttc"], errors="coerce").fillna(0)
+                df_ventes_pv["ca_ht"] = df_ventes_pv["prix_unitaire_ttc"] / 1.2 * df_ventes_pv["quantite"]
+                df_ventes_pv["sku_variation"] = df_ventes_pv["sku_variation"].fillna("")
+                df_ventes_pv["sku_effectif"] = df_ventes_pv.apply(
+                    lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
+
+                ventes_map_pv = df_ventes_pv.groupby("sku_effectif").agg(
+                    total_vendu=("quantite", "sum"),
+                    ca_ht=("ca_ht", "sum"),
+                ).to_dict("index")
+
+        rows_pv = []
+        for s in skus_data_pv:
+            sku = s.get("sku")
+            prod = prod_map_pv.get(sku, {})
+            statut_prod = prod.get("statut") or ""
+
+            if categorie_pv != "Toutes" and (prod.get("nom_categorie") or "") != categorie_pv:
+                continue
+            if statut_filtre_pv and statut_prod != statut_filtre_pv:
+                continue
+
+            ventes = ventes_map_pv.get(sku, {})
+            total_vendu = float(ventes.get("total_vendu", 0.0))
+            ca_ht = float(ventes.get("ca_ht", 0.0))
+            ventes_par_mois = total_vendu / nb_mois_pv
+
+            if ventes_par_mois >= seuil_ventes_mois:
+                continue
+
+            stock = int(s.get("stock") or 0)
+            prix_achat = float(prod.get("prix_achat_ht") or 0)
+
+            rows_pv.append({
+                "SKU": sku,
+                "Nom produit": prod.get("nom") or "",
+                "Catégorie": prod.get("nom_categorie") or "",
+                "Statut": statut_prod,
+                "Stock": stock,
+                "Ventes/mois": ventes_par_mois,
+                "Total vendu (période)": total_vendu,
+                "CA HT (€)": ca_ht,
+                "_valorisation": stock * prix_achat,
+            })
+
+        df_pv = pd.DataFrame(rows_pv)
+
+        nb_produits_pv = len(df_pv)
+        stock_immobilise_pv = int(df_pv["Stock"].sum()) if not df_pv.empty else 0
+        valo_immobilisee_pv = df_pv["_valorisation"].sum() if not df_pv.empty else 0.0
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Nb produits concernés", nb_produits_pv)
+        col2.metric("Stock immobilisé total", stock_immobilise_pv)
+        col3.metric("Valorisation immobilisée", f"{valo_immobilisee_pv:,.2f} €".replace(",", " "))
+
+        if df_pv.empty:
+            st.info("Aucun produit sous le seuil pour ces filtres.")
+        else:
+            df_pv_sorted = df_pv.sort_values("Ventes/mois", ascending=True).reset_index(drop=True)
+            display_df_pv = df_pv_sorted[["SKU", "Nom produit", "Catégorie", "Statut", "Stock",
+                                           "Ventes/mois", "Total vendu (période)", "CA HT (€)"]]
+            st.dataframe(
+                display_df_pv,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Ventes/mois": st.column_config.NumberColumn(format="%.2f"),
+                    "Total vendu (période)": st.column_config.NumberColumn(format="%.0f"),
+                    "CA HT (€)": st.column_config.NumberColumn(format="%.2f €"),
+                },
+            )
 
 elif page == "🎨 Meilleures variations":
     st.subheader("🎨 Meilleures variations — Wizishop + Etsy")
