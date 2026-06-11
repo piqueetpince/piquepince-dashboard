@@ -1784,6 +1784,7 @@ elif page == "📊 CA par catégories":
             df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
             df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
             df["ca_ht"] = df["prix_unitaire_ttc"] / 1.2 * df["quantite"]
+            df["sku_variation"] = df["sku_variation"].fillna("")
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
             df["categorie"] = df["sku_effectif"].apply(_get_categorie_cat)
