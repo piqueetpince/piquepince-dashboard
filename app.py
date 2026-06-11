@@ -1429,7 +1429,13 @@ elif page == "🔍 Vérification Wizishop":
             "&order=fournisseur.asc,nom.asc")
 
         if produits_sans_prix:
+            skus_stock = select("skus", "select=sku,stock")
+            stock_map = {s["sku"]: s.get("stock") or 0 for s in skus_stock} if skus_stock else {}
+
             df_pa = pd.DataFrame(produits_sans_prix)
+            df_pa["stock"] = df_pa["sku"].map(stock_map).fillna(0)
+            df_pa = df_pa[df_pa["stock"] > 0]
+
             df_pa["prix_vente_ht"] = pd.to_numeric(df_pa["prix_vente_ht"], errors="coerce").fillna(0)
             for col in ["nom", "nom_categorie", "fournisseur"]:
                 df_pa[col] = df_pa[col].fillna("")
@@ -1441,10 +1447,13 @@ elif page == "🔍 Vérification Wizishop":
                 "prix_vente_ht": "Prix vente HT",
             })[["SKU", "Nom produit", "Catégorie", "Fournisseur", "Prix vente HT"]]
 
-            st.metric("SKUs sans prix d'achat", len(df_pa))
-            st.dataframe(df_pa, use_container_width=True, hide_index=True)
-            csv = df_pa.to_csv(index=False).encode("utf-8")
-            st.download_button("Télécharger en CSV", csv, "prix_achat_manquants.csv", "text/csv")
+            st.metric("SKUs sans prix d'achat (stock > 0)", len(df_pa))
+            if not df_pa.empty:
+                st.dataframe(df_pa, use_container_width=True, hide_index=True)
+                csv = df_pa.to_csv(index=False).encode("utf-8")
+                st.download_button("Télécharger en CSV", csv, "prix_achat_manquants.csv", "text/csv")
+            else:
+                st.success("✅ Tous les produits visibles avec du stock ont un prix d'achat renseigné.")
         else:
             st.success("✅ Tous les produits visibles ont un prix d'achat renseigné.")
 
