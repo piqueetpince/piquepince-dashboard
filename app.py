@@ -167,7 +167,7 @@ st.title("Pique&Pince — Dashboard ventes")
 _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble"],
     "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories", "🐌 Produits peu vendus"],
-    "🛍️ Wizishop":     ["📦 Commandes", "⭐ Best-sellers", "🚨 Réapprovisionnement",
+    "🛍️ Wizishop":     ["📦 Commandes", "👥 Clients", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
                          "📈 Évolution CA annuelle"],
@@ -522,6 +522,111 @@ elif page == "📦 Commandes":
         st.download_button("Télécharger en CSV", csv, f"commandes_{nb_mois}mois.csv", "text/csv")
     else:
         st.info("Aucune commande. Lance d'abord une synchronisation.")
+
+elif page == "👥 Clients":
+    st.subheader("👥 Clients")
+
+    commandes_clients = select("commandes",
+        "select=email_client,date_commande,montant_ht,nom_facturation,prenom_facturation"
+        "&source=eq.wizishop"
+        "&statut_code=not.in.(0,45,46,50)")
+
+    if not commandes_clients:
+        st.info("Données indisponibles. Lance d'abord une synchronisation depuis le menu 🔄.")
+    else:
+        df = pd.DataFrame(commandes_clients)
+        df = df[df["email_client"].notna() & (df["email_client"] != "")]
+        df["date_commande"] = pd.to_datetime(df["date_commande"], errors="coerce")
+        df["montant_ht"] = pd.to_numeric(df["montant_ht"], errors="coerce").fillna(0)
+
+        date_2024 = pd.Timestamp("2024-01-01")
+        maintenant = pd.Timestamp.now()
+
+        rows_clients = []
+        for email, g in df.groupby("email_client"):
+            date_premiere = g["date_commande"].min()
+            date_derniere = g["date_commande"].max()
+            nb_total = len(g)
+            nb_2024 = int((g["date_commande"] >= date_2024).sum())
+            if nb_2024 == 0:
+                continue
+
+            ca_total = g["montant_ht"].sum()
+            panier_moyen = ca_total / nb_total if nb_total else 0.0
+            mois_inactif = (maintenant - date_derniere).days / 30 if pd.notna(date_derniere) else None
+
+            g_sorted = g.sort_values("date_commande")
+            noms = g_sorted["nom_facturation"].dropna()
+            prenoms = g_sorted["prenom_facturation"].dropna()
+            nom = noms.iloc[-1] if not noms.empty else ""
+            prenom = prenoms.iloc[-1] if not prenoms.empty else ""
+
+            rows_clients.append({
+                "Email": email,
+                "Nom": nom,
+                "Prénom": prenom,
+                "nb_commandes_total": nb_total,
+                "nb_commandes_2024": nb_2024,
+                "date_premiere_commande": date_premiere,
+                "date_derniere_commande": date_derniere,
+                "mois_inactif": mois_inactif,
+                "ca_total": ca_total,
+                "panier_moyen": panier_moyen,
+            })
+
+        df_clients = pd.DataFrame(rows_clients)
+
+        with st.sidebar:
+            st.divider()
+            nb_cmd_min = st.number_input("Nb commandes total (min)", min_value=1, value=1, step=1, key="clients_nb_cmd_min")
+            mois_inactif_min = st.number_input("Inactif depuis plus de X mois", min_value=0.0, value=0.0, step=1.0, key="clients_mois_inactif")
+            ca_total_min = st.number_input("CA total minimum (€)", min_value=0.0, value=0.0, step=10.0, key="clients_ca_min")
+            panier_moyen_min = st.number_input("Panier moyen minimum (€)", min_value=0.0, value=0.0, step=5.0, key="clients_panier_min")
+
+        if not df_clients.empty:
+            df_clients = df_clients[df_clients["nb_commandes_total"] >= nb_cmd_min]
+            if mois_inactif_min > 0:
+                df_clients = df_clients[df_clients["mois_inactif"] > mois_inactif_min]
+            df_clients = df_clients[df_clients["ca_total"] >= ca_total_min]
+            df_clients = df_clients[df_clients["panier_moyen"] >= panier_moyen_min]
+
+        nb_clients = len(df_clients)
+        ca_moyen_client = df_clients["ca_total"].mean() if nb_clients else 0.0
+        pct_une_commande = (df_clients["nb_commandes_total"] == 1).mean() * 100 if nb_clients else 0.0
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Nb clients filtrés", nb_clients)
+        col2.metric("CA moyen par client", f"{ca_moyen_client:,.2f} €".replace(",", " "))
+        col3.metric("% clients avec 1 seule commande", f"{pct_une_commande:.1f} %")
+
+        if df_clients.empty:
+            st.info("Aucun client pour ces filtres.")
+        else:
+            df_clients_sorted = df_clients.sort_values("date_derniere_commande", ascending=False).reset_index(drop=True)
+
+            display_df = df_clients_sorted.rename(columns={
+                "nb_commandes_total": "Nb commandes",
+                "date_derniere_commande": "Dernière commande",
+                "mois_inactif": "Mois inactif",
+                "ca_total": "CA total (€)",
+                "panier_moyen": "Panier moyen (€)",
+            })[["Email", "Nom", "Prénom", "Nb commandes", "Dernière commande",
+                "Mois inactif", "CA total (€)", "Panier moyen (€)"]]
+            display_df["Dernière commande"] = display_df["Dernière commande"].dt.strftime("%d/%m/%Y")
+
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Mois inactif": st.column_config.NumberColumn(format="%.1f"),
+                    "CA total (€)": st.column_config.NumberColumn(format="%.2f €"),
+                    "Panier moyen (€)": st.column_config.NumberColumn(format="%.2f €"),
+                },
+            )
+
+            csv_emails = display_df[["Email", "Nom", "Prénom"]].to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger les emails (CSV)", csv_emails, "clients_emails.csv", "text/csv")
 
 elif page == "⭐ Best-sellers":
     with st.sidebar:
