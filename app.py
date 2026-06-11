@@ -1750,7 +1750,7 @@ elif page == "📊 CA par catégories":
         for i in range(0, len(ids), 500):
             batch = ids[i:i + 500]
             rows = select("lignes_commande",
-                f"select=sku,sku_variation,quantite,prix_unitaire_ttc"
+                f"select=sku,sku_variation,nom_produit,quantite,prix_unitaire_ttc"
                 f"&id_commande=in.({','.join(batch)})"
                 f"&quantite=gt.0")
             if rows:
@@ -1787,6 +1787,8 @@ elif page == "📊 CA par catégories":
             df["sku_effectif"] = df.apply(
                 lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
             df["categorie"] = df["sku_effectif"].apply(_get_categorie_cat)
+            df["nom_categorie_produits"] = df["sku_effectif"].map(
+                lambda x: (prod_map_cat.get(x) or {}).get("nom_categorie"))
             df["categorie"] = df["categorie"].replace("", "Sans catégorie")
 
             result = df.groupby("categorie").agg(
@@ -1833,6 +1835,16 @@ elif page == "📊 CA par catégories":
 
             csv = display_df_total.to_csv(index=False).encode("utf-8")
             st.download_button("Télécharger en CSV", csv, "ca_par_categories.csv", "text/csv")
+
+            with st.expander("🔍 Debug - Produits sans catégorie"):
+                df_sans_cat = df[df["categorie"] == "Sans catégorie"][
+                    ["sku_effectif", "nom_produit", "nom_categorie_produits"]
+                ].drop_duplicates().head(20)
+                df_sans_cat.columns = ["SKU", "Nom produit (lignes_commande)", "nom_categorie (produits)"]
+                if df_sans_cat.empty:
+                    st.success("✅ Tous les produits vendus ont une catégorie.")
+                else:
+                    st.dataframe(df_sans_cat, use_container_width=True, hide_index=True)
 
             st.divider()
             fig = go.Figure(go.Pie(
