@@ -1366,57 +1366,87 @@ elif page == "🌍 Comptabilité TVA":
 elif page == "🔍 Vérification Wizishop":
     st.subheader("🔍 Vérification des ventes Wizishop")
 
-    with st.sidebar:
-        st.divider()
-        nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
+    tab1, tab2 = st.tabs(["📊 Ventes", "💰 Prix d'achat manquants"])
 
-    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-    commandes_wizi = select("commandes",
-        f"select=id_wizi&statut_code=not.in.(0,45,46,50)&source=eq.wizishop&date_commande=gte.{date_limite}")
+    with tab1:
+        with st.sidebar:
+            st.divider()
+            nb_mois = st.slider("Période (mois)", min_value=1, max_value=24, value=12)
 
-    if commandes_wizi:
-        ids = [str(c["id_wizi"]) for c in commandes_wizi]
-        ids_str = ",".join(ids)
+        date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+        commandes_wizi = select("commandes",
+            f"select=id_wizi&statut_code=not.in.(0,45,46,50)&source=eq.wizishop&date_commande=gte.{date_limite}")
 
-        lignes = select("lignes_commande",
-            f"select=sku,sku_variation,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
-            limit=50000)
+        if commandes_wizi:
+            ids = [str(c["id_wizi"]) for c in commandes_wizi]
+            ids_str = ",".join(ids)
 
-        produits = select("produits", "select=sku,nom,nom_categorie")
-        prod_map = {p["sku"]: p for p in produits} if produits else {}
+            lignes = select("lignes_commande",
+                f"select=sku,sku_variation,nom_produit,quantite,prix_unitaire_ttc,id_commande&id_commande=in.({ids_str})",
+                limit=50000)
 
-        if lignes:
-            df = pd.DataFrame(lignes)
-            df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
-            df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
-            df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
-            df["sku_effectif"] = df.apply(
-                lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
-            df["nom_affiche"] = df["sku_effectif"].map(
-                lambda x: get_prod_parent(x, prod_map).get("nom", "") or "")
-            df["nom_affiche"] = df.apply(
-                lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
-            df["categorie"] = df["sku_effectif"].map(
-                lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
+            produits = select("produits", "select=sku,nom,nom_categorie")
+            prod_map = {p["sku"]: p for p in produits} if produits else {}
 
-            result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
-                unites_vendues=("quantite", "sum"),
-                ca_total=("ca", "sum"),
-                nb_commandes=("id_commande", "nunique")
-            ).reset_index().sort_values("unites_vendues", ascending=False)
+            if lignes:
+                df = pd.DataFrame(lignes)
+                df["quantite"] = pd.to_numeric(df["quantite"], errors="coerce").fillna(0)
+                df["prix_unitaire_ttc"] = pd.to_numeric(df["prix_unitaire_ttc"], errors="coerce").fillna(0)
+                df["ca"] = df["quantite"] * df["prix_unitaire_ttc"]
+                df["sku_effectif"] = df.apply(
+                    lambda r: r["sku_variation"] if r["sku_variation"] else r["sku"], axis=1)
+                df["nom_affiche"] = df["sku_effectif"].map(
+                    lambda x: get_prod_parent(x, prod_map).get("nom", "") or "")
+                df["nom_affiche"] = df.apply(
+                    lambda r: r["nom_affiche"] if r["nom_affiche"] else r["nom_produit"], axis=1)
+                df["categorie"] = df["sku_effectif"].map(
+                    lambda x: get_prod_parent(x, prod_map).get("nom_categorie", "") or "")
 
-            result.columns = ["SKU", "Produit", "Catégorie",
-                             "Unités vendues", "CA (€)", "Nb commandes"]
-            result["CA (€)"] = result["CA (€)"].apply(lambda x: f"{x:.2f}")
+                result = df.groupby(["sku_effectif", "nom_affiche", "categorie"]).agg(
+                    unites_vendues=("quantite", "sum"),
+                    ca_total=("ca", "sum"),
+                    nb_commandes=("id_commande", "nunique")
+                ).reset_index().sort_values("unites_vendues", ascending=False)
 
-            st.info(f"{len(result)} produits vendus sur Wizishop sur les {nb_mois} derniers mois")
-            st.dataframe(result, use_container_width=True, hide_index=True)
-            csv = result.to_csv(index=False).encode("utf-8")
-            st.download_button("Télécharger en CSV", csv, "verification_wizishop.csv", "text/csv")
+                result.columns = ["SKU", "Produit", "Catégorie",
+                                 "Unités vendues", "CA (€)", "Nb commandes"]
+                result["CA (€)"] = result["CA (€)"].apply(lambda x: f"{x:.2f}")
+
+                st.info(f"{len(result)} produits vendus sur Wizishop sur les {nb_mois} derniers mois")
+                st.dataframe(result, use_container_width=True, hide_index=True)
+                csv = result.to_csv(index=False).encode("utf-8")
+                st.download_button("Télécharger en CSV", csv, "verification_wizishop.csv", "text/csv")
+            else:
+                st.info("Aucune ligne de commande trouvée.")
         else:
-            st.info("Aucune ligne de commande trouvée.")
-    else:
-        st.info("Aucune commande Wizishop trouvée.")
+            st.info("Aucune commande Wizishop trouvée.")
+
+    with tab2:
+        produits_sans_prix = select("produits",
+            "select=sku,nom,nom_categorie,fournisseur,prix_vente_ht"
+            "&statut=eq.visible"
+            "&or=(prix_achat_ht.is.null,prix_achat_ht.eq.0)"
+            "&order=fournisseur.asc,nom.asc")
+
+        if produits_sans_prix:
+            df_pa = pd.DataFrame(produits_sans_prix)
+            df_pa["prix_vente_ht"] = pd.to_numeric(df_pa["prix_vente_ht"], errors="coerce").fillna(0)
+            for col in ["nom", "nom_categorie", "fournisseur"]:
+                df_pa[col] = df_pa[col].fillna("")
+            df_pa = df_pa.rename(columns={
+                "sku": "SKU",
+                "nom": "Nom produit",
+                "nom_categorie": "Catégorie",
+                "fournisseur": "Fournisseur",
+                "prix_vente_ht": "Prix vente HT",
+            })[["SKU", "Nom produit", "Catégorie", "Fournisseur", "Prix vente HT"]]
+
+            st.metric("SKUs sans prix d'achat", len(df_pa))
+            st.dataframe(df_pa, use_container_width=True, hide_index=True)
+            csv = df_pa.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "prix_achat_manquants.csv", "text/csv")
+        else:
+            st.success("✅ Tous les produits visibles ont un prix d'achat renseigné.")
 
 elif page == "📈 Évolution CA annuelle":
     st.subheader("📈 Évolution CA HT Wizishop + Etsy — 2025 vs 2026")
