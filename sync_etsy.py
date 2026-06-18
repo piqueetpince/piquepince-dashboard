@@ -380,7 +380,7 @@ def sync_etsy_stock():
 
         if r_patch.status_code in (200, 204):
             nb_maj += 1
-            update("produits_etsy", f"listing_id=eq.{listing_id}", {"stock_total": stock_wizi})
+            update("produits_etsy_variations", f"listing_id=eq.{listing_id}", {"stock_etsy": stock_wizi})
         elif r_patch.status_code == 404:
             st.warning(f"[sync_etsy_stock] Listing simple {listing_id} introuvable (404) — relance sync_produits_etsy pour nettoyer")
         else:
@@ -389,6 +389,25 @@ def sync_etsy_stock():
                        f"HTTP {r_patch.status_code} — {r_patch.text[:200]}")
 
         time.sleep(0.5)
+
+    # ── Listings sans variation en mode "edit" : pas d'appel API ─────────────
+    # Etsy refuse toute modification de stock sur un listing en brouillon
+    # (state=edit) : on ne peut donc pas les pousser. On met simplement à jour
+    # stock_etsy en base avec le stock Wizishop actuel, pour que la page
+    # Gestion stock Etsy n'affiche pas une valeur figée sur l'ancien stock.
+    listings_edit = select("produits_etsy",
+        "select=listing_id,sku&has_variations=eq.false&sku=not.is.null&statut=eq.edit")
+
+    for listing in (listings_edit or []):
+        listing_id = listing["listing_id"]
+        sku        = (listing.get("sku") or "").strip()
+
+        if not sku or sku not in stock_wizi_map:
+            continue
+
+        update("produits_etsy_variations", f"listing_id=eq.{listing_id}",
+               {"stock_etsy": stock_wizi_map[sku]})
+        nb_maj += 1
 
     print(f"  → {nb_maj} listings mis à jour, {nb_erreurs} erreur(s), "
           f"{nb_inconnus_total} SKU(s) non trouvés dans Wizishop")
