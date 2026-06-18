@@ -2635,32 +2635,34 @@ elif page == "📒 Export comptable Etsy":
     st.subheader("📒 Export comptable Etsy")
 
     # ── Classification des lignes du grand-livre ──────────────────────────────
-    # reference_type='refund' et 'shipping_label' n'existent jamais dans les
-    # données réelles d'Etsy : les remboursements se reconnaissent par le
-    # suffixe "_refund" (ou REFUND_*) sur ledger_type, et les frais
-    # d'expédition par ledger_type='shipping_transaction'. Classification
-    # vérifiée sur les vraies données déjà synchronisées (etsy_ledger_entries).
-    _TYPES_FRAIS = ("FRAIS_LISTING", "FRAIS_TRANSACTION", "FRAIS_EXPEDITION", "AUTRE_FRAIS")
+    # Mapping basé sur les ledger_type réels observés en base (reference_type
+    # seul ne suffit pas : 'refund'/'shipping_label' n'existent jamais chez Etsy).
+    # FRAIS_ADS est exclu de _TYPES_FRAIS_TOTAL pour rester visible séparément
+    # dans les métriques (coût publicitaire isolé du reste des frais Etsy).
+    _TYPES_FRAIS_TOTAL = ("FRAIS_LISTING", "FRAIS_TRANSACTION", "FRAIS_ETSY_DIVERS")
+    _TYPES_FRAIS_COLONNE = _TYPES_FRAIS_TOTAL + ("FRAIS_ADS",)
 
     def _classify_ledger_entry(ledger_type):
         lt = ledger_type or ""
-        if lt in ("sales_tax", "sales_tax_refund"):
-            return "TVA"
-        if lt.endswith("_refund") or lt in ("REFUND_GROSS", "REFUND_PROCESSING_FEE"):
+        if (lt.endswith("_refund")
+                or lt in ("REFUND_GROSS", "REFUND_PROCESSING_FEE", "regulatory_operating_fee_refund")):
             return "REMBOURSEMENT"
+        if lt == "sales_tax":
+            return "TVA"
         if lt == "PAYMENT_GROSS":
             return "VENTE"
         if lt == "DISBURSE2":
             return "VIREMENT"  # versement bancaire Etsy → vendeur, exclu des métriques frais/CA
-        if lt == "shipping_transaction":
-            return "FRAIS_EXPEDITION"
-        if lt in ("transaction", "transaction_quantity", "regulatory_operating_fee",
-                  "PAYMENT_PROCESSING_FEE", "buyer_fee"):
+        if lt in ("transaction", "transaction_quantity", "shipping_transaction",
+                  "regulatory_operating_fee", "PAYMENT_PROCESSING_FEE", "buyer_fee"):
             return "FRAIS_TRANSACTION"
-        if lt in ("listing", "renew_sold", "renew_sold_auto", "auto_renew_expired",
-                  "renew_expired", "prolist"):
+        if lt in ("listing", "renew_sold", "renew_sold_auto", "renew_expired", "auto_renew_expired"):
             return "FRAIS_LISTING"
-        return "AUTRE_FRAIS"
+        if lt in ("prolist", "offsite_ads_fee"):
+            return "FRAIS_ADS"
+        if lt in ("billing_payment", "RECOUP") or lt.startswith("seller_onboarding_fee"):
+            return "FRAIS_ETSY_DIVERS"
+        return "FRAIS_ETSY_DIVERS"  # fallback pour tout ledger_type non répertorié
 
     def _resolve_receipt_id(reference_type, reference_id, payments_by_id):
         # Vérifié sur données réelles : reference_type='receipt' → reference_id
@@ -2718,7 +2720,7 @@ elif page == "📒 Export comptable Etsy":
                 amount_eur = (entry.get("amount") or 0) / 100
 
                 montant_brut = amount_eur if type_ in ("VENTE", "REMBOURSEMENT") else 0.0
-                frais_etsy   = amount_eur if type_ in _TYPES_FRAIS else 0.0
+                frais_etsy   = amount_eur if type_ in _TYPES_FRAIS_COLONNE else 0.0
                 tva          = amount_eur if type_ == "TVA" else 0.0
                 montant_net  = amount_eur  # toujours le montant brut de la ligne : la somme de
                                             # cette colonne sur toutes les lignes = variation du
@@ -2751,18 +2753,21 @@ elif page == "📒 Export comptable Etsy":
 
             ca_brut       = df.loc[df["Type"] == "VENTE", "Montant brut (€)"].sum()
             total_remb    = df.loc[df["Type"] == "REMBOURSEMENT", "Montant brut (€)"].sum()
-            total_frais   = df.loc[df["Type"].isin(_TYPES_FRAIS), "Frais Etsy (€)"].sum()
+            total_frais   = df.loc[df["Type"].isin(_TYPES_FRAIS_TOTAL), "Frais Etsy (€)"].sum()
+            total_ads     = df.loc[df["Type"] == "FRAIS_ADS", "Frais Etsy (€)"].sum()
             total_tva     = df.loc[df["Type"] == "TVA", "TVA collectée (€)"].sum()
-            net_reverse   = ca_brut + total_remb + total_frais + total_tva
+            net_reverse   = ca_brut + total_remb + total_frais + total_ads + total_tva
 
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.metric("CA brut période", f"{ca_brut:,.2f} €")
             with col2:
                 st.metric("Total frais Etsy", f"{total_frais:,.2f} €")
             with col3:
-                st.metric("Total TVA collectée", f"{total_tva:,.2f} €")
+                st.metric("Total frais publicité (Ads)", f"{total_ads:,.2f} €")
             with col4:
+                st.metric("Total TVA collectée", f"{total_tva:,.2f} €")
+            with col5:
                 st.metric("Net reversé", f"{net_reverse:,.2f} €")
 
             nb_virement = len(df[df["Type"] == "VIREMENT"])
