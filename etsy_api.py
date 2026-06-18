@@ -1,8 +1,13 @@
+import time
+
 import requests
 import streamlit as st
 from supabase_api import upsert, select
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
+
+# Etsy n'accepte pas de timestamp avant cette date pour min_created/max_created
+ETSY_MIN_CREATED_TIMESTAMP = 946684800  # 2000-01-01
 
 
 # ── Config Supabase ───────────────────────────────────────────────────────────
@@ -145,3 +150,108 @@ def get_all_receipts(shop_id, depuis_date=None):
             break
         offset += limit
     return all_receipts
+
+
+# ── Données financières ──────────────────────────────────────────────────────
+
+# Etsy refuse un écart min_created/max_created supérieur à 31 jours (HTTP 400)
+ETSY_LEDGER_MAX_WINDOW = 2678400  # 31 jours en secondes
+
+
+def _get_ledger_entries_window(shop_id, min_created, max_created):
+    """Pagine par offset les entrées du grand-livre sur une fenêtre <= 31 jours."""
+    entries = []
+    limit  = 100
+    offset = 0
+    while True:
+        r = api_get(
+            f"{ETSY_API_URL}/application/shops/{shop_id}/payment-account/ledger-entries",
+            params={
+                "min_created": min_created,
+                "max_created": max_created,
+                "limit":       limit,
+                "offset":      offset,
+            }
+        )
+        if r.status_code != 200:
+            st.warning(f"[get_ledger_entries] HTTP {r.status_code} — {r.text[:200]}")
+            break
+        data    = r.json()
+        results = data.get("results", [])
+        if not results:
+            break
+        entries.extend(results)
+        if offset + limit >= data.get("count", 0):
+            break
+        offset += limit
+    return entries
+
+
+def get_ledger_entries(shop_id, min_timestamp=None, max_timestamp=None):
+    """Récupère toutes les entrées du grand-livre du compte de paiement Etsy
+    (relevé avec solde courant), paginées par offset.
+
+    Découpe la plage demandée en fenêtres de 31 jours maximum (limite imposée
+    par Etsy sur min_created/max_created), sinon l'API renvoie un 400.
+
+    Champs renvoyés par Etsy : entry_id, ledger_id, amount, balance, currency,
+    create_date, created_timestamp, ledger_type, reference_type, reference_id,
+    parent_entry_id, payment_adjustments[].
+    """
+    min_created = min_timestamp or ETSY_MIN_CREATED_TIMESTAMP
+    max_created = max_timestamp or int(time.time())
+
+    entries = []
+    window_start = min_created
+    while window_start <= max_created:
+        window_end = min(window_start + ETSY_LEDGER_MAX_WINDOW, max_created)
+        entries.extend(_get_ledger_entries_window(shop_id, window_start, window_end))
+        window_start = window_end + 1
+        time.sleep(0.1)
+    return entries
+
+
+def get_payments(shop_id, min_timestamp=None, max_timestamp=None, entries=None):
+    """Récupère les paiements postés sur une plage de dates.
+
+    L'endpoint Etsy GET /shops/{shop_id}/payments n'accepte pas de filtre par
+    date : il exige une liste de payment_ids. On passe donc par le grand-livre
+    (qui supporte min_created/max_created) pour obtenir les entry_id, puis on
+    résout les Payments correspondants via /payment-account/ledger-entries/payments.
+
+    Si `entries` est fourni (déjà récupéré via get_ledger_entries), on l'utilise
+    directement au lieu de refaire l'appel — utile pour un backfill sur une
+    longue période où le fetch du grand-livre est déjà coûteux.
+
+    Champs renvoyés par Etsy : payment_id, receipt_id, amount_gross, amount_fees,
+    amount_net, posted_gross, posted_fees, posted_net, adjusted_gross,
+    adjusted_fees, adjusted_net, currency, create_timestamp, status,
+    payment_adjustments[].
+    """
+    if entries is None:
+        entries = get_ledger_entries(shop_id, min_timestamp, max_timestamp)
+    entry_ids = [e["entry_id"] for e in entries if e.get("entry_id")]
+    if not entry_ids:
+        return []
+
+    payments = {}
+    batch_size = 25  # taille de lot non documentée par Etsy, valeur conservatrice
+    for i in range(0, len(entry_ids), batch_size):
+        batch = entry_ids[i:i + batch_size]
+        r = api_get(
+            f"{ETSY_API_URL}/application/shops/{shop_id}/payment-account/ledger-entries/payments",
+            params={"ledger_entry_ids": ",".join(str(e) for e in batch)}
+        )
+        if r.status_code != 200:
+            continue
+        for payment in r.json().get("results", []):
+            payments[payment.get("payment_id")] = payment
+    return list(payments.values())
+
+
+def get_receipt_payments(shop_id, receipt_id):
+    """Récupère les paiements liés à un reçu spécifique."""
+    r = api_get(f"{ETSY_API_URL}/application/shops/{shop_id}/receipts/{receipt_id}/payments")
+    if r.status_code == 200:
+        return r.json().get("results", [])
+    return []

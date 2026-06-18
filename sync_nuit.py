@@ -10,7 +10,7 @@ Usage:
 Slugs disponibles :
     wizishop  wizishop-categories  wizishop-marques  wizishop-skus
     wizishop-produits  wizishop-commandes
-    etsy  etsy-commandes  etsy-produits  etsy-stock
+    etsy  etsy-commandes  etsy-produits  etsy-stock  etsy-ledger  etsy-payments
     faire  faire-commandes  faire-produits  faire-stock
     shopify  shopify-produits  shopify-commandes
     ankorstore  ankorstore-produits  ankorstore-commandes  ankorstore-stock
@@ -98,6 +98,7 @@ from sync_database import (get_wizi_token, sync_categories, sync_marques,
                             sync_skus, sync_produits, sync_commandes, log_sync)
 from sync_etsy import sync_etsy_commandes, sync_etsy_stock, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
+from sync_etsy_finance import sync_etsy_ledger, sync_etsy_payments
 from sync_faire import sync_faire_commandes, sync_faire_produits, sync_faire_stock, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
 from sync_ankorstore import sync_ankorstore_produits, sync_ankorstore_commandes, sync_ankorstore_stock
@@ -203,6 +204,26 @@ if _active("etsy-stock"):
         nb_maj, nb_err, nb_inc = sync_etsy_stock()
         return f"{nb_maj} listings mis à jour, {nb_err} erreur(s), {nb_inc} SKU(s) inconnus"
     run("Etsy — stock", _etsy_stock)
+
+def _etsy_ledger():
+    shop_id = etsy_api.get_shop_id()
+    if not shop_id:
+        raise RuntimeError("ETSY_SHOP_ID introuvable")
+    nb = sync_etsy_ledger(shop_id)
+    return f"{nb} entrées de grand-livre"
+
+if _active("etsy-ledger"):
+    run("Etsy — grand-livre", _etsy_ledger)
+
+def _etsy_payments():
+    shop_id = etsy_api.get_shop_id()
+    if not shop_id:
+        raise RuntimeError("ETSY_SHOP_ID introuvable")
+    nb = sync_etsy_payments(shop_id)
+    return f"{nb} paiements"
+
+if _active("etsy-payments"):
+    run("Etsy — paiements", _etsy_payments)
 
 # ── 4. Faire commandes ────────────────────────────────────────────────────────
 
