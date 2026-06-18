@@ -10,7 +10,7 @@ from etsy_api import get_shop_id
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from faire_api import api_get as faire_api_get, test_write_permission, api_patch as faire_api_patch
 from shopify_api import (
     test_connection as shopify_test_connection,
@@ -172,7 +172,8 @@ _NAV_GROUPES = {
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
                          "📈 Évolution CA annuelle"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
-                         "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy"],
+                         "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
+                         "📒 Export comptable Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
@@ -2629,6 +2630,157 @@ elif page == "🔍 Vérification Etsy":
             st.success("✅ Aucun écart de prix significatif (> 2%) entre Etsy et Wizishop.")
     else:
         st.info("Données insuffisantes pour la comparaison des prix.")
+
+elif page == "📒 Export comptable Etsy":
+    st.subheader("📒 Export comptable Etsy")
+
+    # ── Classification des lignes du grand-livre ──────────────────────────────
+    # reference_type='refund' et 'shipping_label' n'existent jamais dans les
+    # données réelles d'Etsy : les remboursements se reconnaissent par le
+    # suffixe "_refund" (ou REFUND_*) sur ledger_type, et les frais
+    # d'expédition par ledger_type='shipping_transaction'. Classification
+    # vérifiée sur les vraies données déjà synchronisées (etsy_ledger_entries).
+    _TYPES_FRAIS = ("FRAIS_LISTING", "FRAIS_TRANSACTION", "FRAIS_EXPEDITION", "AUTRE_FRAIS")
+
+    def _classify_ledger_entry(ledger_type):
+        lt = ledger_type or ""
+        if lt in ("sales_tax", "sales_tax_refund"):
+            return "TVA"
+        if lt.endswith("_refund") or lt in ("REFUND_GROSS", "REFUND_PROCESSING_FEE"):
+            return "REMBOURSEMENT"
+        if lt == "PAYMENT_GROSS":
+            return "VENTE"
+        if lt == "DISBURSE2":
+            return "VIREMENT"  # versement bancaire Etsy → vendeur, exclu des métriques frais/CA
+        if lt == "shipping_transaction":
+            return "FRAIS_EXPEDITION"
+        if lt in ("transaction", "transaction_quantity", "regulatory_operating_fee",
+                  "PAYMENT_PROCESSING_FEE", "buyer_fee"):
+            return "FRAIS_TRANSACTION"
+        if lt in ("listing", "renew_sold", "renew_sold_auto", "auto_renew_expired",
+                  "renew_expired", "prolist"):
+            return "FRAIS_LISTING"
+        return "AUTRE_FRAIS"
+
+    def _resolve_receipt_id(reference_type, reference_id, payments_by_id):
+        # Vérifié sur données réelles : reference_type='receipt' → reference_id
+        # est déjà le receipt_id ; 'shop_payment'/'processing_fee' → reference_id
+        # est un payment_id qu'il faut résoudre via etsy_payments.receipt_id.
+        if reference_type == "receipt":
+            return reference_id
+        if reference_type in ("shop_payment", "processing_fee"):
+            p = payments_by_id.get(reference_id)
+            return p.get("receipt_id") if p else None
+        return None
+
+    with st.sidebar:
+        st.divider()
+        _aujourdhui = datetime.now().date()
+        _premier_jour_mois = _aujourdhui.replace(day=1)
+        _dernier_jour_mois_prec = _premier_jour_mois - timedelta(days=1)
+        _premier_jour_mois_prec = _dernier_jour_mois_prec.replace(day=1)
+
+        date_debut, date_fin = st.date_input(
+            "Période",
+            value=(_premier_jour_mois_prec, _dernier_jour_mois_prec),
+            format="DD/MM/YYYY",
+        )
+
+    if date_debut > date_fin:
+        st.error("La date de début doit précéder la date de fin.")
+    else:
+        ts_debut = date_debut.strftime("%Y-%m-%dT00:00:00Z")
+        ts_fin   = (date_fin + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+
+        ledger_entries = select("etsy_ledger_entries",
+            f"select=ledger_entry_id,amount,currency,create_timestamp,ledger_type,"
+            f"reference_type,reference_id,description"
+            f"&create_timestamp=gte.{ts_debut}&create_timestamp=lt.{ts_fin}"
+            f"&order=create_timestamp.asc")
+
+        if not ledger_entries:
+            st.info("Aucune entrée de grand-livre Etsy sur cette période. "
+                    "Lance d'abord la sync 🔄 etsy-ledger.")
+        else:
+            payments = select("etsy_payments", "select=payment_id,receipt_id")
+            payments_by_id = {p["payment_id"]: p for p in (payments or [])}
+
+            commandes_etsy = select("commandes",
+                "select=id_wizi,numero_commande,pays_facturation_iso&source=eq.etsy")
+            commandes_by_receipt = {c["id_wizi"]: c for c in (commandes_etsy or [])}
+
+            rows = []
+            for entry in ledger_entries:
+                ledger_type    = entry.get("ledger_type")
+                reference_type = entry.get("reference_type")
+                reference_id   = entry.get("reference_id")
+                type_ = _classify_ledger_entry(ledger_type)
+                amount_eur = (entry.get("amount") or 0) / 100
+
+                montant_brut = amount_eur if type_ in ("VENTE", "REMBOURSEMENT") else 0.0
+                frais_etsy   = amount_eur if type_ in _TYPES_FRAIS else 0.0
+                tva          = amount_eur if type_ == "TVA" else 0.0
+                montant_net  = amount_eur  # toujours le montant brut de la ligne : la somme de
+                                            # cette colonne sur toutes les lignes = variation du
+                                            # solde Etsy sur la période (vérifiable / auditable)
+
+                receipt_id = _resolve_receipt_id(reference_type, reference_id, payments_by_id)
+                cmd = commandes_by_receipt.get(receipt_id, {})
+
+                try:
+                    date_str = datetime.fromisoformat(
+                        entry["create_timestamp"].replace("Z", "+00:00")).strftime("%d/%m/%Y")
+                except Exception:
+                    date_str = ""
+
+                rows.append({
+                    "Date":              date_str,
+                    "Type":              type_,
+                    "Référence":         reference_id,
+                    "Description":       entry.get("description"),
+                    "Montant brut (€)":  round(montant_brut, 2),
+                    "Frais Etsy (€)":    round(frais_etsy, 2),
+                    "TVA collectée (€)": round(tva, 2),
+                    "Montant net (€)":   round(montant_net, 2),
+                    "Devise":            entry.get("currency"),
+                    "N° commande":       cmd.get("numero_commande", ""),
+                    "Pays client":       cmd.get("pays_facturation_iso", ""),
+                })
+
+            df = pd.DataFrame(rows)
+
+            ca_brut       = df.loc[df["Type"] == "VENTE", "Montant brut (€)"].sum()
+            total_remb    = df.loc[df["Type"] == "REMBOURSEMENT", "Montant brut (€)"].sum()
+            total_frais   = df.loc[df["Type"].isin(_TYPES_FRAIS), "Frais Etsy (€)"].sum()
+            total_tva     = df.loc[df["Type"] == "TVA", "TVA collectée (€)"].sum()
+            net_reverse   = ca_brut + total_remb + total_frais + total_tva
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("CA brut période", f"{ca_brut:,.2f} €")
+            with col2:
+                st.metric("Total frais Etsy", f"{total_frais:,.2f} €")
+            with col3:
+                st.metric("Total TVA collectée", f"{total_tva:,.2f} €")
+            with col4:
+                st.metric("Net reversé", f"{net_reverse:,.2f} €")
+
+            nb_virement = len(df[df["Type"] == "VIREMENT"])
+            if nb_virement:
+                st.caption(f"ℹ️ {nb_virement} versement(s) bancaire(s) Etsy → vendeur sur la "
+                           f"période (type VIREMENT) — affichés dans le tableau mais exclus des "
+                           f"métriques ci-dessus (ils reflètent un calendrier de paiement, pas "
+                           f"l'activité comptable de la période).")
+
+            st.divider()
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Exporter CSV", csv,
+                f"export_comptable_etsy_{date_debut.strftime('%Y%m%d')}_{date_fin.strftime('%Y%m%d')}.csv",
+                "text/csv",
+            )
 
 elif page == "🔎 Produits manquants sur Faire":
     st.subheader("🔎 Produits manquants sur Faire")
