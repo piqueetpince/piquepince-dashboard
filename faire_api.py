@@ -30,6 +30,18 @@ def api_patch(endpoint, body=None):
     )
 
 
+def api_post(endpoint, body=None):
+    return requests.post(
+        f"{FAIRE_API_URL}{endpoint}",
+        headers=_get_headers_token(),
+        json=body or {}
+    )
+
+
+def create_product(body):
+    return api_post("/products", body)
+
+
 def test_write_permission():
     variants = select("produits_faire_variants",
         "select=id_faire,id_produit_faire&limit=1")

@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
 import requests
+import json
+import os
 from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, sync_categories, sync_marques,
-                           sync_skus, sync_commandes, sync_produits, log_sync)
+                           sync_skus, sync_commandes, sync_produits, log_sync,
+                           WIZISHOP_API_URL)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
@@ -11,7 +14,8 @@ from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
 import time
 from datetime import datetime, timezone, timedelta
-from faire_api import api_get as faire_api_get, test_write_permission, api_patch as faire_api_patch
+from faire_api import (api_get as faire_api_get, test_write_permission,
+                       api_patch as faire_api_patch, create_product as faire_create_product)
 from shopify_api import (
     test_connection as shopify_test_connection,
     get_shopify_token,
@@ -87,6 +91,71 @@ def get_prod_parent(sku, prod_map):
         if prefixe in prod_map:
             return prod_map[prefixe]
     return {}
+
+
+@st.cache_data(ttl=600)
+def _get_wizishop_description(id_wizi):
+    """Description HTML brute du produit Wizishop (non synchronisée en base —
+    récupérée à la demande pour servir de contexte à la génération de fiche Faire)."""
+    if not id_wizi:
+        return ""
+    token, _, shop_id = get_wizi_token()
+    if not token:
+        return ""
+    r = requests.get(f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products/{id_wizi}",
+                     headers={"Authorization": f"Bearer {token}"}, timeout=15)
+    if r.status_code != 200:
+        return ""
+    return r.json().get("description") or ""
+
+
+_PROMPT_SYSTEME_FICHE_FAIRE = """Tu es un expert en rédaction de fiches produits pour Faire, plateforme B2B wholesale. Tu rédiges pour Pique&Pince, marque française d'accessoires cheveux faits main en acétate de cellulose.
+Règles strictes :
+- Titre : 35-60 caractères
+- Description : 1000-2000 caractères, premiers 160 chars = snippet crucial, pas de saut de ligne manuel
+- Toujours mentionner : fait main en France, acétate de cellulose bio-sourcé, pochette velours Pique&Pince incluse
+- Inclure : conseils merchandising BtoB pour retailers, instructions entretien
+- Interdits : le mot "artisanal", "bien supérieur au plastique ordinaire"
+- Ton : premium, B2B, pour boutiques indépendantes et concept stores
+- Langue : français
+- Retourner JSON : {"titre": "...", "description": "...", "short_description": "..."}"""
+
+
+def _generer_fiche_faire(nom, categorie, fournisseur, description_wizi):
+    """Appelle l'API Anthropic (Messages) pour générer la fiche produit Faire.
+    Lève une exception si la clé est absente, l'appel échoue ou le JSON est invalide."""
+    contenu_utilisateur = (
+        f"Produit Wizishop :\n"
+        f"Nom : {nom}\n"
+        f"Catégorie : {categorie}\n"
+        f"Fournisseur : {fournisseur}\n"
+        f"Description actuelle (site B2C Pique&Pince, HTML) :\n{description_wizi or '(aucune)'}\n\n"
+        f"Rédige la fiche produit Faire (B2B) selon les règles strictes du system prompt. "
+        f"Réponds uniquement avec le JSON demandé, sans texte ni balises autour."
+    )
+
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key":         st.secrets["ANTHROPIC_API_KEY"],
+            "anthropic-version": "2023-06-01",
+            "content-type":      "application/json",
+        },
+        json={
+            "model":      "claude-sonnet-4-6",
+            "max_tokens": 2000,
+            "system":     _PROMPT_SYSTEME_FICHE_FAIRE,
+            "messages":   [{"role": "user", "content": contenu_utilisateur}],
+        },
+        timeout=60,
+    )
+    r.raise_for_status()
+    texte = r.json()["content"][0]["text"].strip()
+    if texte.startswith("```"):
+        texte = texte.strip("`")
+        if texte.lower().startswith("json"):
+            texte = texte[4:]
+    return json.loads(texte.strip())
 
 
 @st.cache_data(ttl=300)
@@ -175,7 +244,8 @@ _NAV_GROUPES = {
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
                          "📒 Export comptable Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
-                         "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire"],
+                         "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
+                         "🚀 Créer produits sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
     "🛍️ Ankorstore":    ["⭐ Best-sellers Ankorstore", "📊 Gestion stock Ankorstore",
                          "🔎 Produits manquants sur Ankorstore", "🔍 Vérification Ankorstore"],
@@ -2786,6 +2856,207 @@ elif page == "📒 Export comptable Etsy":
                 f"export_comptable_etsy_{date_debut.strftime('%Y%m%d')}_{date_fin.strftime('%Y%m%d')}.csv",
                 "text/csv",
             )
+
+elif page == "🚀 Créer produits sur Faire":
+    st.subheader("🚀 Créer produits sur Faire")
+
+    if "ANTHROPIC_API_KEY" not in st.secrets:
+        st.warning("⚠️ `ANTHROPIC_API_KEY` absente des secrets — l'étape 2 "
+                   "(génération de la fiche) ne fonctionnera pas tant qu'elle "
+                   "n'est pas configurée.")
+
+    _FOURNISSEURS_CIBLES = ["BAVOUX", "DELORME", "Navarro", "NPC", "VEINIERE"]
+
+    # ── Étape 1 : sélection du produit ────────────────────────────────────────
+    skus_data    = select("skus", "select=sku,stock&statut=eq.visible")
+    produits_data = select("produits",
+        "select=sku,nom,fournisseur,nom_categorie,prix_vente_ht,image_url,id_wizi")
+
+    produits_faire_publis = select("produits_faire",
+        "select=id_faire&lifecycle_state=eq.PUBLISHED")
+    ids_publis = {p["id_faire"] for p in (produits_faire_publis or [])}
+    faire_variants_all = select("produits_faire_variants", "select=sku,id_produit_faire")
+    if faire_variants_all and ids_publis:
+        skus_faire = {v["sku"] for v in faire_variants_all
+                      if v.get("sku") and v.get("id_produit_faire") in ids_publis}
+    else:
+        skus_faire = {v["sku"] for v in (faire_variants_all or []) if v.get("sku")}
+
+    faire_ignores_data = select("faire_ignores", "select=sku")
+    faire_ignores_set = {r["sku"] for r in (faire_ignores_data or [])}
+
+    if not skus_data or not produits_data:
+        st.info("Aucune donnée. Lance d'abord une synchronisation.")
+    else:
+        skus_wizi = {s["sku"] for s in skus_data}
+        prod_map  = {p["sku"]: p for p in produits_data}
+        sku_stock = {s["sku"]: int(s["stock"] or 0) for s in skus_data}
+
+        candidats = []
+        for sku in skus_wizi - skus_faire - faire_ignores_set:
+            prod = get_prod_parent(sku, prod_map)
+            fournisseur = prod.get("fournisseur") or ""
+            if fournisseur not in _FOURNISSEURS_CIBLES:
+                continue
+            candidats.append({"sku": sku, "nom": prod.get("nom") or "", "fournisseur": fournisseur})
+
+        if not candidats:
+            st.info(f"Aucun SKU manquant sur Faire pour les fournisseurs "
+                    f"{', '.join(_FOURNISSEURS_CIBLES)}.")
+        else:
+            candidats.sort(key=lambda r: r["sku"])
+            noms_par_sku = {c["sku"]: c["nom"] for c in candidats}
+            sku_sel = st.selectbox(
+                f"SKU à créer sur Faire ({len(candidats)} disponible(s))",
+                [c["sku"] for c in candidats],
+                format_func=lambda s: f"{s} — {noms_par_sku.get(s, '')}",
+                key="faire_create_sku_select",
+            )
+
+            # Changement de SKU → on repart de zéro sur les étapes suivantes
+            if sku_sel != st.session_state.get("faire_create_sku_actif"):
+                st.session_state["faire_create_sku_actif"] = sku_sel
+                st.session_state.pop("faire_create_fiche", None)
+                for k in ("faire_titre_edit", "faire_description_edit", "faire_short_desc_edit"):
+                    st.session_state.pop(k, None)
+
+            prod_sel    = get_prod_parent(sku_sel, prod_map)
+            id_wizi_sel = prod_sel.get("id_wizi")
+            nom_sel     = prod_sel.get("nom") or ""
+            categorie_sel   = prod_sel.get("nom_categorie") or ""
+            fournisseur_sel = prod_sel.get("fournisseur") or ""
+            image_url_sel   = prod_sel.get("image_url") or ""
+
+            col_info, col_img = st.columns([2, 1])
+            with col_info:
+                st.markdown(f"**{nom_sel}**")
+                st.caption(f"Catégorie : {categorie_sel} — Fournisseur : {fournisseur_sel} "
+                           f"— SKU : {sku_sel}")
+                description_wizi = _get_wizishop_description(id_wizi_sel)
+                with st.expander("Description Wizishop (source)"):
+                    st.markdown(description_wizi or "_Aucune description_", unsafe_allow_html=True)
+            with col_img:
+                if image_url_sel:
+                    st.image(image_url_sel, width=200)
+
+            st.divider()
+
+            # ── Étape 2 : génération de la fiche ──────────────────────────────
+            if st.button("✨ Générer la fiche Faire", type="primary"):
+                with st.spinner("Génération via Claude…"):
+                    try:
+                        fiche = _generer_fiche_faire(
+                            nom_sel, categorie_sel, fournisseur_sel, description_wizi)
+                        st.session_state["faire_create_fiche"] = fiche
+                        for k in ("faire_titre_edit", "faire_description_edit", "faire_short_desc_edit"):
+                            st.session_state.pop(k, None)
+                    except Exception as e:
+                        st.error(f"❌ Échec de la génération : {e}")
+
+            fiche = st.session_state.get("faire_create_fiche")
+            if fiche:
+                st.divider()
+                st.markdown("### Étape 3 — Validation et édition")
+
+                titre_edit = st.text_input(
+                    "Titre", value=fiche.get("titre", ""), key="faire_titre_edit")
+                st.caption(f"{len(titre_edit)} caractère(s)")
+
+                description_edit = st.text_area(
+                    "Description", value=fiche.get("description", ""),
+                    height=300, key="faire_description_edit")
+                st.caption(f"{len(description_edit)} caractère(s)")
+
+                short_desc_edit = st.text_input(
+                    "Short description", value=fiche.get("short_description", ""),
+                    key="faire_short_desc_edit")
+
+                # Variations du produit : tous les SKUs partageant le même id_wizi,
+                # à l'exclusion de la ligne parent (prix=0, simple regroupement)
+                # quand de vraies variations existent.
+                produits_groupe = select("produits",
+                    f"select=sku,nom,prix_vente_ht,image_url&id_wizi=eq.{id_wizi_sel}") or []
+                vendables = [p for p in produits_groupe if (p.get("prix_vente_ht") or 0) > 0]
+                if not vendables:
+                    vendables = produits_groupe
+
+                # Le coloris = partie du nom qui diverge entre variations (préfixe
+                # commun du groupe retiré). Sur un produit à variation unique, le
+                # préfixe commun couvrirait tout le nom : on garde alors le nom entier.
+                noms_groupe = [p.get("nom") or "" for p in vendables]
+                prefixe_commun = os.path.commonprefix(noms_groupe) if len(noms_groupe) > 1 else ""
+
+                variations_rows = []
+                for p in vendables:
+                    nom_variation = p.get("nom") or ""
+                    valeur = nom_variation
+                    if prefixe_commun:
+                        reste = nom_variation[len(prefixe_commun):].lstrip(" -")
+                        if reste:
+                            valeur = reste
+                    prix_vente_ht = float(p.get("prix_vente_ht") or 0)
+                    variations_rows.append({
+                        "sku":              p["sku"],
+                        "coloris":          valeur,
+                        "stock":            sku_stock.get(p["sku"], 0),
+                        "prix_vente_ht":    prix_vente_ht,
+                        "prix_grossiste":   round(prix_vente_ht / 2.5, 2),
+                        "prix_retail":      prix_vente_ht,
+                        "image_url":        p.get("image_url") or image_url_sel,
+                    })
+
+                st.markdown("**Variations**")
+                st.dataframe(
+                    pd.DataFrame(variations_rows)[
+                        ["sku", "coloris", "stock", "prix_grossiste", "prix_retail"]],
+                    use_container_width=True, hide_index=True)
+
+                st.divider()
+                st.markdown("### Étape 4 — Création sur Faire")
+
+                if st.button("🚀 Créer sur Faire en DRAFT", type="primary",
+                             disabled=not variations_rows):
+                    coloris_liste = sorted({v["coloris"] for v in variations_rows})
+                    body = {
+                        "name":                    titre_edit,
+                        "description":             description_edit,
+                        "short_description":       short_desc_edit,
+                        "lifecycle_state":         "DRAFT",
+                        "made_in_country":         "FR",
+                        "unit_multiplier":         1,
+                        "minimum_order_quantity":  1,
+                        "images":                  [{"url": image_url_sel, "sequence": 0}] if image_url_sel else [],
+                        "variant_option_sets":     [{"name": "Couleur", "values": coloris_liste}],
+                        "variants": [{
+                            "name":              v["coloris"],
+                            "sku":               v["sku"],
+                            "available_quantity": v["stock"],
+                            "prices": [{
+                                "currency":              "EUR",
+                                "wholesale_price_cents":  round(v["prix_grossiste"] * 100),
+                                "retail_price_cents":     round(v["prix_retail"] * 100),
+                            }],
+                            "options": [{"name": "Couleur", "value": v["coloris"]}],
+                            "images": [{"url": v["image_url"], "sequence": 0}] if v["image_url"] else [],
+                        } for v in variations_rows],
+                    }
+
+                    with st.spinner("Création du produit sur Faire…"):
+                        try:
+                            r = faire_create_product(body)
+                        except Exception as e:
+                            st.error(f"❌ Erreur réseau : {e}")
+                            r = None
+
+                    if r is not None:
+                        if r.status_code in (200, 201):
+                            data = r.json()
+                            product_id = data.get("id") or data.get("product_id") or ""
+                            st.success(f"✅ Produit créé en DRAFT sur Faire"
+                                       f"{f' (id : {product_id})' if product_id else ''} !")
+                            st.json(data)
+                        else:
+                            st.error(f"❌ Échec création (HTTP {r.status_code}) : {r.text[:500]}")
 
 elif page == "🔎 Produits manquants sur Faire":
     st.subheader("🔎 Produits manquants sur Faire")
