@@ -2607,99 +2607,156 @@ elif page == "🎨 Meilleures variations":
 elif page == "🔍 Vérification Etsy":
     st.subheader("🔍 Vérification Etsy")
 
-    # ── Section 1 : SKUs Etsy absents de Wizishop ────────────────────────────
-    st.subheader("⚠️ SKUs Etsy absents de Wizishop")
+    tab1, tab2, tab3 = st.tabs([
+        "⚠️ SKUs absents de Wizishop",
+        "💰 Comparaison des prix",
+        "⚡ Contrôle statuts",
+    ])
 
-    etsy_vars = select("produits_etsy_variations",
-        "select=sku,listing_id,variation_valeur&sku=not.is.null&is_enabled=eq.true")
-    wizi_skus_raw = select("produits", "select=sku")
+    # ── Onglet 1 : SKUs Etsy absents de Wizishop ─────────────────────────────
+    with tab1:
+        etsy_vars = select("produits_etsy_variations",
+            "select=sku,listing_id,variation_valeur&sku=not.is.null&is_enabled=eq.true")
+        wizi_skus_raw = select("produits", "select=sku")
 
-    if etsy_vars and wizi_skus_raw:
-        wizi_skus_set = {r["sku"] for r in wizi_skus_raw if r.get("sku")}
+        if etsy_vars and wizi_skus_raw:
+            wizi_skus_set = {r["sku"] for r in wizi_skus_raw if r.get("sku")}
 
-        # Dédoublonner : une ligne par (sku, listing_id, variation_valeur)
-        vus = set()
-        rows_absents = []
-        for r in etsy_vars:
-            sku = r.get("sku") or ""
-            if not sku or sku in wizi_skus_set:
-                continue
-            key = (sku, r.get("listing_id"), r.get("variation_valeur"))
-            if key not in vus:
-                vus.add(key)
-                rows_absents.append({
+            # Dédoublonner : une ligne par (sku, listing_id, variation_valeur)
+            vus = set()
+            rows_absents = []
+            for r in etsy_vars:
+                sku = r.get("sku") or ""
+                if not sku or sku in wizi_skus_set:
+                    continue
+                key = (sku, r.get("listing_id"), r.get("variation_valeur"))
+                if key not in vus:
+                    vus.add(key)
+                    rows_absents.append({
+                        "SKU": sku,
+                        "listing_id": r.get("listing_id"),
+                        "variation_valeur": r.get("variation_valeur") or "—",
+                    })
+
+            if rows_absents:
+                st.warning(f"{len(rows_absents)} SKU(s) présents sur Etsy mais introuvables dans Wizishop")
+                df_absents = pd.DataFrame(rows_absents).sort_values("SKU")
+                st.dataframe(df_absents, use_container_width=True, hide_index=True)
+                csv_absents = df_absents.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Exporter CSV", csv_absents, "skus_etsy_absents_wizishop.csv",
+                                   "text/csv", key="verif_etsy_absents_csv")
+            else:
+                st.success("✅ Tous les SKUs Etsy sont présents dans Wizishop.")
+        else:
+            st.info("Données insuffisantes pour la vérification.")
+
+    # ── Onglet 2 : Comparaison des prix Etsy vs Wizishop ─────────────────────
+    with tab2:
+        etsy_prix = select("produits_etsy_variations",
+            "select=sku,prix&sku=not.is.null&prix=not.is.null&is_enabled=eq.true")
+        wizi_prix = select("produits", "select=sku,nom,prix_vente_ht&prix_vente_ht=not.is.null")
+
+        if etsy_prix and wizi_prix:
+            # Garder le prix max par SKU Etsy (en cas de plusieurs variations)
+            etsy_prix_map = {}
+            for r in etsy_prix:
+                sku = r.get("sku") or ""
+                prix = float(r.get("prix") or 0)
+                if sku and prix > 0:
+                    etsy_prix_map[sku] = max(etsy_prix_map.get(sku, 0), prix)
+
+            wizi_prix_map = {}   # sku → {"nom": ..., "ht": ..., "ttc": ...}
+            for r in wizi_prix:
+                sku = r.get("sku") or ""
+                prix_ht = float(r.get("prix_vente_ht") or 0)
+                if sku and prix_ht > 0:
+                    wizi_prix_map[sku] = {
+                        "nom": r.get("nom") or "",
+                        "ht": prix_ht,
+                        "ttc": round(prix_ht * 1.2, 2),
+                    }
+
+            rows_ecart = []
+            for sku, prix_etsy in etsy_prix_map.items():
+                wizi = wizi_prix_map.get(sku)
+                if not wizi:
+                    continue
+                prix_wizi_ttc = wizi["ttc"]
+                ecart_pct = (prix_etsy - prix_wizi_ttc) / prix_wizi_ttc * 100
+                if abs(ecart_pct) > 2:
+                    rows_ecart.append({
+                        "SKU": sku,
+                        "Produit": wizi["nom"],
+                        "Prix Etsy (€)": round(prix_etsy, 2),
+                        "Prix Wizishop TTC (€)": prix_wizi_ttc,
+                        "Écart (%)": round(ecart_pct, 1),
+                    })
+
+            if rows_ecart:
+                df_ecart = pd.DataFrame(rows_ecart).sort_values("Écart (%)", key=abs, ascending=False)
+                st.warning(f"{len(df_ecart)} SKU(s) avec écart de prix > 2% entre Etsy et Wizishop")
+                st.dataframe(df_ecart, use_container_width=True, hide_index=True)
+                csv_ecart = df_ecart.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Exporter CSV", csv_ecart, "ecarts_prix_etsy_wizishop.csv",
+                                   "text/csv", key="verif_etsy_prix_csv")
+            else:
+                st.success("✅ Aucun écart de prix significatif (> 2%) entre Etsy et Wizishop.")
+        else:
+            st.info("Données insuffisantes pour la comparaison des prix.")
+
+    # ── Onglet 3 : Listings Inactive avec stock Wizishop disponible ──────────
+    with tab3:
+        st.markdown("**Produits Inactive sur Etsy alors qu'ils ont du stock dans Wizishop**")
+
+        listings_inactifs = select("produits_etsy",
+            "select=listing_id,titre,statut&statut=eq.inactive")
+
+        if not listings_inactifs:
+            st.success("✅ Aucun listing Inactive sur Etsy.")
+        else:
+            listing_ids_str = ",".join(str(l["listing_id"]) for l in listings_inactifs)
+            titre_par_listing = {l["listing_id"]: l.get("titre") or "" for l in listings_inactifs}
+
+            etsy_vars_inactifs = select("produits_etsy_variations",
+                f"select=listing_id,sku,stock_etsy&listing_id=in.({listing_ids_str})")
+            skus_visibles = select("skus", "select=sku,stock&statut=eq.visible")
+            produits_noms = select("produits", "select=sku,nom")
+
+            stock_wizi_map = {s["sku"]: int(s.get("stock") or 0) for s in (skus_visibles or [])}
+            nom_par_sku = {p["sku"]: p.get("nom") or "" for p in (produits_noms or []) if p.get("sku")}
+
+            rows_a_reactiver = []
+            for v in (etsy_vars_inactifs or []):
+                sku = v.get("sku") or ""
+                if not sku:
+                    continue
+                stock_wizi = stock_wizi_map.get(sku, 0)
+                if stock_wizi <= 0:
+                    continue
+                listing_id = v.get("listing_id")
+                rows_a_reactiver.append({
                     "SKU": sku,
-                    "listing_id": r.get("listing_id"),
-                    "variation_valeur": r.get("variation_valeur") or "—",
+                    "Nom produit": nom_par_sku.get(sku) or titre_par_listing.get(listing_id, "") or sku,
+                    "Listing ID": listing_id,
+                    "Stock Wizishop": stock_wizi,
+                    "Stock Etsy": int(v.get("stock_etsy") or 0),
+                    "Statut listing": "inactive",
                 })
 
-        if rows_absents:
-            st.warning(f"{len(rows_absents)} SKU(s) présents sur Etsy mais introuvables dans Wizishop")
-            df_absents = pd.DataFrame(rows_absents).sort_values("SKU")
-            st.dataframe(df_absents, use_container_width=True, hide_index=True)
-            csv_absents = df_absents.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Exporter CSV", csv_absents, "skus_etsy_absents_wizishop.csv",
-                               "text/csv", key="verif_etsy_absents_csv")
-        else:
-            st.success("✅ Tous les SKUs Etsy sont présents dans Wizishop.")
-    else:
-        st.info("Données insuffisantes pour la vérification.")
+            nb_listings_concernes = len({r["Listing ID"] for r in rows_a_reactiver})
+            st.metric("📦 Listings inactifs avec stock disponible", nb_listings_concernes)
 
-    # ── Section 2 : Comparaison des prix Etsy vs Wizishop ────────────────────
-    st.divider()
-    st.subheader("💰 Comparaison des prix Etsy vs Wizishop")
-
-    etsy_prix = select("produits_etsy_variations",
-        "select=sku,prix&sku=not.is.null&prix=not.is.null&is_enabled=eq.true")
-    wizi_prix = select("produits", "select=sku,nom,prix_vente_ht&prix_vente_ht=not.is.null")
-
-    if etsy_prix and wizi_prix:
-        # Garder le prix max par SKU Etsy (en cas de plusieurs variations)
-        etsy_prix_map = {}
-        for r in etsy_prix:
-            sku = r.get("sku") or ""
-            prix = float(r.get("prix") or 0)
-            if sku and prix > 0:
-                etsy_prix_map[sku] = max(etsy_prix_map.get(sku, 0), prix)
-
-        wizi_prix_map = {}   # sku → {"nom": ..., "ht": ..., "ttc": ...}
-        for r in wizi_prix:
-            sku = r.get("sku") or ""
-            prix_ht = float(r.get("prix_vente_ht") or 0)
-            if sku and prix_ht > 0:
-                wizi_prix_map[sku] = {
-                    "nom": r.get("nom") or "",
-                    "ht": prix_ht,
-                    "ttc": round(prix_ht * 1.2, 2),
-                }
-
-        rows_ecart = []
-        for sku, prix_etsy in etsy_prix_map.items():
-            wizi = wizi_prix_map.get(sku)
-            if not wizi:
-                continue
-            prix_wizi_ttc = wizi["ttc"]
-            ecart_pct = (prix_etsy - prix_wizi_ttc) / prix_wizi_ttc * 100
-            if abs(ecart_pct) > 2:
-                rows_ecart.append({
-                    "SKU": sku,
-                    "Produit": wizi["nom"],
-                    "Prix Etsy (€)": round(prix_etsy, 2),
-                    "Prix Wizishop TTC (€)": prix_wizi_ttc,
-                    "Écart (%)": round(ecart_pct, 1),
-                })
-
-        if rows_ecart:
-            df_ecart = pd.DataFrame(rows_ecart).sort_values("Écart (%)", key=abs, ascending=False)
-            st.warning(f"{len(df_ecart)} SKU(s) avec écart de prix > 2% entre Etsy et Wizishop")
-            st.dataframe(df_ecart, use_container_width=True, hide_index=True)
-            csv_ecart = df_ecart.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Exporter CSV", csv_ecart, "ecarts_prix_etsy_wizishop.csv",
-                               "text/csv", key="verif_etsy_prix_csv")
-        else:
-            st.success("✅ Aucun écart de prix significatif (> 2%) entre Etsy et Wizishop.")
-    else:
-        st.info("Données insuffisantes pour la comparaison des prix.")
+            if rows_a_reactiver:
+                st.warning(f"{len(rows_a_reactiver)} SKU(s) sur {nb_listings_concernes} listing(s) "
+                           f"Inactive ont du stock Wizishop disponible — à réactiver sur Etsy")
+                df_reactiver = pd.DataFrame(rows_a_reactiver).sort_values(
+                    ["Listing ID", "SKU"]).reset_index(drop=True)
+                st.dataframe(df_reactiver, use_container_width=True, hide_index=True)
+                csv_reactiver = df_reactiver.to_csv(index=False).encode("utf-8")
+                st.download_button("📥 Exporter CSV", csv_reactiver, "etsy_listings_a_reactiver.csv",
+                                   "text/csv", key="verif_etsy_statuts_csv")
+            else:
+                st.success("✅ Aucun listing Inactive n'a de stock Wizishop disponible.")
 
 elif page == "📒 Export comptable Etsy":
     st.subheader("📒 Export comptable Etsy")
