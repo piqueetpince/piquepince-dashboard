@@ -3755,6 +3755,7 @@ elif page == "📊 Gestion stock Faire":
             if not sku:
                 continue
             nom_produit = get_prod_parent(sku, prod_map).get("nom", "") or v.get("nom", "") or sku
+            is_paused = v.get("sale_state") == "SALES_PAUSED"
             is_active = v.get("sale_state") == "FOR_SALE" and v.get("lifecycle_state") == "PUBLISHED"
             stock_faire = int(v.get("available_quantity") or 0)
             stock_wizi = sku_stock_wizi.get(sku, 0)
@@ -3764,7 +3765,12 @@ elif page == "📊 Gestion stock Faire":
             ventes_par_jour = v_faire / 30
             jours_stock = round(stock_wizi / ventes_par_jour) if ventes_par_jour > 0 else 999
 
-            if is_active and ((stock_wizi == 0 and stock_faire > 0 and v_faire > 0) or
+            if is_paused:
+                # En pause sur Faire : aucune vente possible quel que soit le
+                # stock — signalé en priorité, avant même les alertes de stock.
+                alerte = "🚫 EN PAUSE"
+                priorite = 0
+            elif is_active and ((stock_wizi == 0 and stock_faire > 0 and v_faire > 0) or
                                (jours_stock < seuil_jours and v_faire > 0)):
                 alerte = "🔴 URGENT"
                 priorite = 1
@@ -3797,14 +3803,20 @@ elif page == "📊 Gestion stock Faire":
             })
 
         df = pd.DataFrame(rows)
-        df = df[~((df["Stock Wizishop"] == 0) & (df["Stock Faire"] == 0))]
+        # Les SKUs sans aucun stock (Wizishop et Faire) sont exclus du bruit,
+        # sauf s'ils sont en pause sur Faire : on veut les voir malgré tout.
+        df = df[~((df["Stock Wizishop"] == 0) & (df["Stock Faire"] == 0) &
+                  (df["Alerte"] != "🚫 EN PAUSE"))]
 
+        nb_pause = len(df[df["Alerte"] == "🚫 EN PAUSE"])
         nb_urgent = len(df[df["Alerte"] == "🔴 URGENT"])
         nb_attention = len(df[df["Alerte"] == "🟡 ATTENTION"])
         nb_info = len(df[df["Alerte"] == "⚪ INFO"])
         nb_ok = len(df[df["Alerte"] == "🟢 OK"])
 
-        col1, col2, col3, col4 = st.columns(4)
+        col0, col1, col2, col3, col4 = st.columns(5)
+        with col0:
+            st.metric("🚫 En pause", nb_pause)
         with col1:
             st.metric("🔴 Urgent", nb_urgent)
         with col2:

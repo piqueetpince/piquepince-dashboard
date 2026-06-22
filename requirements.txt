@@ -3,3 +3,5 @@ requests
 pandas
 python-dotenv
 plotly
+python-docx
+openpyxl

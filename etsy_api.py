@@ -109,6 +109,36 @@ def api_get(url, params=None):
     return r
 
 
+def api_post(url, json_body=None, files=None):
+    """POST avec retry sur refresh token. `files` (multipart) exclut le
+    Content-Type JSON pour laisser requests poser le boundary multipart."""
+    headers = get_headers()
+    if files is not None:
+        headers.pop("Content-Type", None)
+        r = requests.post(url, headers=headers, files=files)
+    else:
+        r = requests.post(url, headers=headers, json=json_body)
+    if r.status_code in (401, 403):
+        new_token = refresh_access_token()
+        if new_token:
+            headers = get_headers()
+            if files is not None:
+                headers.pop("Content-Type", None)
+                r = requests.post(url, headers=headers, files=files)
+            else:
+                r = requests.post(url, headers=headers, json=json_body)
+    return r
+
+
+def api_put(url, json_body=None):
+    r = requests.put(url, headers=get_headers(), json=json_body)
+    if r.status_code in (401, 403):
+        new_token = refresh_access_token()
+        if new_token:
+            r = requests.put(url, headers=get_headers(), json=json_body)
+    return r
+
+
 def get_shop_id():
     if "ETSY_SHOP_ID" in st.secrets:
         return st.secrets["ETSY_SHOP_ID"]
