@@ -968,7 +968,7 @@ elif page == "🚨 Réapprovisionnement":
             df_show_csv = df_reap[cols_affich].copy()
             df_show_csv = df_show_csv.rename(columns={"sku": "SKU"})
 
-            cols_editor = ["SKU", "Produit", "Fournisseur", "Stock",
+            cols_editor = ["SKU", "Produit", "Fournisseur", "Réf. fournisseur", "Stock",
                            "Qté à commander", "Ventes/mois Total", "Mois de stock", "Alerte", "En commande"]
             df_editor = df_show_csv[cols_editor].copy()
             df_editor["Qté commandée"] = 0
@@ -983,6 +983,7 @@ elif page == "🚨 Réapprovisionnement":
                         "SKU": st.column_config.TextColumn(disabled=True),
                         "Produit": st.column_config.TextColumn(disabled=True),
                         "Fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Réf. fournisseur": st.column_config.TextColumn(disabled=True),
                         "Stock": st.column_config.NumberColumn(disabled=True),
                         "Qté à commander": st.column_config.NumberColumn(disabled=True),
                         "Ventes/mois Total": st.column_config.NumberColumn(disabled=True),
