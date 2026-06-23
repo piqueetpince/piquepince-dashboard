@@ -183,10 +183,6 @@ def sync_produits(token, shop_id):
             id_cat = prod.get("category_id")
             nom_cat = _resolve_nom_categorie(id_cat)
 
-            if total < 3:
-                print(f"[DEBUG categorie] produit={prod.get('sku')} category_id={id_cat!r} "
-                      f"cat_map={cat_map.get(id_cat)!r} cat_parent_map={cat_parent_map.get(id_cat)!r} "
-                      f"nom_cat={nom_cat!r}")
             nom = prod.get("name") or prod.get("label") or ""
             fournisseur = prod.get("supplier") or ""
             ref_fourn = prod.get("supplier_reference") or ""
