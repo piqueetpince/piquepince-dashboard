@@ -230,6 +230,15 @@ def sync_produits(token, shop_id):
                     variation_valeur = option.get("value", "")
                     nom_variation = f"{nom} - {variation_valeur}" if variation_valeur else nom
 
+                    # La variation hérite du statut du parent dès que celui-ci
+                    # n'est pas "visible" (unavailable/hidden/draft) : un produit
+                    # indisponible côté Wizishop ne doit pas avoir de variation
+                    # "visible" en base, même si option.get("active") est True.
+                    if statut == "visible":
+                        statut_variation = "visible" if option.get("active") else "hidden"
+                    else:
+                        statut_variation = statut
+
                     upsert("produits", [{
                         "id_wizi": int(prod.get("id")),
                         "sku": sku_variation,
@@ -244,7 +253,7 @@ def sync_produits(token, shop_id):
                         "prix_achat_ht": prix_achat,
                         "tva_pct": tva,
                         "poids": option.get("weight") or poids,
-                        "statut": "visible" if option.get("active") else "hidden",
+                        "statut": statut_variation,
                         "image_url": option.get("image") or image_url,
                         "url": prod.get("url"),
                         "source": "wizishop"
