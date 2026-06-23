@@ -116,8 +116,11 @@ def sync_skus(token, shop_id):
             break
         batch = []
         for s in results:
+            sku = str(s.get("sku")) if s.get("sku") else None
+            if sku and sku.startswith("AE_"):
+                continue  # produits dropshipping AliExpress importés dans Wizishop — exclus
             batch.append({
-                "sku": str(s.get("sku")) if s.get("sku") else None,
+                "sku": sku,
                 "id_produit_parent": str(s.get("prod_id")) if s.get("prod_id") else None,
                 "type": s.get("type"),
                 "ean13": s.get("ean13"),
@@ -175,6 +178,9 @@ def sync_produits(token, shop_id):
             break
 
         for p in results:
+            if str(p.get("sku") or "").startswith("AE_"):
+                continue  # produits dropshipping AliExpress importés dans Wizishop — exclus
+
             detail_r = requests.get(
                 f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/products/{p['id']}",
                 headers=headers

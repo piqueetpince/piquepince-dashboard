@@ -12,11 +12,21 @@ def get_headers():
 def get_url(table):
     return f"{st.secrets['SUPABASE_URL']}/rest/v1/{table}"
 
+# Produits dropshipping AliExpress importés dans le catalogue Wizishop (SKUs
+# préfixés "AE_") : exclus de partout — dashboard, alertes, et resync vers
+# les marketplaces (Etsy/Faire/Ankorstore) — en filtrant ici une fois pour
+# toutes les requêtes sur ces deux tables, plutôt que dans chaque appelant.
+_TABLES_SANS_ALIEXPRESS = {"produits", "skus"}
+_FILTRE_ALIEXPRESS = "sku=not.like.AE_*"
+
 def select(table, query="", limit=None):
     headers = get_headers()
     all_results = []
     page_size = 1000
     offset = 0
+
+    if table in _TABLES_SANS_ALIEXPRESS and _FILTRE_ALIEXPRESS not in query:
+        query = f"{query}&{_FILTRE_ALIEXPRESS}" if query else _FILTRE_ALIEXPRESS
 
     while True:
         range_end = offset + page_size - 1
