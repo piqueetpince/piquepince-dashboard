@@ -6,6 +6,8 @@ Usage:
     python sync_nuit.py --only wizishop-commandes    # une seule sync
     python sync_nuit.py --only etsy faire            # groupes entiers
     python sync_nuit.py --only wizishop-produits wizishop-commandes
+    python sync_nuit.py --only faire-stock --force   # resync stock Faire complète,
+                                                       # même sans écart détecté
 
 Slugs disponibles :
     wizishop  wizishop-categories  wizishop-marques  wizishop-skus
@@ -45,8 +47,15 @@ _parser.add_argument(
     "--only", nargs="+", metavar="SLUG",
     help="Lancer uniquement ces syncs (ex: wizishop-commandes etsy faire)"
 )
+_parser.add_argument(
+    "--force", action="store_true",
+    help="Pour faire-stock : ignore la comparaison stock_wizi == available_quantity "
+         "et envoie le PATCH pour TOUS les variants (resync complète si Faire n'a "
+         "pas appliqué les mises à jour)"
+)
 _args = _parser.parse_args()
 only: list[str] = [s.lower() for s in (_args.only or [])]
+force: bool = _args.force
 
 # ── Mock Streamlit (avant tout import des modules sync) ───────────────────────
 # Tous les modules sync appellent st.secrets, st.session_state, st.warning, etc.
@@ -242,7 +251,7 @@ if _active("faire-produits"):
 
 if _active("faire-stock"):
     def _faire_stock():
-        nb_maj, nb_err, nb_inc = sync_faire_stock()
+        nb_maj, nb_err, nb_inc = sync_faire_stock(force=force)
         return f"{nb_maj} mis à jour, {nb_err} erreur(s), {nb_inc} SKU(s) inconnus"
     run("Faire — stock", _faire_stock)
 

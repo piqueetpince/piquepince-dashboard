@@ -1,7 +1,11 @@
 import time
+from collections import defaultdict
+
 from faire_api import get_orders, get_products, api_patch
 from supabase_api import upsert, upsert_ignore, select, update
 from sync_database import get_zone_tva
+
+FAIRE_STOCK_BATCH_SIZE = 100
 
 STATUT_MAP = {
     "NEW": 10,
@@ -160,11 +164,24 @@ def sync_faire_produits():
     return total_produits, total_variants
 
 
-def sync_faire_stock():
+def sync_faire_stock(force=False):
     """
-    Pousse le stock Wizishop vers Faire pour chaque variant dont le SKU
-    existe dans la table skus. Ne met à jour que si le stock diffère.
-    Retourne (nb_mis_a_jour, nb_erreurs, nb_sku_inconnus).
+    Pousse le stock Wizishop vers Faire par lots (PATCH /product-inventory/by-skus),
+    au lieu d'un appel PATCH par variant sur l'ancien endpoint générique de mise
+    à jour de variant (qui n'a par ailleurs jamais réellement fonctionné : le champ
+    "inventory_levels" qu'il envoyait n'existe pas dans le schéma Faire).
+
+    Envoie on_hand_quantity (stock physique total) — Faire calcule lui-même
+    available_quantity = on_hand_quantity - committed_quantity et le renvoie
+    dans la réponse, qu'on utilise pour mettre à jour le cache local.
+
+    Ne met à jour que les SKUs dont le stock diffère, sauf si force=True :
+    envoie alors tous les SKUs connus même sans écart détecté (utile quand
+    Faire n'a pas appliqué une mise à jour précédente).
+
+    Retourne (nb_mis_a_jour, nb_erreurs, nb_sku_inconnus) — nb_mis_a_jour et
+    nb_erreurs comptent des SKUs (un SKU peut correspondre à plusieurs lignes
+    produits_faire_variants, toutes mises à jour ensemble).
     """
     faire_variants = select(
         "produits_faire_variants",
@@ -180,45 +197,71 @@ def sync_faire_stock():
         for r in (wizi_skus or [])
     }
 
+    # Un même SKU peut correspondre à plusieurs lignes produits_faire_variants
+    # (id_faire différents) — on les regroupe pour toutes les mettre à jour
+    # ensemble après l'appel batch.
+    variants_par_sku = defaultdict(list)
+    for variant in faire_variants:
+        sku = (variant.get("sku") or "").strip()
+        if sku:
+            variants_par_sku[sku].append(variant)
+
+    nb_inconnus = sum(1 for sku in variants_par_sku if sku not in stock_wizi_map)
+
+    skus_a_envoyer = []
+    for sku, variants in variants_par_sku.items():
+        if sku not in stock_wizi_map:
+            continue
+        stock_wizi = stock_wizi_map[sku]
+        ecart = any(int(v.get("available_quantity") or 0) != stock_wizi for v in variants)
+        if ecart or force:
+            skus_a_envoyer.append(sku)
+
     nb_maj      = 0
     nb_erreurs  = 0
-    nb_inconnus = 0
+    nb_lots     = 0
 
-    for variant in faire_variants:
-        variant_id  = variant.get("id_faire")
-        produit_id  = variant.get("id_produit_faire")
-        sku         = (variant.get("sku") or "").strip()
-        stock_faire = int(variant.get("available_quantity") or 0)
+    for i in range(0, len(skus_a_envoyer), FAIRE_STOCK_BATCH_SIZE):
+        lot = skus_a_envoyer[i:i + FAIRE_STOCK_BATCH_SIZE]
+        nb_lots += 1
+        body = {
+            "inventories": [
+                {"sku": sku, "on_hand_quantity": stock_wizi_map[sku]}
+                for sku in lot
+            ]
+        }
 
-        if sku not in stock_wizi_map:
-            nb_inconnus += 1
+        r = api_patch("/product-inventory/by-skus", body)
+
+        if r.status_code not in (200, 204):
+            nb_erreurs += len(lot)
+            print(f"  ⚠️  Erreur batch stock Faire ({len(lot)} SKU(s)) : "
+                  f"HTTP {r.status_code} — {r.text[:200]}")
             continue
 
-        stock_wizi = stock_wizi_map[sku]
+        inventaires_retour = {}
+        try:
+            inventaires_retour = r.json().get("inventories", {})
+        except ValueError:
+            pass
 
-        if stock_wizi == stock_faire:
-            continue  # pas de changement — évite l'appel inutile
+        for sku in lot:
+            disponible = stock_wizi_map[sku]
+            qte_retour = ((inventaires_retour.get(sku) or {})
+                          .get("available_quantity") or {}).get("quantity")
+            if isinstance(qte_retour, int):
+                disponible = qte_retour
 
-        r = api_patch(
-            f"/products/{produit_id}/variants/{variant_id}",
-            {"inventory_levels": [{"quantity": stock_wizi}]},
-        )
-
-        if r.status_code in (200, 204):
+            for variant in variants_par_sku[sku]:
+                update("produits_faire_variants",
+                       f"id_faire=eq.{variant['id_faire']}",
+                       {"available_quantity": disponible})
             nb_maj += 1
-            update("produits_faire_variants",
-                   f"id_faire=eq.{variant_id}",
-                   {"available_quantity": stock_wizi})
-        else:
-            nb_erreurs += 1
-            print(f"  ⚠️  Erreur stock Faire {sku} ({variant_id}): "
-                  f"HTTP {r.status_code} — {r.text[:150]}")
 
-        time.sleep(1.0)
-
-    print(f"  → {nb_maj} variants mis à jour, "
-          f"{nb_erreurs} erreur(s), "
-          f"{nb_inconnus} SKU(s) non trouvés dans Wizishop")
+    mode = " (mode --force : tous les SKUs connus envoyés)" if force else ""
+    print(f"  → {nb_maj} SKU(s) mis à jour en {nb_lots} lot(s) de "
+          f"{FAIRE_STOCK_BATCH_SIZE} max, {nb_erreurs} erreur(s), "
+          f"{nb_inconnus} SKU(s) non trouvés dans Wizishop{mode}")
     return nb_maj, nb_erreurs, nb_inconnus
 
 
