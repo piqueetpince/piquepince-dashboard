@@ -239,7 +239,7 @@ _NAV_GROUPES = {
     "🛍️ Wizishop":     ["📦 Commandes", "👥 Clients", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
-                         "📈 Évolution CA annuelle"],
+                         "📈 Évolution CA annuelle", "🏪 Revendeurs Wizishop"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
                          "📒 Export comptable Etsy"],
@@ -1140,6 +1140,200 @@ elif page == "🚨 Réapprovisionnement":
                 st.rerun()
     else:
         st.info("Aucun produit ignoré.")
+
+elif page == "🏪 Revendeurs Wizishop":
+    st.subheader("🏪 Revendeurs Wizishop")
+    st.caption("Commandes Wizishop avec un fort taux de remise via code promo — "
+               "indicateur d'achats revendeurs/grossistes plutôt que B2C classique.")
+
+    with st.sidebar:
+        st.divider()
+        periode_rev = st.selectbox("Période", ["3 mois", "6 mois", "12 mois", "24 mois"],
+                                    index=2, key="rev_periode")
+        seuil_rev = st.slider("Seuil taux de remise (%)", min_value=10, max_value=90,
+                               value=40, key="rev_seuil")
+
+    nb_mois_rev = int(periode_rev.split()[0])
+    date_limite_rev = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois_rev)).strftime("%Y-%m-%dT%H:%M:%S")
+
+    commandes_rev = select("commandes",
+        "select=id_wizi,date_commande,montant_ttc,montant_ht,remise,code_promo"
+        "&source=eq.wizishop&statut_code=not.in.(0,45,46,50)"
+        "&remise=gt.0&code_promo=not.is.null"
+        f"&date_commande=gte.{date_limite_rev}")
+
+    revendeurs_ignores_data = select("revendeurs_ignores",
+        "select=code_promo,raison,created_at&order=created_at.desc")
+    revendeurs_ignores_set = ({r["code_promo"] for r in revendeurs_ignores_data}
+                               if revendeurs_ignores_data else set())
+
+    rows_rev = []
+    for c in (commandes_rev or []):
+        code = c.get("code_promo")
+        if not code or code in revendeurs_ignores_set:
+            continue
+        montant_ttc = float(c.get("montant_ttc") or 0)
+        montant_ht  = float(c.get("montant_ht") or 0)
+        remise      = float(c.get("remise") or 0)
+        base = montant_ttc + remise
+        taux = round(remise / base * 100, 1) if base > 0 else 0
+        if taux < seuil_rev:
+            continue
+        rows_rev.append({
+            "id_wizi": c.get("id_wizi"),
+            "date_commande": c.get("date_commande"),
+            "code_promo": code,
+            "montant_ht": montant_ht,
+            "taux_remise": taux,
+        })
+
+    if not rows_rev:
+        st.info("Aucune commande revendeur détectée pour cette période et ce seuil.")
+    else:
+        df_rev = pd.DataFrame(rows_rev)
+
+        ca_ht_total       = df_rev["montant_ht"].sum()
+        nb_commandes_total = len(df_rev)
+        nb_codes_distincts = df_rev["code_promo"].nunique()
+        panier_moyen       = ca_ht_total / nb_commandes_total if nb_commandes_total else 0
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1: st.metric("💰 CA HT revendeurs", f"{ca_ht_total:,.2f} €")
+        with col2: st.metric("📦 Nb commandes", nb_commandes_total)
+        with col3: st.metric("🏷️ Codes distincts", nb_codes_distincts)
+        with col4: st.metric("🛒 Panier moyen HT", f"{panier_moyen:,.2f} €")
+
+        st.divider()
+        st.subheader("📋 Par code promo")
+
+        df_par_code = (df_rev.groupby("code_promo")
+                        .agg(nb_commandes=("id_wizi", "count"),
+                             ca_ht=("montant_ht", "sum"),
+                             remise_moyenne=("taux_remise", "mean"),
+                             derniere_commande=("date_commande", "max"))
+                        .reset_index())
+        df_par_code["ca_ht"] = df_par_code["ca_ht"].round(2)
+        df_par_code["remise_moyenne"] = df_par_code["remise_moyenne"].round(1)
+        df_par_code["derniere_commande"] = pd.to_datetime(
+            df_par_code["derniere_commande"]).dt.strftime("%d/%m/%Y")
+        df_par_code = df_par_code.sort_values("ca_ht", ascending=False).reset_index(drop=True)
+        df_par_code = df_par_code.rename(columns={
+            "code_promo": "Code promo",
+            "nb_commandes": "Nb commandes",
+            "ca_ht": "CA HT (€)",
+            "remise_moyenne": "Remise moyenne %",
+            "derniere_commande": "Dernière commande",
+        })
+
+        df_editor_rev = df_par_code.copy()
+        df_editor_rev["Ignorer ?"] = False
+
+        st.download_button("📥 Exporter CSV",
+            df_par_code.to_csv(index=False).encode("utf-8"),
+            "revendeurs_par_code.csv", "text/csv", key="dl_revendeurs_codes")
+
+        with st.form("form_revendeurs_ignores"):
+            edited_rev = st.data_editor(
+                df_editor_rev, use_container_width=True, hide_index=True,
+                column_config={
+                    "Code promo":        st.column_config.TextColumn(disabled=True),
+                    "Nb commandes":      st.column_config.NumberColumn(disabled=True),
+                    "CA HT (€)":         st.column_config.NumberColumn(disabled=True, format="%.2f €"),
+                    "Remise moyenne %":  st.column_config.NumberColumn(disabled=True, format="%.1f %%"),
+                    "Dernière commande": st.column_config.TextColumn(disabled=True),
+                    "Ignorer ?":         st.column_config.CheckboxColumn(),
+                }
+            )
+            submitted_rev = st.form_submit_button("🚫 Ignorer les codes sélectionnés", type="secondary")
+
+        if submitted_rev:
+            a_ignorer_rev = edited_rev[edited_rev["Ignorer ?"] == True]
+            if a_ignorer_rev.empty:
+                st.warning("Aucun code sélectionné.")
+            else:
+                for _, r in a_ignorer_rev.iterrows():
+                    upsert("revendeurs_ignores", [{
+                        "code_promo": r["Code promo"],
+                        "raison": None,
+                    }], "code_promo")
+                st.success(f"✓ {len(a_ignorer_rev)} code(s) ignoré(s) !")
+                st.rerun()
+
+        st.divider()
+        st.subheader("🛍️ Produits commandés")
+
+        ids_rev = [str(c) for c in df_rev["id_wizi"].tolist()]
+        lignes_rev = select("lignes_commande",
+            f"select=sku,sku_variation,quantite,prix_unitaire_ttc,tva"
+            f"&id_commande=in.({','.join(ids_rev)})&source=eq.wizishop",
+            limit=50000) if ids_rev else []
+
+        produits_rev = select("produits", "select=sku,nom,nom_categorie")
+        prod_map_rev = {p["sku"]: p for p in produits_rev} if produits_rev else {}
+
+        agg_produits = {}
+        for l in (lignes_rev or []):
+            sku_key = l.get("sku_variation") or l.get("sku") or ""
+            if not sku_key:
+                continue
+            qte = int(l.get("quantite") or 0)
+            prix_ttc = float(l.get("prix_unitaire_ttc") or 0)
+            tva = float(l.get("tva") or 0)
+            ca_ht_ligne = qte * prix_ttc / (1 + tva / 100) if tva else qte * prix_ttc
+
+            if sku_key not in agg_produits:
+                prod = get_prod_parent(sku_key, prod_map_rev)
+                agg_produits[sku_key] = {
+                    "SKU": sku_key,
+                    "Nom produit": prod.get("nom") or l.get("sku") or sku_key,
+                    "Catégorie": prod.get("nom_categorie") or "",
+                    "Unités vendues": 0,
+                    "CA HT (€)": 0.0,
+                }
+            agg_produits[sku_key]["Unités vendues"] += qte
+            agg_produits[sku_key]["CA HT (€)"] += ca_ht_ligne
+
+        if not agg_produits:
+            st.info("Aucune ligne de commande trouvée pour ces commandes revendeurs.")
+        else:
+            df_produits_rev = pd.DataFrame(list(agg_produits.values()))
+            df_produits_rev["CA HT (€)"] = df_produits_rev["CA HT (€)"].round(2)
+            df_produits_rev = df_produits_rev.sort_values(
+                "CA HT (€)", ascending=False).reset_index(drop=True)
+            st.dataframe(df_produits_rev, use_container_width=True, hide_index=True,
+                column_config={
+                    "CA HT (€)": st.column_config.NumberColumn(format="%.2f €"),
+                    "Unités vendues": st.column_config.NumberColumn(format="%.0f"),
+                })
+            st.download_button("📥 Exporter CSV",
+                df_produits_rev.to_csv(index=False).encode("utf-8"),
+                "revendeurs_produits.csv", "text/csv", key="dl_revendeurs_produits")
+
+    st.divider()
+    st.subheader("🚫 Codes exclus")
+
+    if revendeurs_ignores_data:
+        df_ign_rev = pd.DataFrame(revendeurs_ignores_data)
+        df_ign_rev["created_at"] = pd.to_datetime(df_ign_rev["created_at"]).dt.strftime("%d/%m/%Y")
+        df_ign_rev = df_ign_rev[["code_promo", "raison", "created_at"]].rename(
+            columns={"code_promo": "Code promo", "raison": "Raison", "created_at": "Date"})
+        st.dataframe(df_ign_rev, use_container_width=True, hide_index=True)
+
+        col_r1, col_r2 = st.columns([3, 1])
+        with col_r1:
+            code_ret_rev = st.selectbox("Sélectionner un code à réintégrer",
+                options=[""] + df_ign_rev["Code promo"].tolist(),
+                format_func=lambda x: x if x else "Choisir un code…",
+                key="revendeurs_ignores_retirer")
+        with col_r2:
+            st.write(""); st.write("")
+            if code_ret_rev and st.button("↩️ Réintégrer", type="secondary",
+                                           key="btn_revendeurs_reintegrer"):
+                delete("revendeurs_ignores", f"code_promo=eq.{code_ret_rev}")
+                st.success(f"✓ {code_ret_rev} réintégré !")
+                st.rerun()
+    else:
+        st.info("Aucun code exclu.")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:

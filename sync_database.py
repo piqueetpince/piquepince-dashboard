@@ -314,6 +314,9 @@ def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
             services = o.get("services", {})
             zone = get_zone_tva(bil.get("country_iso"))
 
+            discounts = o.get("discounts", [])
+            code_promo = discounts[0].get("name") if discounts else None
+
             upsert("commandes", [{
                 "id_wizi": o.get("id"),
                 "numero_commande": o.get("public_id"),
@@ -326,7 +329,7 @@ def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
                 "montant_produits_ttc": o.get("total_products_amount"),
                 "frais_port": o.get("total_shipping_amount"),
                 "remise": o.get("total_reduc_amount"),
-                "code_promo": o.get("discount_code"),
+                "code_promo": code_promo,
                 "frais_supplementaires": o.get("total_fees"),
                 "mode_paiement": str(o.get("payment_mode")) if o.get("payment_mode") else None,
                 "type_paiement": str(o.get("payment_type")) if o.get("payment_type") else None,
