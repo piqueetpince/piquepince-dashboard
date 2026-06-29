@@ -283,10 +283,13 @@ if any(_active(s) for s in _shopify_slugs):
             run("Shopify FF — commandes", _shopify_commandes)
 
 # ── 7. Ankorstore ─────────────────────────────────────────────────────────────
+# Désactivé du workflow nocturne automatique — lancer manuellement :
+#   python sync_nuit.py --only ankorstore
+#   python sync_nuit.py --only ankorstore-produits ankorstore-commandes ankorstore-stock
 
 _ankorstore_slugs = ["ankorstore-produits", "ankorstore-commandes", "ankorstore-stock"]
 
-if any(_active(s) for s in _ankorstore_slugs):
+if only and any(_active(s) for s in _ankorstore_slugs):
     def _ankorstore_produits():
         nb_p, nb_v = sync_ankorstore_produits()
         return f"{nb_p} produits, {nb_v} variants"
