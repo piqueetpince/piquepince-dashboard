@@ -870,7 +870,7 @@ elif page == "🚨 Réapprovisionnement":
 
     with st.sidebar:
         st.divider()
-        fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_liste)
+        fournisseur_filtre = st.radio("Fournisseur", fournisseurs_liste)
         nb_mois = st.slider("Période calcul ventes (mois)", min_value=1, max_value=12, value=6)
         alerte_filtre = st.selectbox("Filtre alerte", [
             "Tous les produits",
