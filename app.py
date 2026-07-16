@@ -832,18 +832,6 @@ elif page == "⭐ Best-sellers":
         st.info("Aucune commande valide trouvée.")
 
 elif page == "🚨 Réapprovisionnement":
-    with st.sidebar:
-        st.divider()
-        nb_mois = st.slider("Période calcul ventes (mois)", min_value=1, max_value=12, value=6)
-        alerte_filtre = st.selectbox("Filtre alerte", [
-            "Tous les produits",
-            "🔴 À commander uniquement",
-            "🔴 + 🟡 Surveiller"
-        ])
-
-    st.subheader("🚨 Réapprovisionnement")
-    st.info(f"Calcul basé sur les ventes des {nb_mois} derniers mois. Délai fournisseur : 2 mois.")
-
     en_commande = select("commandes_fournisseur",
         "select=id,sku,nom_produit,fournisseur,date_commande,quantite_commandee,quantite_attendue,quantite_recue"
         "&statut=in.(en_commande,recu_partiel)&order=date_commande.desc")
@@ -870,10 +858,31 @@ elif page == "🚨 Réapprovisionnement":
     if "reap_quantite" not in st.session_state:
         st.session_state["reap_quantite"] = 0
 
-    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
-
     skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
     prod_map, sku_mapping = _get_produits_reap()
+
+    fournisseurs_liste = ["Tous"] + sorted({
+        (get_prod_parent(s.get("sku"), prod_map).get("fournisseur") or "").strip()
+        for s in (skus_data or [])
+        if s.get("sku") not in skus_exclu and s.get("sku") not in skus_ignores_set
+        and (get_prod_parent(s.get("sku"), prod_map).get("fournisseur") or "").strip()
+    })
+
+    with st.sidebar:
+        st.divider()
+        fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_liste)
+        nb_mois = st.slider("Période calcul ventes (mois)", min_value=1, max_value=12, value=6)
+        alerte_filtre = st.selectbox("Filtre alerte", [
+            "Tous les produits",
+            "🔴 À commander uniquement",
+            "🔴 + 🟡 Surveiller"
+        ])
+
+    st.subheader("🚨 Réapprovisionnement")
+    st.info(f"Calcul basé sur les ventes des {nb_mois} derniers mois. Délai fournisseur : 2 mois.")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+
     ventes_wizi, ventes_etsy, ventes_faire, nom_par_sku = _get_ventes_reap(date_limite)
 
     qty_attendue_map = {}
@@ -935,11 +944,6 @@ elif page == "🚨 Réapprovisionnement":
             })
 
         df_reap = pd.DataFrame(rows)
-
-        fournisseurs_liste = ["Tous"] + sorted(
-            [f for f in df_reap["Fournisseur"].dropna().unique().tolist() if f])
-        with st.sidebar:
-            fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_liste)
 
         if fournisseur_filtre != "Tous":
             df_reap = df_reap[df_reap["Fournisseur"] == fournisseur_filtre]
