@@ -20,6 +20,30 @@ def get_wizi_token():
         return data.get("token"), data.get("account_id"), data.get("default_shop_id")
     return None, None, None
 
+def get_wizi_shops(token, account_id):
+    """Liste les boutiques du compte Wizishop. Utile quand le compte gère
+    plusieurs boutiques (ex: BtoC + BtoB) pour identifier le shop_id BtoC à
+    utiliser dans les syncs — default_shop_id renvoyé par le login n'est pas
+    forcément la bonne boutique."""
+    if not token or not account_id:
+        return []
+    response = requests.get(
+        f"{WIZISHOP_API_URL}/v3/accounts/{account_id}/shops",
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    if response.status_code != 200:
+        return []
+    data = response.json()
+    results = data.get("results", data) if isinstance(data, dict) else data
+    if not isinstance(results, list):
+        return []
+    return [{
+        "id": shop.get("id"),
+        "nom": shop.get("name") or shop.get("shop_name") or "",
+        "type": shop.get("type") or shop.get("shop_type") or "",
+        "url": shop.get("url") or "",
+    } for shop in results]
+
 def clean_date(date_str):
     if not date_str:
         return None
@@ -201,11 +225,10 @@ def sync_produits(token, shop_id):
                 prod.get("images", [None])[0] if prod.get("images") else None)
 
             # Upsert produit parent avec sku comme clé
-            upsert("produits", [{
+            payload_parent = {
                 "id_wizi": int(prod.get("id")),
                 "sku": prod.get("sku"),
                 "nom": nom,
-                "fournisseur": fournisseur,
                 "reference_fournisseur": ref_fourn,
                 "marque": prod.get("brand"),
                 "ean13": prod.get("ean13"),
@@ -220,7 +243,12 @@ def sync_produits(token, shop_id):
                 "image_url": image_url,
                 "url": prod.get("url"),
                 "source": "wizishop"
-            }], "sku")
+            }
+            if fournisseur:
+                # Ne jamais écraser un fournisseur déjà en base avec une valeur
+                # vide — l'API Wizishop peut renvoyer "supplier" vide ponctuellement.
+                payload_parent["fournisseur"] = fournisseur
+            upsert("produits", [payload_parent], "sku")
 
             # Upsert chaque variation avec sku comme clé
             attributes = prod.get("attributes", [])
@@ -241,11 +269,10 @@ def sync_produits(token, shop_id):
                     else:
                         statut_variation = statut
 
-                    upsert("produits", [{
+                    payload_variation = {
                         "id_wizi": int(prod.get("id")),
                         "sku": sku_variation,
                         "nom": nom_variation,
-                        "fournisseur": fournisseur,
                         "reference_fournisseur": ref_fourn,
                         "marque": prod.get("brand"),
                         "ean13": option.get("ean13") or "",
@@ -259,7 +286,12 @@ def sync_produits(token, shop_id):
                         "image_url": option.get("image") or image_url,
                         "url": prod.get("url"),
                         "source": "wizishop"
-                    }], "sku")
+                    }
+                    if fournisseur:
+                        # Même logique que pour le produit parent : ne pas écraser
+                        # un fournisseur existant par une valeur vide.
+                        payload_variation["fournisseur"] = fournisseur
+                    upsert("produits", [payload_variation], "sku")
 
             total += 1
             time.sleep(0.05)

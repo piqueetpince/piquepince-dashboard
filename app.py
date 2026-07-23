@@ -4,7 +4,7 @@ import requests
 import json
 import os
 from supabase_api import select, upsert, insert, update, delete
-from sync_database import (get_wizi_token, sync_categories, sync_marques,
+from sync_database import (get_wizi_token, get_wizi_shops, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_produits, log_sync,
                            WIZISHOP_API_URL)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
@@ -346,19 +346,31 @@ if page == "🔄 Synchronisation":
         st.subheader("🛍️ Wizishop")
         token_cached = st.session_state.get("wizi_token")
         shop_id_cached = st.session_state.get("wizi_shop_id")
+        account_id_cached = st.session_state.get("wizi_account_id")
 
         if not token_cached:
             with st.spinner("Connexion à Wizishop..."):
-                token, _, shop_id = get_wizi_token()
+                token, account_id, shop_id = get_wizi_token()
                 if token:
                     st.session_state["wizi_token"] = token
                     st.session_state["wizi_shop_id"] = shop_id
+                    st.session_state["wizi_account_id"] = account_id
                     token_cached = token
                     shop_id_cached = shop_id
+                    account_id_cached = account_id
                 else:
                     st.error("Impossible de se connecter à Wizishop.")
 
         if token_cached:
+            if st.button("🏪 Voir les boutiques du compte", use_container_width=True):
+                with st.spinner("Récupération des boutiques..."):
+                    shops = get_wizi_shops(token_cached, account_id_cached)
+                    if shops:
+                        st.dataframe(pd.DataFrame(shops), use_container_width=True, hide_index=True)
+                        st.caption(f"shop_id actuellement utilisé : {shop_id_cached}")
+                    else:
+                        st.warning("Aucune boutique trouvée ou erreur d'appel API.")
+
             if st.button("1️⃣ Sync Catégories & Marques", use_container_width=True):
                 with st.spinner("Synchronisation..."):
                     debut = time.time()
