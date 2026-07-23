@@ -12,7 +12,10 @@ def get_token(email, password):
         )
         if response.status_code in [200, 201]:
             data = response.json()
-            return data.get("token"), data.get("account_id"), data.get("default_shop_id")
+            # ID fixe de la boutique BtoC plutôt que default_shop_id : le compte
+            # gère plusieurs boutiques (BtoC + BtoB) et default_shop_id renvoyé par
+            # le login n'est pas garanti de pointer vers la BtoC (voir sync_database.get_wizi_shops).
+            return data.get("token"), data.get("account_id"), 3899
         return None, None, None
     except Exception as e:
         return None, None, None
