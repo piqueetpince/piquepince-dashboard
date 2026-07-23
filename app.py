@@ -229,12 +229,66 @@ def _get_ventes_reap(date_limite):
     return ventes_wizi, ventes_etsy, ventes_faire, nom_par_sku
 
 
+@st.cache_data(ttl=300)
+def _get_catalogue_ventes(date_limite):
+    """Ventes par SKU et CA total toutes plateformes sur la période, pour l'analyse catalogue."""
+    cmds_wizi = select("commandes",
+        f"select=id_wizi,montant_ttc&source=eq.wizishop&statut_code=not.in.(0,45,50)&date_commande=gte.{date_limite}")
+    cmds_etsy = select("commandes",
+        f"select=id_wizi,montant_ttc&source=eq.etsy&date_commande=gte.{date_limite}")
+    cmds_faire = select("commandes",
+        f"select=id_faire,montant_ttc&source=eq.faire&date_commande=gte.{date_limite}")
+
+    ventes_wizi = {}
+    ventes_etsy = {}
+    ventes_faire = {}
+    ca_total = 0.0
+
+    if cmds_wizi:
+        ca_total += sum(float(c.get("montant_ttc") or 0) for c in cmds_wizi)
+        ids_str = ",".join(str(c["id_wizi"]) for c in cmds_wizi if c.get("id_wizi"))
+        lignes = select("lignes_commande",
+            f"select=sku,sku_variation,quantite&id_commande=in.({ids_str})", limit=50000)
+        if lignes:
+            for l in lignes:
+                sku_key = l.get("sku_variation") or l.get("sku")
+                if sku_key:
+                    ventes_wizi[sku_key] = ventes_wizi.get(sku_key, 0) + (l.get("quantite") or 0)
+
+    if cmds_etsy:
+        ca_total += sum(float(c.get("montant_ttc") or 0) for c in cmds_etsy)
+        ids_str = ",".join(str(c["id_wizi"]) for c in cmds_etsy if c.get("id_wizi"))
+        lignes = select("lignes_commande",
+            f"select=sku,sku_variation,quantite&id_commande=in.({ids_str})", limit=50000)
+        if lignes:
+            for l in lignes:
+                sku_key = l.get("sku_variation") or l.get("sku")
+                if sku_key:
+                    ventes_etsy[sku_key] = ventes_etsy.get(sku_key, 0) + (l.get("quantite") or 0)
+
+    if cmds_faire:
+        ca_total += sum(float(c.get("montant_ttc") or 0) for c in cmds_faire)
+        ids_str = ",".join(str(c["id_faire"]) for c in cmds_faire if c.get("id_faire"))
+        lignes = select("lignes_commande",
+            f"select=sku,quantite&id_commande=in.({ids_str})", limit=50000)
+        if lignes:
+            mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+            sku_mapping_local = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
+            for l in lignes:
+                sku = l.get("sku") or ""
+                sku_resolu = sku_mapping_local.get(sku, sku) if sku else ""
+                if sku_resolu:
+                    ventes_faire[sku_resolu] = ventes_faire.get(sku_resolu, 0) + (l.get("quantite") or 0)
+
+    return ventes_wizi, ventes_etsy, ventes_faire, ca_total
+
+
 st.title("Pique&Pince — Dashboard ventes")
 
 # ── Navigation groupée ────────────────────────────────────────────────────────
 
 _NAV_GROUPES = {
-    "📊 Général":       ["📊 Vue d'ensemble"],
+    "📊 Général":       ["📊 Vue d'ensemble", "📊 Analyse catalogue"],
     "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories", "🐌 Produits peu vendus"],
     "🛍️ Wizishop":     ["📦 Commandes", "👥 Clients", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
@@ -564,6 +618,85 @@ elif page == "📊 Vue d'ensemble":
         with col_g2:
             st.subheader("CA par mois (€)")
             st.bar_chart(par_mois_pivot_ca)
+    else:
+        st.info("Aucune donnée. Lance d'abord une synchronisation depuis le menu 🔄.")
+
+elif page == "📊 Analyse catalogue":
+    prod_map, sku_mapping = _get_produits_reap()
+
+    fournisseurs_liste = ["Tous"] + sorted({
+        (p.get("fournisseur") or "").strip()
+        for p in prod_map.values()
+        if (p.get("fournisseur") or "").strip()
+    })
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=4)
+        fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_liste)
+
+    st.subheader("📊 Analyse catalogue")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    ventes_wizi, ventes_etsy, ventes_faire, ca_total = _get_catalogue_ventes(date_limite)
+
+    skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
+
+    if skus_data:
+        rows = []
+        for sku_item in skus_data:
+            sku = sku_item.get("sku")
+            stock = int(sku_item.get("stock") or 0)
+            prod = get_prod_parent(sku, prod_map)
+            nom = prod.get("nom") or sku
+            fournisseur = prod.get("fournisseur") or ""
+
+            q_wizi = ventes_wizi.get(sku, 0)
+            q_etsy = ventes_etsy.get(sku, 0)
+            q_faire = ventes_faire.get(sku, 0)
+            q_total = q_wizi + q_etsy + q_faire
+
+            v_wizi = round(q_wizi / nb_mois, 1)
+            v_etsy = round(q_etsy / nb_mois, 1)
+            v_faire = round(q_faire / nb_mois, 1)
+            v_total = round(q_total / nb_mois, 1)
+            mois_stock = round(stock / v_total, 1) if v_total > 0 else "∞"
+
+            rows.append({
+                "SKU": sku,
+                "Produit": nom,
+                "Fournisseur": fournisseur,
+                "Stock actuel": stock,
+                "Ventes/mois Wizishop": v_wizi,
+                "Ventes/mois Etsy": v_etsy,
+                "Ventes/mois Faire": v_faire,
+                "Ventes/mois Total": v_total,
+                "Mois de stock": mois_stock,
+            })
+
+        df_cat = pd.DataFrame(rows)
+
+        if fournisseur_filtre != "Tous":
+            df_cat = df_cat[df_cat["Fournisseur"] == fournisseur_filtre]
+
+        df_cat = df_cat.sort_values("Ventes/mois Total", ascending=False)
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total SKUs", len(df_cat))
+        with col2:
+            st.metric("SKUs en rupture", len(df_cat[df_cat["Stock actuel"] == 0]))
+        with col3:
+            nb_stock_bas = len(df_cat[df_cat["Mois de stock"].apply(
+                lambda x: isinstance(x, (int, float)) and x < 3)])
+            st.metric("Mois de stock < 3", nb_stock_bas)
+        with col4:
+            st.metric(f"CA total {nb_mois} mois", f"{ca_total:.0f} €")
+
+        st.dataframe(df_cat, use_container_width=True, hide_index=True)
+
+        csv = df_cat.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv, "analyse_catalogue.csv", "text/csv")
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation depuis le menu 🔄.")
 
