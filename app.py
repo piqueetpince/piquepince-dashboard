@@ -1214,6 +1214,8 @@ elif page == "🚨 Réapprovisionnement":
             lambda s: get_prod_parent(s, prod_map).get("reference_fournisseur") or "")
         df_cmd["fournisseur_sku"] = df_cmd["sku"].apply(
             lambda s: (get_prod_parent(s, prod_map).get("fournisseur") or "").strip())
+        stock_map = {s.get("sku"): int(s.get("stock") or 0) for s in (skus_data or [])}
+        df_cmd["stock_actuel"] = df_cmd["sku"].apply(lambda s: stock_map.get(s, 0))
 
         if fournisseur_filtre != "Tous":
             df_cmd = df_cmd[df_cmd["fournisseur_sku"] == fournisseur_filtre]
@@ -1221,10 +1223,10 @@ elif page == "🚨 Réapprovisionnement":
         if df_cmd.empty:
             st.info("Aucun produit en commande pour ce fournisseur.")
         else:
-            df_show_cmd = df_cmd[["sku", "reference_fournisseur", "nom_produit", "fournisseur", "date_commande",
-                                   "quantite_commandee", "quantite_attendue", "Statut"]].copy()
-            df_show_cmd.columns = ["SKU", "Réf. fournisseur", "Produit", "Fournisseur", "Date commande",
-                                    "Qté commandée", "Qté attendue", "Statut"]
+            df_show_cmd = df_cmd[["sku", "reference_fournisseur", "stock_actuel", "nom_produit", "fournisseur",
+                                   "date_commande", "quantite_commandee", "quantite_attendue", "Statut"]].copy()
+            df_show_cmd.columns = ["SKU", "Réf. fournisseur", "Stock actuel", "Produit", "Fournisseur",
+                                    "Date commande", "Qté commandée", "Qté attendue", "Statut"]
             df_recu_editor = df_show_cmd.copy()
             df_recu_editor["Reçu ?"] = False
             df_recu_editor["Qté reçue"] = df_recu_editor["Qté commandée"]
@@ -1237,6 +1239,7 @@ elif page == "🚨 Réapprovisionnement":
                     column_config={
                         "SKU": st.column_config.TextColumn(disabled=True),
                         "Réf. fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Stock actuel": st.column_config.NumberColumn(disabled=True),
                         "Produit": st.column_config.TextColumn(disabled=True),
                         "Fournisseur": st.column_config.TextColumn(disabled=True),
                         "Date commande": st.column_config.TextColumn(disabled=True),
