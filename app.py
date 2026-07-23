@@ -633,7 +633,7 @@ elif page == "📊 Analyse catalogue":
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=4)
-        fournisseur_filtre = st.selectbox("Fournisseur", fournisseurs_liste)
+        fournisseur_filtre = st.radio("Fournisseur", fournisseurs_liste)
 
     st.subheader("📊 Analyse catalogue")
 
