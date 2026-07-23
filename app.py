@@ -1210,54 +1210,66 @@ elif page == "🚨 Réapprovisionnement":
         df_cmd["Statut"] = df_cmd.apply(
             lambda r: "⚠️ Partielle" if r["quantite_commandee"] < r["quantite_attendue"] else "✅ Complète", axis=1
         )
-        df_show_cmd = df_cmd[["sku", "nom_produit", "fournisseur", "date_commande",
-                               "quantite_commandee", "quantite_attendue", "Statut"]].copy()
-        df_show_cmd.columns = ["SKU", "Produit", "Fournisseur", "Date commande",
-                                "Qté commandée", "Qté attendue", "Statut"]
-        df_recu_editor = df_show_cmd.copy()
-        df_recu_editor["Reçu ?"] = False
-        df_recu_editor["Qté reçue"] = df_recu_editor["Qté commandée"]
+        df_cmd["reference_fournisseur"] = df_cmd["sku"].apply(
+            lambda s: get_prod_parent(s, prod_map).get("reference_fournisseur") or "")
+        df_cmd["fournisseur_sku"] = df_cmd["sku"].apply(
+            lambda s: (get_prod_parent(s, prod_map).get("fournisseur") or "").strip())
 
-        with st.form("form_recu"):
-            edited_recu = st.data_editor(
-                df_recu_editor,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "SKU": st.column_config.TextColumn(disabled=True),
-                    "Produit": st.column_config.TextColumn(disabled=True),
-                    "Fournisseur": st.column_config.TextColumn(disabled=True),
-                    "Date commande": st.column_config.TextColumn(disabled=True),
-                    "Qté commandée": st.column_config.NumberColumn(disabled=True),
-                    "Qté attendue": st.column_config.NumberColumn(disabled=True),
-                    "Statut": st.column_config.TextColumn(disabled=True),
-                    "Reçu ?": st.column_config.CheckboxColumn(),
-                    "Qté reçue": st.column_config.NumberColumn(min_value=0, step=1),
-                }
-            )
-            submitted_recu = st.form_submit_button("✅ Marquer comme reçu", type="primary")
+        if fournisseur_filtre != "Tous":
+            df_cmd = df_cmd[df_cmd["fournisseur_sku"] == fournisseur_filtre]
 
-        if submitted_recu:
-            a_recevoir = edited_recu[edited_recu["Reçu ?"] == True]
-            if a_recevoir.empty:
-                st.warning("Aucune ligne sélectionnée.")
-            else:
-                nb_recu = 0
-                for _, r in a_recevoir.iterrows():
-                    sku_r = r["SKU"]
-                    row_orig = df_cmd[df_cmd["sku"] == sku_r].iloc[0]
-                    qty_cmd_val = int(row_orig["quantite_commandee"])
-                    qty_recue_val = int(r["Qté reçue"])
-                    new_statut = "recu" if qty_recue_val >= qty_cmd_val else "recu_partiel"
-                    upsert("commandes_fournisseur", [{
-                        "id": int(row_orig["id"]),
-                        "sku": sku_r,
-                        "statut": new_statut,
-                        "quantite_recue": qty_recue_val,
-                    }], "id")
-                    nb_recu += 1
-                st.success(f"✓ {nb_recu} produit(s) mis à jour !")
-                st.rerun()
+        if df_cmd.empty:
+            st.info("Aucun produit en commande pour ce fournisseur.")
+        else:
+            df_show_cmd = df_cmd[["sku", "reference_fournisseur", "nom_produit", "fournisseur", "date_commande",
+                                   "quantite_commandee", "quantite_attendue", "Statut"]].copy()
+            df_show_cmd.columns = ["SKU", "Réf. fournisseur", "Produit", "Fournisseur", "Date commande",
+                                    "Qté commandée", "Qté attendue", "Statut"]
+            df_recu_editor = df_show_cmd.copy()
+            df_recu_editor["Reçu ?"] = False
+            df_recu_editor["Qté reçue"] = df_recu_editor["Qté commandée"]
+
+            with st.form("form_recu"):
+                edited_recu = st.data_editor(
+                    df_recu_editor,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "SKU": st.column_config.TextColumn(disabled=True),
+                        "Réf. fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Produit": st.column_config.TextColumn(disabled=True),
+                        "Fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Date commande": st.column_config.TextColumn(disabled=True),
+                        "Qté commandée": st.column_config.NumberColumn(disabled=True),
+                        "Qté attendue": st.column_config.NumberColumn(disabled=True),
+                        "Statut": st.column_config.TextColumn(disabled=True),
+                        "Reçu ?": st.column_config.CheckboxColumn(),
+                        "Qté reçue": st.column_config.NumberColumn(min_value=0, step=1),
+                    }
+                )
+                submitted_recu = st.form_submit_button("✅ Marquer comme reçu", type="primary")
+
+            if submitted_recu:
+                a_recevoir = edited_recu[edited_recu["Reçu ?"] == True]
+                if a_recevoir.empty:
+                    st.warning("Aucune ligne sélectionnée.")
+                else:
+                    nb_recu = 0
+                    for _, r in a_recevoir.iterrows():
+                        sku_r = r["SKU"]
+                        row_orig = df_cmd[df_cmd["sku"] == sku_r].iloc[0]
+                        qty_cmd_val = int(row_orig["quantite_commandee"])
+                        qty_recue_val = int(r["Qté reçue"])
+                        new_statut = "recu" if qty_recue_val >= qty_cmd_val else "recu_partiel"
+                        upsert("commandes_fournisseur", [{
+                            "id": int(row_orig["id"]),
+                            "sku": sku_r,
+                            "statut": new_statut,
+                            "quantite_recue": qty_recue_val,
+                        }], "id")
+                        nb_recu += 1
+                    st.success(f"✓ {nb_recu} produit(s) mis à jour !")
+                    st.rerun()
     else:
         st.info("Aucun produit en commande actuellement.")
 
@@ -1265,28 +1277,34 @@ elif page == "🚨 Réapprovisionnement":
     st.subheader("🚫 Produits ignorés")
     if ignores_data:
         df_ign = pd.DataFrame(ignores_data)
-        df_ign["created_at"] = pd.to_datetime(df_ign["created_at"]).dt.strftime("%d/%m/%Y")
-        df_ign_show = df_ign[["sku", "nom_produit", "fournisseur", "raison", "created_at"]].copy()
-        df_ign_show.columns = ["SKU", "Produit", "Fournisseur", "Raison", "Date"]
-        st.dataframe(df_ign_show, use_container_width=True, hide_index=True)
+        if fournisseur_filtre != "Tous":
+            df_ign = df_ign[df_ign["fournisseur"] == fournisseur_filtre]
 
-        st.divider()
-        col_ret1, col_ret2 = st.columns([3, 1])
-        with col_ret1:
-            sku_retirer = st.selectbox(
-                "Sélectionner un SKU à remettre en suivi",
-                options=[""] + df_ign["sku"].tolist(),
-                format_func=lambda x: f"{x} — {df_ign[df_ign['sku']==x]['nom_produit'].iloc[0]}"
-                if x else "Choisir un SKU...",
-                key="selectbox_retirer"
-            )
-        with col_ret2:
-            st.write("")
-            st.write("")
-            if sku_retirer and st.button("↩️ Remettre en suivi", type="secondary"):
-                delete("skus_ignores", f"sku=eq.{sku_retirer}")
-                st.success(f"✓ {sku_retirer} remis en suivi !")
-                st.rerun()
+        if df_ign.empty:
+            st.info("Aucun produit ignoré pour ce fournisseur.")
+        else:
+            df_ign["created_at"] = pd.to_datetime(df_ign["created_at"]).dt.strftime("%d/%m/%Y")
+            df_ign_show = df_ign[["sku", "nom_produit", "fournisseur", "raison", "created_at"]].copy()
+            df_ign_show.columns = ["SKU", "Produit", "Fournisseur", "Raison", "Date"]
+            st.dataframe(df_ign_show, use_container_width=True, hide_index=True)
+
+            st.divider()
+            col_ret1, col_ret2 = st.columns([3, 1])
+            with col_ret1:
+                sku_retirer = st.selectbox(
+                    "Sélectionner un SKU à remettre en suivi",
+                    options=[""] + df_ign["sku"].tolist(),
+                    format_func=lambda x: f"{x} — {df_ign[df_ign['sku']==x]['nom_produit'].iloc[0]}"
+                    if x else "Choisir un SKU...",
+                    key="selectbox_retirer"
+                )
+            with col_ret2:
+                st.write("")
+                st.write("")
+                if sku_retirer and st.button("↩️ Remettre en suivi", type="secondary"):
+                    delete("skus_ignores", f"sku=eq.{sku_retirer}")
+                    st.success(f"✓ {sku_retirer} remis en suivi !")
+                    st.rerun()
     else:
         st.info("Aucun produit ignoré.")
 
