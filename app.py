@@ -285,21 +285,27 @@ def _get_catalogue_ventes(date_limite):
 
 @st.cache_data(ttl=300)
 def _get_skus_catalogue():
-    """SKUs visibles pour l'analyse catalogue, en excluant les SKUs parents
-    (type=product) qui ont des SKUs enfants (type=variation dont le sku
-    commence par le leur) : le stock et les ventes réels sont portés par les
-    variations, le parent n'est pas vendable en tant que tel.
-    id_produit_parent n'est pas utilisable ici (jamais renseigné en base par
-    sync_skus — l'API Wizishop /skus ne retourne pas prod_id)."""
+    """SKUs visibles pour l'analyse catalogue, en excluant les SKUs parents :
+    tout SKU pour lequel il existe un autre SKU visible qui commence par lui
+    (SKU + suffixe) est un parent dont le stock/les ventes réels sont portés
+    par ses variations.
+    skus.type n'est PAS fiable pour cette distinction : vérifié en base, de
+    vraies variantes couleur (ex: BAR0004ROUGE, BAR0004GLOSSY, stock réel)
+    sont typées "product" au même titre que le parent placeholder
+    (BAR0004CORNE, stock=0) — seul le préfixe du SKU est un signal fiable.
+    id_produit_parent n'est pas utilisable non plus (jamais renseigné en
+    base par sync_skus — l'API Wizishop /skus ne retourne pas prod_id)."""
     skus_data = select("skus", "select=sku,stock,type&statut=eq.visible")
     if not skus_data:
         return []
-    variation_skus = [s["sku"] for s in skus_data if s.get("type") == "variation" and s.get("sku")]
-    parents_a_exclure = {
-        s["sku"] for s in skus_data
-        if s.get("type") == "product" and s.get("sku")
-        and any(v != s["sku"] and v.startswith(s["sku"]) for v in variation_skus)
-    }
+    skus_tries = sorted(s["sku"] for s in skus_data if s.get("sku"))
+    parents_a_exclure = set()
+    for i, sku in enumerate(skus_tries):
+        for autre in skus_tries[i + 1:]:
+            if not autre.startswith(sku):
+                break
+            parents_a_exclure.add(sku)
+            break
     return [s for s in skus_data if s.get("sku") not in parents_a_exclure]
 
 
