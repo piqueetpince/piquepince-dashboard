@@ -283,6 +283,26 @@ def _get_catalogue_ventes(date_limite):
     return ventes_wizi, ventes_etsy, ventes_faire, ca_total
 
 
+@st.cache_data(ttl=300)
+def _get_skus_catalogue():
+    """SKUs visibles pour l'analyse catalogue, en excluant les SKUs parents
+    (type=product) qui ont des SKUs enfants (type=variation dont le sku
+    commence par le leur) : le stock et les ventes réels sont portés par les
+    variations, le parent n'est pas vendable en tant que tel.
+    id_produit_parent n'est pas utilisable ici (jamais renseigné en base par
+    sync_skus — l'API Wizishop /skus ne retourne pas prod_id)."""
+    skus_data = select("skus", "select=sku,stock,type&statut=eq.visible")
+    if not skus_data:
+        return []
+    variation_skus = [s["sku"] for s in skus_data if s.get("type") == "variation" and s.get("sku")]
+    parents_a_exclure = {
+        s["sku"] for s in skus_data
+        if s.get("type") == "product" and s.get("sku")
+        and any(v != s["sku"] and v.startswith(s["sku"]) for v in variation_skus)
+    }
+    return [s for s in skus_data if s.get("sku") not in parents_a_exclure]
+
+
 st.title("Pique&Pince — Dashboard ventes")
 
 # ── Navigation groupée ────────────────────────────────────────────────────────
@@ -652,7 +672,7 @@ elif page == "📊 Analyse catalogue":
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     ventes_wizi, ventes_etsy, ventes_faire, ca_total = _get_catalogue_ventes(date_limite)
 
-    skus_data = select("skus", "select=sku,stock,statut&statut=eq.visible")
+    skus_data = _get_skus_catalogue()
 
     if skus_data:
         rows = []
