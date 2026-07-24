@@ -1410,9 +1410,12 @@ elif page == "🏪 Revendeurs Wizishop":
                         .reset_index())
         df_par_code["ca_ht"] = df_par_code["ca_ht"].round(2)
         df_par_code["remise_moyenne"] = df_par_code["remise_moyenne"].round(1)
-        df_par_code["derniere_commande"] = pd.to_datetime(
-            df_par_code["derniere_commande"]).dt.strftime("%d/%m/%Y")
-        df_par_code = df_par_code.sort_values("ca_ht", ascending=False).reset_index(drop=True)
+        # Garder une vraie date (pas une chaîne "JJ/MM/AAAA") : un tri alphabétique
+        # sur une date formatée en jour-premier ne donne pas l'ordre chronologique
+        # (ex: "03/12/2025" < "15/11/2025" alphabétiquement, alors que le 15/11
+        # est antérieur). DateColumn trie sur la vraie valeur sous-jacente.
+        df_par_code["derniere_commande"] = pd.to_datetime(df_par_code["derniere_commande"]).dt.date
+        df_par_code = df_par_code.sort_values("derniere_commande", ascending=False).reset_index(drop=True)
         df_par_code = df_par_code.rename(columns={
             "code_promo": "Code promo",
             "nb_commandes": "Nb commandes",
@@ -1424,8 +1427,10 @@ elif page == "🏪 Revendeurs Wizishop":
         df_editor_rev = df_par_code.copy()
         df_editor_rev["Ignorer ?"] = False
 
+        df_csv_rev = df_par_code.copy()
+        df_csv_rev["Dernière commande"] = pd.to_datetime(df_csv_rev["Dernière commande"]).dt.strftime("%d/%m/%Y")
         st.download_button("📥 Exporter CSV",
-            df_par_code.to_csv(index=False).encode("utf-8"),
+            df_csv_rev.to_csv(index=False).encode("utf-8"),
             "revendeurs_par_code.csv", "text/csv", key="dl_revendeurs_codes")
 
         with st.form("form_revendeurs_ignores"):
@@ -1436,7 +1441,7 @@ elif page == "🏪 Revendeurs Wizishop":
                     "Nb commandes":      st.column_config.NumberColumn(disabled=True),
                     "CA HT (€)":         st.column_config.NumberColumn(disabled=True, format="%.2f €"),
                     "Remise moyenne %":  st.column_config.NumberColumn(disabled=True, format="%.1f %%"),
-                    "Dernière commande": st.column_config.TextColumn(disabled=True),
+                    "Dernière commande": st.column_config.DateColumn(disabled=True, format="DD/MM/YYYY"),
                     "Ignorer ?":         st.column_config.CheckboxColumn(),
                 }
             )
