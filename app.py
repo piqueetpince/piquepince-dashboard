@@ -1548,7 +1548,7 @@ elif page == "🎨 Variations fournisseurs":
 
     with st.sidebar:
         st.divider()
-        fournisseur_selectionne = st.selectbox("Fournisseur", fournisseurs_liste)
+        fournisseur_selectionne = st.radio("Fournisseur", fournisseurs_liste)
 
     st.subheader("🎨 Variations fournisseurs")
 
