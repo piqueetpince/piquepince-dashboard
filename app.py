@@ -319,7 +319,8 @@ _NAV_GROUPES = {
     "🛍️ Wizishop":     ["📦 Commandes", "👥 Clients", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
-                         "📈 Évolution CA annuelle", "🏪 Revendeurs Wizishop"],
+                         "📈 Évolution CA annuelle", "🏪 Revendeurs Wizishop",
+                         "🎨 Variations fournisseurs"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
                          "📒 Export comptable Etsy"],
@@ -1535,6 +1536,104 @@ elif page == "🏪 Revendeurs Wizishop":
                 st.rerun()
     else:
         st.info("Aucun code exclu.")
+
+elif page == "🎨 Variations fournisseurs":
+    produits_visibles = select("produits", "select=sku,nom,fournisseur,reference_fournisseur&statut=eq.visible")
+
+    fournisseurs_liste = sorted({
+        (p.get("fournisseur") or "").strip()
+        for p in (produits_visibles or [])
+        if (p.get("fournisseur") or "").strip()
+    })
+
+    with st.sidebar:
+        st.divider()
+        fournisseur_selectionne = st.selectbox("Fournisseur", fournisseurs_liste)
+
+    st.subheader("🎨 Variations fournisseurs")
+
+    if not fournisseur_selectionne:
+        st.info("Aucun fournisseur disponible.")
+    else:
+        skus_visibles_data = select("skus", "select=sku,statut&statut=eq.visible")
+        skus_visibles_set = {s["sku"] for s in (skus_visibles_data or []) if s.get("sku")}
+
+        produits_fournisseur = [
+            p for p in (produits_visibles or [])
+            if (p.get("fournisseur") or "").strip() == fournisseur_selectionne
+            and p.get("sku") in skus_visibles_set
+        ]
+        prod_map_fournisseur = {p["sku"]: p for p in produits_fournisseur}
+
+        variations_data = select("sku_variations_fournisseur",
+            "select=sku,fournisseur,reference_fournisseur,couleur_fournisseur,reference_complete")
+        variations_map = {v["sku"]: v for v in (variations_data or [])}
+
+        rows = []
+        for p in produits_fournisseur:
+            sku = p.get("sku")
+            ref_fourn = p.get("reference_fournisseur") or ""
+            existant = variations_map.get(sku, {})
+            couleur = existant.get("couleur_fournisseur") or ""
+            ref_complete = existant.get("reference_complete") or (
+                f"{ref_fourn} {couleur}".strip() if couleur else "")
+            rows.append({
+                "SKU": sku,
+                "Produit": p.get("nom") or "",
+                "Référence fournisseur": ref_fourn,
+                "Couleur fournisseur": couleur,
+                "Référence complète": ref_complete,
+            })
+
+        df_var = pd.DataFrame(rows)
+        if not df_var.empty:
+            df_var = df_var.sort_values("SKU").reset_index(drop=True)
+
+        nb_skus = len(df_var)
+        nb_avec_couleur = len(df_var[df_var["Couleur fournisseur"].str.strip() != ""]) if not df_var.empty else 0
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("SKUs du fournisseur", nb_skus)
+        with col2:
+            st.metric("Avec couleur fournisseur renseignée", nb_avec_couleur)
+
+        if df_var.empty:
+            st.info("Aucun SKU visible pour ce fournisseur.")
+        else:
+            with st.form("form_variations_fournisseur"):
+                edited_var = st.data_editor(
+                    df_var,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "SKU": st.column_config.TextColumn(disabled=True),
+                        "Produit": st.column_config.TextColumn(disabled=True),
+                        "Référence fournisseur": st.column_config.TextColumn(disabled=True),
+                        "Couleur fournisseur": st.column_config.TextColumn(),
+                        "Référence complète": st.column_config.TextColumn(disabled=True),
+                    }
+                )
+                submitted_var = st.form_submit_button("💾 Enregistrer", type="primary")
+
+            if submitted_var:
+                a_enregistrer = edited_var[edited_var["Couleur fournisseur"].str.strip() != ""]
+                if a_enregistrer.empty:
+                    st.warning("Aucune couleur fournisseur renseignée.")
+                else:
+                    nb_ok = 0
+                    for _, r in a_enregistrer.iterrows():
+                        sku_r = r["SKU"]
+                        prod_r = prod_map_fournisseur.get(sku_r, {})
+                        upsert("sku_variations_fournisseur", [{
+                            "sku": sku_r,
+                            "fournisseur": fournisseur_selectionne,
+                            "reference_fournisseur": prod_r.get("reference_fournisseur") or "",
+                            "couleur_fournisseur": r["Couleur fournisseur"].strip(),
+                        }], "sku")
+                        nb_ok += 1
+                    st.success(f"✓ {nb_ok} variation(s) enregistrée(s) !")
+                    st.rerun()
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
