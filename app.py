@@ -161,7 +161,7 @@ def _generer_fiche_faire(nom, categorie, fournisseur, description_wizi):
 @st.cache_data(ttl=300)
 def _get_produits_reap():
     produits_data = select("produits",
-        "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur,prix_achat_ht")
+        "select=sku,nom,nom_categorie,fournisseur,reference_fournisseur,prix_achat_ht,statut")
     prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
     mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
     sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
@@ -2059,7 +2059,8 @@ elif page == "🔍 Vérification Wizishop":
 
     with tab3:
         st.caption("SKUs affichés (visibles, non parents, hors AliExpress) sans fournisseur "
-                   "renseigné dans produits — même logique que la page Analyse catalogue.")
+                   "renseigné dans produits, en ne gardant que les produits eux-mêmes visibles "
+                   "(pas unavailable, pas archived) — même logique que la page Analyse catalogue.")
 
         skus_affiches = _get_skus_catalogue()
         prod_map_verif, _ = _get_produits_reap()
@@ -2071,6 +2072,8 @@ elif page == "🔍 Vérification Wizishop":
         for s in (skus_affiches or []):
             sku = s.get("sku")
             prod = get_prod_parent(sku, prod_map_verif)
+            if (prod.get("statut") or "") != "visible":
+                continue
             fournisseur = (prod.get("fournisseur") or "").strip()
             if fournisseur:
                 continue
@@ -2083,11 +2086,6 @@ elif page == "🔍 Vérification Wizishop":
                 "Stock actuel": stock,
                 "Ventes/mois": ventes_mois,
             })
-
-        # DEBUG temporaire
-        st.write("DEBUG — SKUs retournés par _get_skus_catalogue():", len(skus_affiches or []))
-        st.write("DEBUG — SKUs après filtrage sans fournisseur:", len(rows_sf))
-        st.write("DEBUG — 5 premiers SKUs de _get_skus_catalogue():", (skus_affiches or [])[:5])
 
         st.metric("SKUs sans fournisseur", len(rows_sf))
 
