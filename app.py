@@ -1939,7 +1939,7 @@ elif page == "🌍 Comptabilité TVA":
 elif page == "🔍 Vérification Wizishop":
     st.subheader("🔍 Vérification des ventes Wizishop")
 
-    tab1, tab2 = st.tabs(["📊 Ventes", "💰 Prix d'achat manquants"])
+    tab1, tab2, tab3 = st.tabs(["📊 Ventes", "💰 Prix d'achat manquants", "🏭 SKUs sans fournisseur"])
 
     with tab1:
         with st.sidebar:
@@ -2056,6 +2056,43 @@ elif page == "🔍 Vérification Wizishop":
                 st.success("✅ Tous les produits visibles avec du stock ont un prix d'achat renseigné.")
         else:
             st.success("✅ Tous les produits visibles ont un prix d'achat renseigné.")
+
+    with tab3:
+        st.caption("SKUs affichés (visibles, non parents, hors AliExpress) sans fournisseur "
+                   "renseigné dans produits — même logique que la page Analyse catalogue.")
+
+        skus_affiches = _get_skus_catalogue()
+        prod_map_verif, _ = _get_produits_reap()
+
+        date_limite_sf = (pd.Timestamp.now() - pd.DateOffset(months=3)).strftime("%Y-%m-%dT%H:%M:%S")
+        ventes_wizi_sf, ventes_etsy_sf, ventes_faire_sf, _ = _get_catalogue_ventes(date_limite_sf)
+
+        rows_sf = []
+        for s in (skus_affiches or []):
+            sku = s.get("sku")
+            prod = get_prod_parent(sku, prod_map_verif)
+            fournisseur = (prod.get("fournisseur") or "").strip()
+            if fournisseur:
+                continue
+            stock = int(s.get("stock") or 0)
+            ventes_mois = round(
+                (ventes_wizi_sf.get(sku, 0) + ventes_etsy_sf.get(sku, 0) + ventes_faire_sf.get(sku, 0)) / 3, 1)
+            rows_sf.append({
+                "SKU": sku,
+                "Produit": prod.get("nom") or sku,
+                "Stock actuel": stock,
+                "Ventes/mois": ventes_mois,
+            })
+
+        st.metric("SKUs sans fournisseur", len(rows_sf))
+
+        if not rows_sf:
+            st.success("✅ Tous les SKUs ont un fournisseur renseigné")
+        else:
+            df_sf = pd.DataFrame(rows_sf).sort_values("Ventes/mois", ascending=False).reset_index(drop=True)
+            st.dataframe(df_sf, use_container_width=True, hide_index=True)
+            csv = df_sf.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "skus_sans_fournisseur.csv", "text/csv")
 
 elif page == "💎 Valorisation du stock":
     st.subheader("💎 Valorisation du stock")
