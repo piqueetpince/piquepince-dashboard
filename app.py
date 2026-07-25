@@ -2084,6 +2084,11 @@ elif page == "🔍 Vérification Wizishop":
                 "Ventes/mois": ventes_mois,
             })
 
+        # DEBUG temporaire
+        st.write("DEBUG — SKUs retournés par _get_skus_catalogue():", len(skus_affiches or []))
+        st.write("DEBUG — SKUs après filtrage sans fournisseur:", len(rows_sf))
+        st.write("DEBUG — 5 premiers SKUs de _get_skus_catalogue():", (skus_affiches or [])[:5])
+
         st.metric("SKUs sans fournisseur", len(rows_sf))
 
         if not rows_sf:
