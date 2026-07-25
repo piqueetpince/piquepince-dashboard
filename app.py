@@ -1619,26 +1619,32 @@ elif page == "🎨 Variations fournisseurs":
         variation_par_id = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_du_fournisseur}
         options_variation = ["(aucune)"] + [v.get("couleur_fournisseur") for v in variations_du_fournisseur]
 
-        rows = []
+        cle_edition = f"var_sku_en_edition_{fournisseur_selectionne}"
+        if cle_edition not in st.session_state:
+            st.session_state[cle_edition] = set()
+        skus_en_edition = st.session_state[cle_edition]
+
+        rows_sans_variation = []
+        rows_avec_variation = []
         for p in produits_fournisseur:
             sku = p.get("sku")
             assoc = associations_map.get(sku, {})
             id_var_existant = assoc.get("id_variation")
-            couleur_existante = variation_par_id.get(id_var_existant, "(aucune)") if id_var_existant else "(aucune)"
-            rows.append({
+            couleur_existante = variation_par_id.get(id_var_existant, "") if id_var_existant else ""
+            row = {
                 "SKU": sku,
                 "Produit": p.get("nom") or "",
                 "Référence fournisseur": p.get("reference_fournisseur") or "",
-                "Variation fournisseur": couleur_existante,
-            })
+                "Variation fournisseur": couleur_existante or "(aucune)",
+            }
+            if id_var_existant and sku not in skus_en_edition:
+                rows_avec_variation.append(row)
+            else:
+                rows_sans_variation.append(row)
 
-        df_assoc = pd.DataFrame(rows)
-        if not df_assoc.empty:
-            df_assoc = df_assoc.sort_values("SKU").reset_index(drop=True)
-
-        nb_skus = len(df_assoc)
-        nb_avec_variation = (
-            len(df_assoc[df_assoc["Variation fournisseur"] != "(aucune)"]) if not df_assoc.empty else 0
+        nb_skus = len(produits_fournisseur)
+        nb_avec_variation = len(rows_avec_variation) + sum(
+            1 for r in rows_sans_variation if r["Variation fournisseur"] != "(aucune)"
         )
 
         col1, col2 = st.columns(2)
@@ -1647,14 +1653,19 @@ elif page == "🎨 Variations fournisseurs":
         with col2:
             st.metric("Avec variation associée", nb_avec_variation)
 
-        if df_assoc.empty:
+        st.markdown("#### 📋 SKUs sans variation")
+
+        if not produits_fournisseur:
             st.info("Aucun SKU visible pour ce fournisseur.")
+        elif not rows_sans_variation:
+            st.success("✅ Tous les SKUs ont une variation associée.")
         elif not variations_du_fournisseur:
             st.info("Ajoute d'abord des variations dans la partie 1 ci-dessus.")
         else:
+            df_sans = pd.DataFrame(rows_sans_variation).sort_values("SKU").reset_index(drop=True)
             with st.form("form_association_variation"):
-                edited_assoc = st.data_editor(
-                    df_assoc,
+                edited_sans = st.data_editor(
+                    df_sans,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
@@ -1664,11 +1675,11 @@ elif page == "🎨 Variations fournisseurs":
                         "Variation fournisseur": st.column_config.SelectboxColumn(options=options_variation),
                     }
                 )
-                submitted_assoc = st.form_submit_button("💾 Enregistrer les associations", type="primary")
+                submitted_assoc = st.form_submit_button("💾 Enregistrer", type="primary")
 
             if submitted_assoc:
                 couleur_vers_id = {v.get("couleur_fournisseur"): v["id"] for v in variations_du_fournisseur}
-                a_enregistrer = edited_assoc[edited_assoc["Variation fournisseur"] != "(aucune)"]
+                a_enregistrer = edited_sans[edited_sans["Variation fournisseur"] != "(aucune)"]
                 if a_enregistrer.empty:
                     st.warning("Aucune association à enregistrer.")
                 else:
@@ -1685,8 +1696,30 @@ elif page == "🎨 Variations fournisseurs":
                             "reference_fournisseur": prod_r.get("reference_fournisseur") or "",
                             "id_variation": id_var_r,
                         }], "sku")
+                        skus_en_edition.discard(sku_r)
                         nb_ok += 1
                     st.success(f"✓ {nb_ok} association(s) enregistrée(s) !")
+                    st.rerun()
+
+        st.divider()
+        st.markdown("#### ✅ SKUs avec variation")
+
+        if not rows_avec_variation:
+            st.info("Aucun SKU avec variation associée pour l'instant.")
+        else:
+            df_avec = pd.DataFrame(rows_avec_variation).sort_values("SKU").reset_index(drop=True)
+            largeurs = [2, 3, 2, 2, 1]
+            entetes = st.columns(largeurs)
+            for col, titre in zip(entetes, ["SKU", "Produit", "Référence fournisseur", "Variation fournisseur", ""]):
+                col.markdown(f"**{titre}**")
+            for _, r in df_avec.iterrows():
+                c1, c2, c3, c4, c5 = st.columns(largeurs)
+                c1.write(r["SKU"])
+                c2.write(r["Produit"])
+                c3.write(r["Référence fournisseur"])
+                c4.write(r["Variation fournisseur"])
+                if c5.button("✏️", key=f"modifier_assoc_{r['SKU']}"):
+                    skus_en_edition.add(r["SKU"])
                     st.rerun()
 
 elif page == "🏭 Stock & Fournisseurs":
