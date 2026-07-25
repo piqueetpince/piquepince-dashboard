@@ -1555,6 +1555,53 @@ elif page == "🎨 Variations fournisseurs":
     if not fournisseur_selectionne:
         st.info("Aucun fournisseur disponible.")
     else:
+        # ── Partie 1 : gestion des variations fournisseur ────────────────────
+        st.markdown("### 1️⃣ Gestion des variations fournisseur")
+
+        toutes_variations = select("variations_fournisseur",
+            "select=id,fournisseur,couleur_fournisseur,created_at") or []
+        variations_du_fournisseur = sorted(
+            [v for v in toutes_variations if (v.get("fournisseur") or "").strip() == fournisseur_selectionne],
+            key=lambda v: (v.get("couleur_fournisseur") or "").lower()
+        )
+
+        col_add1, col_add2 = st.columns([3, 1])
+        with col_add1:
+            nouvelle_couleur = st.text_input("Nouvelle couleur", key="nouvelle_couleur_fournisseur")
+        with col_add2:
+            st.write("")
+            st.write("")
+            if st.button("➕ Ajouter", key="btn_ajouter_variation"):
+                nouvelle_couleur_clean = nouvelle_couleur.strip()
+                if not nouvelle_couleur_clean:
+                    st.warning("Saisis une couleur avant d'ajouter.")
+                else:
+                    ok = upsert("variations_fournisseur", [{
+                        "fournisseur": fournisseur_selectionne,
+                        "couleur_fournisseur": nouvelle_couleur_clean,
+                    }], "fournisseur,couleur_fournisseur")
+                    if ok:
+                        st.success(f"✓ Variation « {nouvelle_couleur_clean} » ajoutée !")
+                        st.rerun()
+
+        if not variations_du_fournisseur:
+            st.info("Aucune variation enregistrée pour ce fournisseur.")
+        else:
+            for v in variations_du_fournisseur:
+                col_v1, col_v2 = st.columns([5, 1])
+                with col_v1:
+                    st.write(f"🎨 {v.get('couleur_fournisseur')}")
+                with col_v2:
+                    if st.button("🗑️", key=f"del_variation_{v['id']}"):
+                        delete("variations_fournisseur", f"id=eq.{v['id']}")
+                        st.success(f"✓ Variation « {v.get('couleur_fournisseur')} » supprimée !")
+                        st.rerun()
+
+        st.divider()
+
+        # ── Partie 2 : association SKU → variation ───────────────────────────
+        st.markdown("### 2️⃣ Association SKU → Variation")
+
         skus_visibles_data = select("skus", "select=sku,statut&statut=eq.visible")
         skus_visibles_set = {s["sku"] for s in (skus_visibles_data or []) if s.get("sku")}
 
@@ -1565,74 +1612,81 @@ elif page == "🎨 Variations fournisseurs":
         ]
         prod_map_fournisseur = {p["sku"]: p for p in produits_fournisseur}
 
-        variations_data = select("sku_variations_fournisseur",
-            "select=sku,fournisseur,reference_fournisseur,couleur_fournisseur,reference_complete")
-        variations_map = {v["sku"]: v for v in (variations_data or [])}
+        associations_data = select("sku_variations_fournisseur",
+            "select=sku,fournisseur,reference_fournisseur,id_variation") or []
+        associations_map = {a["sku"]: a for a in associations_data}
+
+        variation_par_id = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_du_fournisseur}
+        options_variation = ["(aucune)"] + [v.get("couleur_fournisseur") for v in variations_du_fournisseur]
 
         rows = []
         for p in produits_fournisseur:
             sku = p.get("sku")
-            ref_fourn = p.get("reference_fournisseur") or ""
-            existant = variations_map.get(sku, {})
-            couleur = existant.get("couleur_fournisseur") or ""
-            ref_complete = existant.get("reference_complete") or (
-                f"{ref_fourn} {couleur}".strip() if couleur else "")
+            assoc = associations_map.get(sku, {})
+            id_var_existant = assoc.get("id_variation")
+            couleur_existante = variation_par_id.get(id_var_existant, "(aucune)") if id_var_existant else "(aucune)"
             rows.append({
                 "SKU": sku,
                 "Produit": p.get("nom") or "",
-                "Référence fournisseur": ref_fourn,
-                "Couleur fournisseur": couleur,
-                "Référence complète": ref_complete,
+                "Référence fournisseur": p.get("reference_fournisseur") or "",
+                "Variation fournisseur": couleur_existante,
             })
 
-        df_var = pd.DataFrame(rows)
-        if not df_var.empty:
-            df_var = df_var.sort_values("SKU").reset_index(drop=True)
+        df_assoc = pd.DataFrame(rows)
+        if not df_assoc.empty:
+            df_assoc = df_assoc.sort_values("SKU").reset_index(drop=True)
 
-        nb_skus = len(df_var)
-        nb_avec_couleur = len(df_var[df_var["Couleur fournisseur"].str.strip() != ""]) if not df_var.empty else 0
+        nb_skus = len(df_assoc)
+        nb_avec_variation = (
+            len(df_assoc[df_assoc["Variation fournisseur"] != "(aucune)"]) if not df_assoc.empty else 0
+        )
 
         col1, col2 = st.columns(2)
         with col1:
             st.metric("SKUs du fournisseur", nb_skus)
         with col2:
-            st.metric("Avec couleur fournisseur renseignée", nb_avec_couleur)
+            st.metric("Avec variation associée", nb_avec_variation)
 
-        if df_var.empty:
+        if df_assoc.empty:
             st.info("Aucun SKU visible pour ce fournisseur.")
+        elif not variations_du_fournisseur:
+            st.info("Ajoute d'abord des variations dans la partie 1 ci-dessus.")
         else:
-            with st.form("form_variations_fournisseur"):
-                edited_var = st.data_editor(
-                    df_var,
+            with st.form("form_association_variation"):
+                edited_assoc = st.data_editor(
+                    df_assoc,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
                         "SKU": st.column_config.TextColumn(disabled=True),
                         "Produit": st.column_config.TextColumn(disabled=True),
                         "Référence fournisseur": st.column_config.TextColumn(disabled=True),
-                        "Couleur fournisseur": st.column_config.TextColumn(),
-                        "Référence complète": st.column_config.TextColumn(disabled=True),
+                        "Variation fournisseur": st.column_config.SelectboxColumn(options=options_variation),
                     }
                 )
-                submitted_var = st.form_submit_button("💾 Enregistrer", type="primary")
+                submitted_assoc = st.form_submit_button("💾 Enregistrer les associations", type="primary")
 
-            if submitted_var:
-                a_enregistrer = edited_var[edited_var["Couleur fournisseur"].str.strip() != ""]
+            if submitted_assoc:
+                couleur_vers_id = {v.get("couleur_fournisseur"): v["id"] for v in variations_du_fournisseur}
+                a_enregistrer = edited_assoc[edited_assoc["Variation fournisseur"] != "(aucune)"]
                 if a_enregistrer.empty:
-                    st.warning("Aucune couleur fournisseur renseignée.")
+                    st.warning("Aucune association à enregistrer.")
                 else:
                     nb_ok = 0
                     for _, r in a_enregistrer.iterrows():
                         sku_r = r["SKU"]
+                        id_var_r = couleur_vers_id.get(r["Variation fournisseur"])
+                        if id_var_r is None:
+                            continue
                         prod_r = prod_map_fournisseur.get(sku_r, {})
                         upsert("sku_variations_fournisseur", [{
                             "sku": sku_r,
                             "fournisseur": fournisseur_selectionne,
                             "reference_fournisseur": prod_r.get("reference_fournisseur") or "",
-                            "couleur_fournisseur": r["Couleur fournisseur"].strip(),
+                            "id_variation": id_var_r,
                         }], "sku")
                         nb_ok += 1
-                    st.success(f"✓ {nb_ok} variation(s) enregistrée(s) !")
+                    st.success(f"✓ {nb_ok} association(s) enregistrée(s) !")
                     st.rerun()
 
 elif page == "🏭 Stock & Fournisseurs":
