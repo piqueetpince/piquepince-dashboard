@@ -2158,11 +2158,7 @@ elif page == "⚙️ Paramétrage Veinière":
         for g in groupes_existants_data if g.get("sku_parent")
     }
 
-    # DEBUG temporaire
-    st.write("DEBUG — categorie_par_parent_affichage:", categorie_par_parent_affichage)
-
     rows = []
-    debug_premiers_skus = []
     for p in produits_veiniere:
         sku = p.get("sku")
         nom = p.get("nom") or ""
@@ -2179,14 +2175,6 @@ elif page == "⚙️ Paramétrage Veinière":
             categorie_par_parent_affichage.get(sku_parent_enregistre, "") if sku_parent_enregistre else ""
         )
 
-        if len(debug_premiers_skus) < 3:
-            debug_premiers_skus.append({
-                "SKU": sku,
-                "sku_parent (existant.get)": existant.get("sku_parent"),
-                "sku_parent_enregistre": sku_parent_enregistre,
-                "Catégorie résolue": categorie_groupe,
-            })
-
         rows.append({
             "SKU": sku,
             "Nom produit": nom,
@@ -2195,9 +2183,6 @@ elif page == "⚙️ Paramétrage Veinière":
             "Catégorie": categorie_groupe,
             "Couleur fournisseur": couleur_defaut,
         })
-
-    # DEBUG temporaire
-    st.write("DEBUG — 3 premiers SKUs (sku_parent + catégorie résolue):", debug_premiers_skus)
 
     df_param = pd.DataFrame(rows)
     if not df_param.empty:
@@ -2239,9 +2224,22 @@ elif page == "⚙️ Paramétrage Veinière":
         # via le flag veiniere_refresh), et on_change applique les deltas
         # d'édition sur CETTE copie persistante — qui n'est donc jamais
         # écrasée par le rechargement de df_param entre deux éditions.
+        # La colonne "Catégorie" peut déjà exister en session_state mais avec
+        # des valeurs vides (mises en cache avant que des catégories aient
+        # été enregistrées dans veiniere_groupes) — ne pas se fier qu'à sa
+        # simple présence, vérifier aussi si elle est restée vide alors que
+        # des données sont maintenant disponibles.
+        _categorie_session_vide = (
+            "veiniere_df_edit" in st.session_state
+            and "Catégorie" in st.session_state["veiniere_df_edit"].columns
+            and st.session_state["veiniere_df_edit"]["Catégorie"].fillna("").eq("").all()
+        )
+        _categorie_data_disponible = any(v for v in categorie_par_parent_affichage.values())
+
         if ("veiniere_df_edit" not in st.session_state
                 or st.session_state.get("veiniere_refresh")
-                or "Catégorie" not in st.session_state["veiniere_df_edit"].columns):
+                or "Catégorie" not in st.session_state["veiniere_df_edit"].columns
+                or (_categorie_session_vide and _categorie_data_disponible)):
             st.session_state["veiniere_df_edit"] = df_param.copy()
             st.session_state["veiniere_refresh"] = False
 
