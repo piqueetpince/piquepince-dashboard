@@ -320,7 +320,7 @@ _NAV_GROUPES = {
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
                          "📈 Évolution CA annuelle", "🏪 Revendeurs Wizishop",
-                         "🎨 Variations fournisseurs"],
+                         "🎨 Variations fournisseurs", "📊 Ventes par variation fournisseur"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
                          "📒 Export comptable Etsy"],
@@ -1721,6 +1721,90 @@ elif page == "🎨 Variations fournisseurs":
                 if c5.button("✏️", key=f"modifier_assoc_{r['SKU']}"):
                     skus_en_edition.add(r["SKU"])
                     st.rerun()
+
+elif page == "📊 Ventes par variation fournisseur":
+    toutes_variations = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
+
+    fournisseurs_liste = sorted({
+        (v.get("fournisseur") or "").strip()
+        for v in toutes_variations
+        if (v.get("fournisseur") or "").strip()
+    })
+
+    with st.sidebar:
+        st.divider()
+        fournisseur_selectionne = st.radio("Fournisseur", fournisseurs_liste)
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+
+    st.subheader("📊 Ventes par variation fournisseur")
+
+    if not fournisseur_selectionne:
+        st.info("Aucun fournisseur disponible.")
+    else:
+        variations_du_fournisseur = [
+            v for v in toutes_variations
+            if (v.get("fournisseur") or "").strip() == fournisseur_selectionne
+        ]
+
+        associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+        skus_par_variation = {}
+        for a in associations_data:
+            id_var = a.get("id_variation")
+            sku = a.get("sku")
+            if id_var is None or not sku:
+                continue
+            skus_par_variation.setdefault(id_var, []).append(sku)
+
+        date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+        ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
+
+        rows = []
+        for v in variations_du_fournisseur:
+            id_var = v.get("id")
+            couleur = v.get("couleur_fournisseur") or ""
+            skus_assoc = skus_par_variation.get(id_var, [])
+
+            q_wizi = sum(ventes_wizi.get(s, 0) for s in skus_assoc)
+            q_etsy = sum(ventes_etsy.get(s, 0) for s in skus_assoc)
+            q_faire = sum(ventes_faire.get(s, 0) for s in skus_assoc)
+            q_total = q_wizi + q_etsy + q_faire
+
+            rows.append({
+                "Couleur fournisseur": couleur,
+                "Nb SKUs associés": len(skus_assoc),
+                "Unités vendues total": q_total,
+                "Unités vendues Wizishop": q_wizi,
+                "Unités vendues Etsy": q_etsy,
+                "Unités vendues Faire": q_faire,
+                "Ventes/mois": round(q_total / nb_mois, 1),
+            })
+
+        df_var_ventes = pd.DataFrame(rows)
+        if not df_var_ventes.empty:
+            df_var_ventes = df_var_ventes.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
+
+        total_unites = int(df_var_ventes["Unités vendues total"].sum()) if not df_var_ventes.empty else 0
+        nb_avec_ventes = (
+            len(df_var_ventes[df_var_ventes["Unités vendues total"] > 0]) if not df_var_ventes.empty else 0
+        )
+        nb_sans_ventes = (
+            len(df_var_ventes[df_var_ventes["Unités vendues total"] == 0]) if not df_var_ventes.empty else 0
+        )
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total unités vendues", total_unites)
+        with col2:
+            st.metric("Variations avec ventes", nb_avec_ventes)
+        with col3:
+            st.metric("Variations sans ventes", nb_sans_ventes)
+
+        if df_var_ventes.empty:
+            st.info("Aucune variation enregistrée pour ce fournisseur.")
+        else:
+            st.dataframe(df_var_ventes, use_container_width=True, hide_index=True)
+            csv = df_var_ventes.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Exporter CSV", csv, "ventes_par_variation_fournisseur.csv", "text/csv")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
