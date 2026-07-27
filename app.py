@@ -320,7 +320,8 @@ _NAV_GROUPES = {
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
                          "📈 Évolution CA annuelle", "🏪 Revendeurs Wizishop",
-                         "🎨 Variations fournisseurs", "📊 Ventes par variation fournisseur"],
+                         "🎨 Variations fournisseurs", "📊 Ventes par variation fournisseur",
+                         "🏆 Best-sellers par variation"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
                          "📒 Export comptable Etsy"],
@@ -1812,6 +1813,124 @@ elif page == "📊 Ventes par variation fournisseur":
             st.dataframe(df_var_ventes, use_container_width=True, hide_index=True)
             csv = df_var_ventes.to_csv(index=False).encode("utf-8")
             st.download_button("📥 Exporter CSV", csv, "ventes_par_variation_fournisseur.csv", "text/csv")
+
+elif page == "🏆 Best-sellers par variation":
+    toutes_variations = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
+
+    fournisseurs_liste = sorted({
+        (v.get("fournisseur") or "").strip()
+        for v in toutes_variations
+        if (v.get("fournisseur") or "").strip()
+    })
+
+    with st.sidebar:
+        st.divider()
+        fournisseur_selectionne = st.radio("Fournisseur", fournisseurs_liste)
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+
+    st.subheader("🏆 Best-sellers par variation")
+
+    if not fournisseur_selectionne:
+        st.info("Aucun fournisseur disponible.")
+    else:
+        date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+        ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
+
+        skus_catalogue = _get_skus_catalogue()
+        skus_catalogue_set = {s["sku"] for s in (skus_catalogue or []) if s.get("sku")}
+
+        produits_data = select("produits",
+            "select=sku,nom,id_wizi,fournisseur,reference_fournisseur&statut=eq.visible") or []
+        prod_map = {p["sku"]: p for p in produits_data}
+
+        # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
+        # — même logique que l'onglet "💰 Prix d'achat manquants" de la page Vérification Wizishop.
+        parent_par_id_wizi = {}
+        for p in produits_data:
+            iw, sku = p.get("id_wizi"), p.get("sku")
+            if iw is None or not sku:
+                continue
+            courant = parent_par_id_wizi.get(iw)
+            if courant is None or len(sku) < len(courant["sku"]):
+                parent_par_id_wizi[iw] = p
+
+        associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+        variations_id_vers_couleur = {
+            v["id"]: v.get("couleur_fournisseur") or ""
+            for v in toutes_variations
+            if (v.get("fournisseur") or "").strip() == fournisseur_selectionne
+        }
+        couleur_par_sku = {
+            a["sku"]: variations_id_vers_couleur[a["id_variation"]]
+            for a in associations_data
+            if a.get("id_variation") in variations_id_vers_couleur and a.get("sku")
+        }
+
+        # Regroupement des SKUs catalogue (leaf, non-parents) par produit parent (id_wizi)
+        groupes = {}
+        for sku in skus_catalogue_set:
+            prod = get_prod_parent(sku, prod_map)
+            if not prod or (prod.get("fournisseur") or "").strip() != fournisseur_selectionne:
+                continue
+            iw = prod.get("id_wizi")
+            parent_info = parent_par_id_wizi.get(iw, prod)
+            sku_parent = parent_info.get("sku") or sku
+            nom_parent = get_prod_parent(sku_parent, prod_map).get("nom") or parent_info.get("nom") or sku_parent
+
+            q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+
+            groupe = groupes.setdefault(iw, {
+                "sku_parent": sku_parent,
+                "nom_parent": nom_parent,
+                "variations": [],
+            })
+            groupe["variations"].append({
+                "sku": sku,
+                "couleur": couleur_par_sku.get(sku, ""),
+                "unites": q_total,
+            })
+
+        rows = []
+        for g in groupes.values():
+            variations = g["variations"]
+            total_unites = sum(v["unites"] for v in variations)
+            rows.append({
+                "Produit parent": g["nom_parent"],
+                "SKU parent": g["sku_parent"],
+                "Total unités vendues": total_unites,
+                "Nb variations disponibles": len(variations),
+                "Nb variations avec couleur fournisseur": sum(1 for v in variations if v["couleur"]),
+                "Ventes/mois": round(total_unites / nb_mois, 1),
+                "_variations": variations,
+            })
+
+        df_best = pd.DataFrame(rows)
+        if not df_best.empty:
+            df_best = df_best.sort_values("Total unités vendues", ascending=False).reset_index(drop=True)
+
+        if df_best.empty:
+            st.info("Aucun produit trouvé pour ce fournisseur.")
+        else:
+            st.dataframe(
+                df_best[["Produit parent", "SKU parent", "Total unités vendues",
+                         "Nb variations disponibles", "Nb variations avec couleur fournisseur", "Ventes/mois"]],
+                use_container_width=True, hide_index=True,
+            )
+
+            st.divider()
+            for _, r in df_best.iterrows():
+                titre = f"{r['Produit parent']} ({r['SKU parent']}) — {r['Total unités vendues']} unités"
+                with st.expander(titre):
+                    detail_rows = []
+                    for v in sorted(r["_variations"], key=lambda x: -x["unites"]):
+                        couleur = v["couleur"] or "⚠️ Couleur fournisseur non renseignée"
+                        detail_rows.append({
+                            "Couleur fournisseur": couleur,
+                            "SKU variation": v["sku"],
+                            "Unités vendues": v["unites"],
+                            "Ventes/SKU/mois": round(v["unites"] / nb_mois, 1),
+                        })
+                    st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
