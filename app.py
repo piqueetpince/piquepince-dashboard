@@ -2347,6 +2347,19 @@ elif page == "🏆 Best-sellers Veinière":
         groupe = groupes.setdefault(sku_parent, [])
         groupe.append({"sku": sku, "couleur": couleur, "unites": q_total})
 
+    # Répartition par catégorie sur l'ENSEMBLE des groupes (indépendante du
+    # filtre "Catégorie" de la sidebar, qui n'affecte que le tableau
+    # détaillé plus bas) — sert de barre de métriques globale.
+    categories_noms = sorted(c.get("categorie") for c in categories_veiniere if c.get("categorie"))
+    unites_par_categorie = {cat: 0 for cat in categories_noms}
+    total_unites_tous_groupes = 0
+    for sku_parent_g, variations_g in groupes.items():
+        total_unites_groupe = sum(v["unites"] for v in variations_g)
+        total_unites_tous_groupes += total_unites_groupe
+        cat_g = categorie_par_parent.get(sku_parent_g, "")
+        if cat_g in unites_par_categorie:
+            unites_par_categorie[cat_g] += total_unites_groupe
+
     rows = []
     for sku_parent, variations in groupes.items():
         categorie_nom = categorie_par_parent.get(sku_parent, "")
@@ -2368,17 +2381,14 @@ elif page == "🏆 Best-sellers Veinière":
     if not df_best.empty:
         df_best = df_best.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
 
-    total_unites_global = int(df_best["Unités vendues total"].sum()) if not df_best.empty else 0
-    nb_avec_ventes = len(df_best[df_best["Unités vendues total"] > 0]) if not df_best.empty else 0
-    nb_sans_ventes = len(df_best[df_best["Unités vendues total"] == 0]) if not df_best.empty else 0
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total unités vendues", total_unites_global)
-    with col2:
-        st.metric("Groupes avec ventes", nb_avec_ventes)
-    with col3:
-        st.metric("Groupes sans ventes", nb_sans_ventes)
+    cols_metriques = st.columns(1 + len(categories_noms))
+    with cols_metriques[0]:
+        st.metric("Total unités vendues", total_unites_tous_groupes)
+    for col_cat, cat in zip(cols_metriques[1:], categories_noms):
+        unites_cat = unites_par_categorie.get(cat, 0)
+        pct = round(unites_cat / total_unites_tous_groupes * 100) if total_unites_tous_groupes > 0 else 0
+        with col_cat:
+            st.metric(cat, unites_cat, delta=f"{pct}%", delta_color="off")
 
     if df_best.empty:
         st.info("Aucun groupe trouvé pour ces filtres.")
