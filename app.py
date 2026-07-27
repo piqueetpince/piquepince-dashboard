@@ -2115,6 +2115,14 @@ elif page == "⚙️ Paramétrage Veinière":
             submitted_param = st.form_submit_button("💾 Enregistrer", type="primary")
 
         if submitted_param:
+            # DEBUG temporaire
+            nb_lignes_modifiees = len(edited_param[
+                (edited_param["Catégorie"] != "(aucune)") | (edited_param["Couleur fournisseur"] != "(aucune)")
+            ])
+            st.write("DEBUG — Nombre de lignes dans le data_editor après soumission:", len(edited_param))
+            st.write("DEBUG — Nombre de lignes avec catégorie ou couleur renseignée:", nb_lignes_modifiees)
+            st.write("DEBUG — 3 premières lignes du dataframe édité:", edited_param.head(3))
+
             nb_ok = 0
             for _, r in edited_param.iterrows():
                 sku_r = r["SKU"]
