@@ -2167,7 +2167,14 @@ elif page == "⚙️ Paramétrage Veinière":
         sku_parent_calcule = _trouver_prefixe_parent_veiniere(sku)
         sku_parent_enregistre = existant.get("sku_parent") or ""
         sku_parent_defaut = sku_parent_enregistre or sku_parent_calcule
-        nom_groupe = _extraire_nom_groupe(nom)
+
+        # Priorité au nom de groupe enregistré (veiniere_groupes.nom_groupe),
+        # même logique que "Catégorie" — repli sur le calcul automatique
+        # (produits.nom) si pas encore enregistré pour ce sku_parent.
+        nom_groupe_enregistre_pour_sku = (
+            nom_groupe_enregistre.get(sku_parent_enregistre, "") if sku_parent_enregistre else ""
+        )
+        nom_groupe = nom_groupe_enregistre_pour_sku or _extraire_nom_groupe(nom)
 
         couleur_defaut = couleur_par_sku.get(sku, "(aucune)")
 
