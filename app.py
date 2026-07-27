@@ -1980,7 +1980,8 @@ elif page == "⚙️ Paramétrage Veinière":
 
     st.subheader("⚙️ Paramétrage Veinière")
 
-    produits_data = select("produits", "select=sku,nom,fournisseur&statut=eq.visible") or []
+    produits_data = select("produits",
+        "select=sku,nom,fournisseur,reference_fournisseur&statut=eq.visible") or []
     produits_veiniere = [
         p for p in produits_data
         if (p.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
@@ -1989,6 +1990,7 @@ elif page == "⚙️ Paramétrage Veinière":
     skus_visibles_data = select("skus", "select=sku,statut&statut=eq.visible") or []
     skus_visibles_set = {s["sku"] for s in skus_visibles_data if s.get("sku")}
     produits_veiniere = [p for p in produits_veiniere if p.get("sku") in skus_visibles_set]
+    prod_map_veiniere = {p["sku"]: p for p in produits_veiniere}
 
     parametrage_data = select("veiniere_parametrage",
         "select=sku,sku_parent,nom_groupe,id_variation,id_categorie") or []
@@ -2004,6 +2006,16 @@ elif page == "⚙️ Paramétrage Veinière":
     )
     variation_id_par_couleur = {v.get("couleur_fournisseur"): v["id"] for v in variations_veiniere}
     variation_couleur_par_id = {v["id"]: v.get("couleur_fournisseur") for v in variations_veiniere}
+
+    # Les associations SKU -> variation vivent dans sku_variations_fournisseur
+    # (source de vérité, partagée avec la page "🎨 Variations fournisseurs"),
+    # pas dans veiniere_parametrage.id_variation qui n'est qu'une copie.
+    associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+    couleur_par_sku = {
+        a["sku"]: variation_couleur_par_id[a["id_variation"]]
+        for a in associations_data
+        if a.get("sku") and a.get("id_variation") in variation_couleur_par_id
+    }
 
     categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
     categories_veiniere = [
@@ -2050,8 +2062,7 @@ elif page == "⚙️ Paramétrage Veinière":
         sku_parent_defaut = existant.get("sku_parent") or sku_parent_calcule
         nom_groupe = _extraire_nom_groupe(nom)
 
-        id_var_existant = existant.get("id_variation")
-        couleur_defaut = variation_couleur_par_id.get(id_var_existant, "(aucune)") if id_var_existant else "(aucune)"
+        couleur_defaut = couleur_par_sku.get(sku, "(aucune)")
 
         id_cat_existant = existant.get("id_categorie")
         categorie_defaut = categorie_nom_par_id.get(id_cat_existant, "(aucune)") if id_cat_existant else "(aucune)"
@@ -2106,18 +2117,33 @@ elif page == "⚙️ Paramétrage Veinière":
         if submitted_param:
             nb_ok = 0
             for _, r in edited_param.iterrows():
+                sku_r = r["SKU"]
                 sku_parent_r = (r["SKU parent"] or "").strip()
                 categorie_r = r["Catégorie"]
                 couleur_r = r["Couleur fournisseur"]
                 if not sku_parent_r and categorie_r == "(aucune)" and couleur_r == "(aucune)":
                     continue
+
+                id_var_r = variation_id_par_couleur.get(couleur_r)
+                id_cat_r = categorie_id_par_nom.get(categorie_r)
+
                 upsert("veiniere_parametrage", [{
-                    "sku": r["SKU"],
+                    "sku": sku_r,
                     "sku_parent": sku_parent_r or None,
                     "nom_groupe": r["Nom groupe"],
-                    "id_variation": variation_id_par_couleur.get(couleur_r),
-                    "id_categorie": categorie_id_par_nom.get(categorie_r),
+                    "id_variation": id_var_r,
+                    "id_categorie": id_cat_r,
                 }], "sku")
+
+                if id_var_r is not None:
+                    prod_r = prod_map_veiniere.get(sku_r, {})
+                    upsert("sku_variations_fournisseur", [{
+                        "sku": sku_r,
+                        "fournisseur": FOURNISSEUR_VEINIERE,
+                        "reference_fournisseur": prod_r.get("reference_fournisseur") or "",
+                        "id_variation": id_var_r,
+                    }], "sku")
+
                 nb_ok += 1
             st.success(f"✓ {nb_ok} SKU(s) enregistré(s) !")
             st.rerun()
