@@ -2098,15 +2098,31 @@ elif page == "⚙️ Paramétrage Veinière":
     if df_param.empty:
         st.info("Aucun SKU visible pour Veinière.")
     else:
-        # Pas de st.form : st.data_editor seul, pour que chaque édition soit
-        # immédiatement reflétée dans st.session_state sans attendre une
-        # soumission de formulaire (qui recharge tout le tableau et peut
-        # faire perdre les modifications en cours).
-        edited_param = st.data_editor(
-            df_param,
+        # data_editor re-render à chaque édition de cellule (pas de st.form).
+        # On ne lui passe PAS df_param (fraîchement reconstruit depuis la
+        # base à chaque run) directement : on l'initialise dans
+        # session_state une seule fois (ou après un enregistrement réussi,
+        # via le flag veiniere_refresh), et on_change applique les deltas
+        # d'édition sur CETTE copie persistante — qui n'est donc jamais
+        # écrasée par le rechargement de df_param entre deux éditions.
+        if "veiniere_df_edit" not in st.session_state or st.session_state.get("veiniere_refresh"):
+            st.session_state["veiniere_df_edit"] = df_param.copy()
+            st.session_state["veiniere_refresh"] = False
+
+        def _appliquer_edits_veiniere():
+            edits = st.session_state["veiniere_data_editor"]
+            df_base = st.session_state["veiniere_df_edit"].copy()
+            for idx, changes in edits.get("edited_rows", {}).items():
+                for col, val in changes.items():
+                    df_base.at[int(idx), col] = val
+            st.session_state["veiniere_df_edit"] = df_base
+
+        st.data_editor(
+            st.session_state["veiniere_df_edit"],
             use_container_width=True,
             hide_index=True,
             key="veiniere_data_editor",
+            on_change=_appliquer_edits_veiniere,
             column_config={
                 "SKU": st.column_config.TextColumn(disabled=True),
                 "Nom produit": st.column_config.TextColumn(disabled=True),
@@ -2116,10 +2132,18 @@ elif page == "⚙️ Paramétrage Veinière":
                 "Couleur fournisseur": st.column_config.SelectboxColumn(options=options_variation),
             }
         )
-        st.session_state["veiniere_df_edit"] = edited_param
 
         if st.button("💾 Enregistrer", type="primary", key="btn_enregistrer_veiniere"):
             df_a_enregistrer = st.session_state["veiniere_df_edit"]
+
+            # DEBUG temporaire
+            nb_avec_categorie_session = len(
+                df_a_enregistrer[df_a_enregistrer["Catégorie"] != "(aucune)"]
+            )
+            st.write(
+                "DEBUG — Lignes avec catégorie renseignée dans session_state juste avant l'upsert:",
+                nb_avec_categorie_session,
+            )
 
             nb_ok = 0
             for _, r in df_a_enregistrer.iterrows():
@@ -2153,6 +2177,7 @@ elif page == "⚙️ Paramétrage Veinière":
                 nb_ok += 1
 
             st.success(f"✓ {nb_ok} SKU(s) enregistré(s) !")
+            st.session_state["veiniere_refresh"] = True
             st.rerun()
 
 elif page == "🏭 Stock & Fournisseurs":
