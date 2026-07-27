@@ -367,7 +367,7 @@ _NAV_GROUPES = {
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
                          "🚀 Créer produits sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
-    "🏭 Veinière":      ["⚙️ Paramétrage Veinière"],
+    "🏭 Veinière":      ["⚙️ Paramétrage Veinière", "🏆 Best-sellers Veinière"],
     "🛍️ Ankorstore":    ["⭐ Best-sellers Ankorstore", "📊 Gestion stock Ankorstore",
                          "🔎 Produits manquants sur Ankorstore", "🔍 Vérification Ankorstore"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
@@ -2285,6 +2285,119 @@ elif page == "⚙️ Paramétrage Veinière":
             st.success(f"✓ {nb_ok} SKU(s) enregistré(s) !")
             st.session_state["veiniere_refresh"] = True
             st.rerun()
+
+elif page == "🏆 Best-sellers Veinière":
+    FOURNISSEUR_VEINIERE = "VEINIERE"
+
+    categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
+    categories_veiniere = [
+        c for c in categories_data
+        if (c.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
+    ]
+    categorie_nom_par_id = {c["id"]: c.get("categorie") or "" for c in categories_veiniere}
+    categories_liste = ["Toutes"] + sorted(
+        c.get("categorie") for c in categories_veiniere if c.get("categorie")
+    )
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+        categorie_filtre = st.selectbox("Catégorie", categories_liste)
+
+    st.subheader("🏆 Best-sellers Veinière")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
+
+    parametrage_data = select("veiniere_parametrage", "select=sku,sku_parent,id_variation,id_categorie") or []
+    groupes_data = select("veiniere_groupes", "select=sku_parent,nom_groupe") or []
+    nom_groupe_par_parent = {
+        g["sku_parent"]: g.get("nom_groupe") or "" for g in groupes_data if g.get("sku_parent")
+    }
+
+    variations_data = select("variations_fournisseur", "select=id,couleur_fournisseur") or []
+    couleur_par_id_variation = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_data}
+
+    # Regroupement par sku_parent : pour chaque SKU présent dans
+    # veiniere_parametrage avec un sku_parent renseigné, on cumule ses
+    # ventes sous ce parent. Les SKUs sans sku_parent renseigné (pas encore
+    # paramétrés) ne sont pas inclus.
+    groupes = {}
+    for p in parametrage_data:
+        sku = p.get("sku")
+        sku_parent = (p.get("sku_parent") or "").strip()
+        if not sku or not sku_parent:
+            continue
+
+        id_cat = p.get("id_categorie")
+        id_var = p.get("id_variation")
+        couleur = couleur_par_id_variation.get(id_var, "") if id_var else ""
+
+        q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+
+        groupe = groupes.setdefault(sku_parent, {"id_categorie": None, "variations": []})
+        if groupe["id_categorie"] is None and id_cat is not None:
+            groupe["id_categorie"] = id_cat
+        groupe["variations"].append({"sku": sku, "couleur": couleur, "unites": q_total})
+
+    rows = []
+    for sku_parent, g in groupes.items():
+        categorie_nom = categorie_nom_par_id.get(g["id_categorie"], "") if g["id_categorie"] else ""
+        if categorie_filtre != "Toutes" and categorie_nom != categorie_filtre:
+            continue
+
+        variations = g["variations"]
+        total_unites = sum(v["unites"] for v in variations)
+        rows.append({
+            "Nom groupe": nom_groupe_par_parent.get(sku_parent) or sku_parent,
+            "SKU parent": sku_parent,
+            "Catégorie": categorie_nom or "(aucune)",
+            "Nb variations": len(variations),
+            "Unités vendues total": total_unites,
+            "Ventes/mois": round(total_unites / nb_mois, 1),
+            "_variations": variations,
+        })
+
+    df_best = pd.DataFrame(rows)
+    if not df_best.empty:
+        df_best = df_best.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
+
+    total_unites_global = int(df_best["Unités vendues total"].sum()) if not df_best.empty else 0
+    nb_avec_ventes = len(df_best[df_best["Unités vendues total"] > 0]) if not df_best.empty else 0
+    nb_sans_ventes = len(df_best[df_best["Unités vendues total"] == 0]) if not df_best.empty else 0
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total unités vendues", total_unites_global)
+    with col2:
+        st.metric("Groupes avec ventes", nb_avec_ventes)
+    with col3:
+        st.metric("Groupes sans ventes", nb_sans_ventes)
+
+    if df_best.empty:
+        st.info("Aucun groupe trouvé pour ces filtres.")
+    else:
+        cols_affichage = ["Nom groupe", "SKU parent", "Catégorie", "Nb variations",
+                           "Unités vendues total", "Ventes/mois"]
+        st.dataframe(df_best[cols_affichage], use_container_width=True, hide_index=True)
+
+        csv = df_best[cols_affichage].to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv, "best_sellers_veiniere.csv", "text/csv")
+
+        st.divider()
+        for _, r in df_best.iterrows():
+            titre = f"{r['Nom groupe']} ({r['SKU parent']}) — {r['Unités vendues total']} unités"
+            with st.expander(titre):
+                detail_rows = []
+                for v in sorted(r["_variations"], key=lambda x: -x["unites"]):
+                    couleur = v["couleur"] or "⚠️ Couleur fournisseur non renseignée"
+                    detail_rows.append({
+                        "Couleur fournisseur": couleur,
+                        "SKU variation": v["sku"],
+                        "Unités vendues": v["unites"],
+                        "Ventes/mois": round(v["unites"] / nb_mois, 1),
+                    })
+                st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
