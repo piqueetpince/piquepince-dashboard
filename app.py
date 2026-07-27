@@ -2309,6 +2309,7 @@ elif page == "🏆 Best-sellers Veinière":
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+        tri_choix = st.radio("Trier par", ["📊 Ventes totales", "🎨 Ventes par couleur"])
 
     st.subheader("🏆 Best-sellers Veinière")
 
@@ -2326,6 +2327,14 @@ elif page == "🏆 Best-sellers Veinière":
 
     variations_data = select("variations_fournisseur", "select=id,couleur_fournisseur") or []
     couleur_par_id_variation = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_data}
+
+    # Nb de variations avec couleur "réellement" renseignée = source de
+    # vérité sku_variations_fournisseur (pas veiniere_parametrage.id_variation,
+    # qui n'en est qu'une copie) — utilisé pour la colonne "Ventes/couleur".
+    associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+    skus_avec_couleur_assoc = {
+        a["sku"] for a in associations_data if a.get("sku") and a.get("id_variation") is not None
+    }
 
     # Regroupement par sku_parent : pour chaque SKU présent dans
     # veiniere_parametrage avec un sku_parent renseigné, on cumule ses
@@ -2365,6 +2374,10 @@ elif page == "🏆 Best-sellers Veinière":
         categorie_nom = categorie_par_parent.get(sku_parent, "")
 
         total_unites = sum(v["unites"] for v in variations)
+        nb_variations_avec_couleur = sum(1 for v in variations if v["sku"] in skus_avec_couleur_assoc)
+        ventes_couleur = (
+            round(total_unites / nb_variations_avec_couleur, 1) if nb_variations_avec_couleur > 0 else None
+        )
         rows.append({
             "Nom groupe": nom_groupe_par_parent.get(sku_parent) or sku_parent,
             "SKU parent": sku_parent,
@@ -2372,12 +2385,17 @@ elif page == "🏆 Best-sellers Veinière":
             "Nb variations": len(variations),
             "Unités vendues total": total_unites,
             "Ventes/mois": round(total_unites / nb_mois, 1),
+            "Ventes/couleur": ventes_couleur,
             "_variations": variations,
         })
 
+    # Colonne de tri choisie via le radio sidebar, appliquée au tableau
+    # principal ET à chaque tableau par catégorie (choix global à la page).
+    colonne_tri = "Unités vendues total" if tri_choix.startswith("📊") else "Ventes/couleur"
+
     df_best = pd.DataFrame(rows)
     if not df_best.empty:
-        df_best = df_best.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
+        df_best = df_best.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
 
     cols_metriques = st.columns(1 + len(categories_noms))
     with cols_metriques[0]:
@@ -2388,14 +2406,23 @@ elif page == "🏆 Best-sellers Veinière":
         with col_cat:
             st.metric(cat, unites_cat, delta=f"{pct}%", delta_color="off")
 
+    def _formater_ventes_couleur(df):
+        """Copie d'affichage : NaN -> '—' sur Ventes/couleur, sans toucher au
+        DataFrame numérique d'origine (encore utile pour trier/filtrer)."""
+        df_affichage = df.copy()
+        df_affichage["Ventes/couleur"] = df_affichage["Ventes/couleur"].apply(
+            lambda x: "—" if pd.isna(x) else x
+        )
+        return df_affichage
+
     if df_best.empty:
         st.info("Aucun groupe trouvé pour ces filtres.")
     else:
         cols_affichage = ["SKU parent", "Nom groupe", "Catégorie", "Nb variations",
-                           "Unités vendues total", "Ventes/mois"]
-        st.dataframe(df_best[cols_affichage], use_container_width=True, hide_index=True)
+                           "Unités vendues total", "Ventes/mois", "Ventes/couleur"]
+        st.dataframe(_formater_ventes_couleur(df_best)[cols_affichage], use_container_width=True, hide_index=True)
 
-        csv = df_best[cols_affichage].to_csv(index=False).encode("utf-8")
+        csv = _formater_ventes_couleur(df_best)[cols_affichage].to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exporter CSV", csv, "best_sellers_veiniere.csv", "text/csv")
 
         st.divider()
@@ -2405,11 +2432,11 @@ elif page == "🏆 Best-sellers Veinière":
                 continue
             st.subheader(cat_nom)
             df_cat = df_best[(df_best["Catégorie"] == cat_nom) & (df_best["Unités vendues total"] > 0)]
-            df_cat = df_cat.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
+            df_cat = df_cat.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
             if df_cat.empty:
                 st.info("Aucun groupe avec des ventes dans cette catégorie.")
             else:
-                st.dataframe(df_cat[cols_affichage], use_container_width=True, hide_index=True)
+                st.dataframe(_formater_ventes_couleur(df_cat)[cols_affichage], use_container_width=True, hide_index=True)
 
                 for _, r in df_cat.iterrows():
                     titre = f"{r['Nom groupe']} ({r['SKU parent']}) — {r['Unités vendues total']} unités"
