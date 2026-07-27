@@ -2217,46 +2217,18 @@ elif page == "⚙️ Paramétrage Veinière":
     if df_param.empty:
         st.info("Aucun SKU visible pour Veinière.")
     else:
-        # data_editor re-render à chaque édition de cellule (pas de st.form).
-        # On ne lui passe PAS df_param (fraîchement reconstruit depuis la
-        # base à chaque run) directement : on l'initialise dans
-        # session_state une seule fois (ou après un enregistrement réussi,
-        # via le flag veiniere_refresh), et on_change applique les deltas
-        # d'édition sur CETTE copie persistante — qui n'est donc jamais
-        # écrasée par le rechargement de df_param entre deux éditions.
-        # La colonne "Catégorie" peut déjà exister en session_state mais avec
-        # des valeurs vides (mises en cache avant que des catégories aient
-        # été enregistrées dans veiniere_groupes) — ne pas se fier qu'à sa
-        # simple présence, vérifier aussi si elle est restée vide alors que
-        # des données sont maintenant disponibles.
-        _categorie_session_vide = (
-            "veiniere_df_edit" in st.session_state
-            and "Catégorie" in st.session_state["veiniere_df_edit"].columns
-            and st.session_state["veiniere_df_edit"]["Catégorie"].fillna("").eq("").all()
-        )
-        _categorie_data_disponible = any(v for v in categorie_par_parent_affichage.values())
-
-        if ("veiniere_df_edit" not in st.session_state
-                or st.session_state.get("veiniere_refresh")
-                or "Catégorie" not in st.session_state["veiniere_df_edit"].columns
-                or (_categorie_session_vide and _categorie_data_disponible)):
-            st.session_state["veiniere_df_edit"] = df_param.copy()
-            st.session_state["veiniere_refresh"] = False
-
-        def _appliquer_edits_veiniere():
-            edits = st.session_state["veiniere_data_editor"]
-            df_base = st.session_state["veiniere_df_edit"].copy()
-            for idx, changes in edits.get("edited_rows", {}).items():
-                for col, val in changes.items():
-                    df_base.at[int(idx), col] = val
-            st.session_state["veiniere_df_edit"] = df_base
-
-        st.data_editor(
-            st.session_state["veiniere_df_edit"],
+        # Pas de session_state ici : df_param est reconstruit depuis la base
+        # à chaque chargement de page, et st.data_editor renvoie directement
+        # le DataFrame édité (fusion automatique de ses propres éditions avec
+        # les données fraîches). Plus simple et plus fiable que le pattern
+        # session_state + on_change, au prix d'un rechargement un peu plus
+        # lent — mais ça élimine les problèmes de cache périmé rencontrés
+        # avec l'approche précédente.
+        edited_df = st.data_editor(
+            df_param,
             use_container_width=True,
             hide_index=True,
             key="veiniere_data_editor",
-            on_change=_appliquer_edits_veiniere,
             column_config={
                 "SKU": st.column_config.TextColumn(disabled=True),
                 "Nom produit": st.column_config.TextColumn(disabled=True),
@@ -2268,10 +2240,8 @@ elif page == "⚙️ Paramétrage Veinière":
         )
 
         if st.button("💾 Enregistrer", type="primary", key="btn_enregistrer_veiniere"):
-            df_a_enregistrer = st.session_state["veiniere_df_edit"]
-
             nb_ok = 0
-            for _, r in df_a_enregistrer.iterrows():
+            for _, r in edited_df.iterrows():
                 sku_r = r["SKU"]
                 sku_parent_r = (r["SKU parent"] or "").strip()
                 couleur_r = r["Couleur fournisseur"]
@@ -2299,7 +2269,6 @@ elif page == "⚙️ Paramétrage Veinière":
                 nb_ok += 1
 
             st.success(f"✓ {nb_ok} SKU(s) enregistré(s) !")
-            st.session_state["veiniere_refresh"] = True
             st.rerun()
 
 elif page == "🏆 Best-sellers Veinière":
