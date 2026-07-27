@@ -367,7 +367,8 @@ _NAV_GROUPES = {
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
                          "🚀 Créer produits sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
-    "🏭 Veinière":      ["⚙️ Paramétrage Veinière", "🏆 Best-sellers Veinière"],
+    "🏭 Veinière":      ["⚙️ Paramétrage Veinière", "🏆 Best-sellers Veinière",
+                         "🎨 Meilleures variations Veinière"],
     "🛍️ Ankorstore":    ["⭐ Best-sellers Ankorstore", "📊 Gestion stock Ankorstore",
                          "🔎 Produits manquants sur Ankorstore", "🔍 Vérification Ankorstore"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
@@ -2423,6 +2424,121 @@ elif page == "🏆 Best-sellers Veinière":
                                 "Ventes/mois": round(v["unites"] / nb_mois, 1),
                             })
                         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+elif page == "🎨 Meilleures variations Veinière":
+    FOURNISSEUR_VEINIERE = "VEINIERE"
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+
+    st.subheader("🎨 Meilleures variations Veinière")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
+
+    parametrage_data = select("veiniere_parametrage", "select=sku,sku_parent,id_variation") or []
+
+    groupes_data = select("veiniere_groupes", "select=sku_parent,categorie") or []
+    categorie_par_parent = {
+        g["sku_parent"]: g.get("categorie") or "" for g in groupes_data if g.get("sku_parent")
+    }
+
+    variations_data = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
+    variations_veiniere = [
+        v for v in variations_data
+        if (v.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
+    ]
+    couleur_par_id_variation = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_veiniere}
+
+    categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
+    categories_veiniere = [
+        c for c in categories_data
+        if (c.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
+    ]
+    # Ordre d'affichage = ordre de création dans categories_fournisseur (id
+    # croissant), pas l'ordre alphabétique — cf. "🏆 Best-sellers Veinière".
+    categories_veiniere_triees = sorted(categories_veiniere, key=lambda c: c.get("id") or 0)
+
+    # Agrégation par (catégorie, couleur fournisseur) : pour chaque SKU de
+    # veiniere_parametrage, on résout sa couleur (via id_variation) et sa
+    # catégorie (via sku_parent -> veiniere_groupes.categorie), puis on
+    # cumule ses ventes sous cette paire. Les SKUs sans couleur ou sans
+    # catégorie résolue ne contribuent à aucun groupe.
+    agg = {}
+    for p in parametrage_data:
+        sku = p.get("sku")
+        sku_parent = (p.get("sku_parent") or "").strip()
+        id_var = p.get("id_variation")
+        if not sku or not sku_parent or id_var is None:
+            continue
+
+        couleur = couleur_par_id_variation.get(id_var)
+        if not couleur:
+            continue
+        categorie = categorie_par_parent.get(sku_parent)
+        if not categorie:
+            continue
+
+        q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+
+        entry = agg.setdefault((categorie, couleur), {"skus": set(), "unites": 0})
+        entry["skus"].add(sku)
+        entry["unites"] += q_total
+
+    total_unites_global = sum(v["unites"] for v in agg.values())
+    unites_par_categorie = {}
+    for (categorie, couleur), v in agg.items():
+        unites_par_categorie[categorie] = unites_par_categorie.get(categorie, 0) + v["unites"]
+
+    cols_metriques = st.columns(1 + len(categories_veiniere_triees))
+    with cols_metriques[0]:
+        st.metric("Total unités vendues", total_unites_global)
+    for col_cat, cat_obj in zip(cols_metriques[1:], categories_veiniere_triees):
+        cat_nom = cat_obj.get("categorie")
+        unites_cat = unites_par_categorie.get(cat_nom, 0)
+        pct = round(unites_cat / total_unites_global * 100) if total_unites_global > 0 else 0
+        with col_cat:
+            st.metric(cat_nom, unites_cat, delta=f"{pct}%", delta_color="off")
+
+    st.divider()
+
+    rows_export = []
+    for cat_obj in categories_veiniere_triees:
+        cat_nom = cat_obj.get("categorie")
+        if not cat_nom:
+            continue
+        st.subheader(cat_nom)
+
+        rows_cat = []
+        for (categorie, couleur), v in agg.items():
+            if categorie != cat_nom:
+                continue
+            nb_skus = len(v["skus"])
+            unites = v["unites"]
+            rows_cat.append({
+                "Couleur fournisseur": couleur,
+                "Nb SKUs associés": nb_skus,
+                "Unités vendues total": unites,
+                "Ventes/mois": round(unites / nb_mois, 1),
+                "Ventes/SKU/mois": round(unites / nb_skus / nb_mois, 1),
+            })
+
+        if not rows_cat:
+            st.info("Aucune variation avec des ventes dans cette catégorie.")
+        else:
+            df_cat = pd.DataFrame(rows_cat).sort_values("Ventes/SKU/mois", ascending=False).reset_index(drop=True)
+            st.dataframe(df_cat, use_container_width=True, hide_index=True)
+            for r in df_cat.to_dict("records"):
+                rows_export.append({"Catégorie": cat_nom, **r})
+
+    if rows_export:
+        st.divider()
+        df_export = pd.DataFrame(rows_export)
+        cols_export = ["Catégorie", "Couleur fournisseur", "Nb SKUs associés",
+                        "Unités vendues total", "Ventes/mois", "Ventes/SKU/mois"]
+        csv = df_export[cols_export].to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv, "meilleures_variations_veiniere.csv", "text/csv")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
