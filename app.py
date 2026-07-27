@@ -2377,7 +2377,7 @@ elif page == "🏆 Best-sellers Veinière":
     if df_best.empty:
         st.info("Aucun groupe trouvé pour ces filtres.")
     else:
-        cols_affichage = ["Nom groupe", "SKU parent", "Catégorie", "Nb variations",
+        cols_affichage = ["SKU parent", "Nom groupe", "Catégorie", "Nb variations",
                            "Unités vendues total", "Ventes/mois"]
         st.dataframe(df_best[cols_affichage], use_container_width=True, hide_index=True)
 
