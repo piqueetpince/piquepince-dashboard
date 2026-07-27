@@ -2052,6 +2052,95 @@ elif page == "⚙️ Paramétrage Veinière":
             return nom.strip()
         return nom[:min(indices)].strip()
 
+    with st.expander("📝 Noms des groupes", expanded=False):
+        skus_parents_distincts = sorted({
+            (p.get("sku_parent") or "").strip()
+            for p in parametrage_data
+            if (p.get("sku_parent") or "").strip()
+        })
+
+        groupes_existants_data = select("veiniere_groupes", "select=sku_parent,nom_groupe") or []
+        nom_groupe_enregistre = {
+            g["sku_parent"]: g.get("nom_groupe") or ""
+            for g in groupes_existants_data if g.get("sku_parent")
+        }
+
+        skus_par_parent = {}
+        for p in parametrage_data:
+            sp = (p.get("sku_parent") or "").strip()
+            if sp and p.get("sku"):
+                skus_par_parent.setdefault(sp, []).append(p["sku"])
+
+        rows_groupes = []
+        for sku_parent in skus_parents_distincts:
+            enfants = skus_par_parent.get(sku_parent, [])
+            nom_enregistre = nom_groupe_enregistre.get(sku_parent, "")
+            if nom_enregistre:
+                nom_groupe_defaut = nom_enregistre
+            else:
+                nom_groupe_defaut = ""
+                for enfant in enfants:
+                    nom_produit_enfant = prod_map_veiniere.get(enfant, {}).get("nom")
+                    if nom_produit_enfant:
+                        nom_groupe_defaut = _extraire_nom_groupe(nom_produit_enfant)
+                        break
+
+            rows_groupes.append({
+                "SKU parent": sku_parent,
+                "Nom groupe": nom_groupe_defaut,
+                "Nb SKUs associés": len(enfants),
+            })
+
+        df_groupes = pd.DataFrame(rows_groupes)
+
+        if df_groupes.empty:
+            st.info("Aucun SKU parent renseigné pour l'instant dans le tableau principal ci-dessous.")
+        else:
+            # Même pattern on_change + session_state que le tableau principal
+            # (voir plus bas) : évite que les éditions soient écrasées par le
+            # rechargement de df_groupes à chaque rerun déclenché par data_editor.
+            if ("veiniere_groupes_df_edit" not in st.session_state
+                    or st.session_state.get("veiniere_groupes_refresh")):
+                st.session_state["veiniere_groupes_df_edit"] = df_groupes.copy()
+                st.session_state["veiniere_groupes_refresh"] = False
+
+            def _appliquer_edits_groupes():
+                edits = st.session_state["veiniere_groupes_data_editor"]
+                df_base = st.session_state["veiniere_groupes_df_edit"].copy()
+                for idx, changes in edits.get("edited_rows", {}).items():
+                    for col, val in changes.items():
+                        df_base.at[int(idx), col] = val
+                st.session_state["veiniere_groupes_df_edit"] = df_base
+
+            st.data_editor(
+                st.session_state["veiniere_groupes_df_edit"],
+                use_container_width=True,
+                hide_index=True,
+                key="veiniere_groupes_data_editor",
+                on_change=_appliquer_edits_groupes,
+                column_config={
+                    "SKU parent": st.column_config.TextColumn(disabled=True),
+                    "Nom groupe": st.column_config.TextColumn(),
+                    "Nb SKUs associés": st.column_config.NumberColumn(disabled=True),
+                }
+            )
+
+            if st.button("💾 Enregistrer les noms de groupes", type="primary", key="btn_enregistrer_groupes"):
+                df_groupes_a_enregistrer = st.session_state["veiniere_groupes_df_edit"]
+                nb_ok_groupes = 0
+                for _, r in df_groupes_a_enregistrer.iterrows():
+                    nom_groupe_r = (r["Nom groupe"] or "").strip()
+                    if not nom_groupe_r:
+                        continue
+                    upsert("veiniere_groupes", [{
+                        "sku_parent": r["SKU parent"],
+                        "nom_groupe": nom_groupe_r,
+                    }], "sku_parent")
+                    nb_ok_groupes += 1
+                st.success(f"✓ {nb_ok_groupes} nom(s) de groupe enregistré(s) !")
+                st.session_state["veiniere_groupes_refresh"] = True
+                st.rerun()
+
     rows = []
     for p in produits_veiniere:
         sku = p.get("sku")
