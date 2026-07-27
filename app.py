@@ -2055,18 +2055,20 @@ elif page == "⚙️ Paramétrage Veinière":
         if sku_m not in couleur_par_sku:
             nb_couleur_manquante += 1
 
-    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
     with col_m1:
+        st.metric("Total SKUs Veinière", len(produits_veiniere))
+    with col_m2:
         st.metric(
             "⚠️ Nom groupe manquant", nb_nom_manquant,
             delta=f"-{nb_nom_manquant}" if nb_nom_manquant > 0 else "0",
         )
-    with col_m2:
+    with col_m3:
         st.metric(
             "⚠️ Catégorie manquante", nb_categorie_manquante,
             delta=f"-{nb_categorie_manquante}" if nb_categorie_manquante > 0 else "0",
         )
-    with col_m3:
+    with col_m4:
         st.metric(
             "⚠️ Couleur fournisseur manquante", nb_couleur_manquante,
             delta=f"-{nb_couleur_manquante}" if nb_couleur_manquante > 0 else "0",
@@ -2233,32 +2235,6 @@ elif page == "⚙️ Paramétrage Veinière":
     df_param = pd.DataFrame(rows)
     if not df_param.empty:
         df_param = df_param.sort_values("SKU").reset_index(drop=True)
-
-    def _est_renseigne(valeur, vide=""):
-        """True si valeur n'est ni NULL/NaN, ni vide/blanche, ni le
-        sentinel "vide" (ex: "(aucune)") une fois strippée."""
-        if pd.isna(valeur):
-            return False
-        valeur_str = str(valeur).strip()
-        return valeur_str != "" and valeur_str != vide
-
-    total_skus = len(df_param)
-    nb_avec_couleur = (
-        int(df_param["Couleur fournisseur"].apply(lambda v: _est_renseigne(v, "(aucune)")).sum())
-        if not df_param.empty else 0
-    )
-    nb_avec_parent = (
-        int(df_param["SKU parent"].apply(lambda v: _est_renseigne(v, "")).sum())
-        if not df_param.empty else 0
-    )
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total SKUs Veinière", total_skus)
-    with col2:
-        st.metric("Avec couleur fournisseur", nb_avec_couleur)
-    with col3:
-        st.metric("Avec SKU parent", nb_avec_parent)
 
     if df_param.empty:
         st.info("Aucun SKU visible pour Veinière.")
