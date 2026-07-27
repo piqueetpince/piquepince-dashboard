@@ -2103,7 +2103,8 @@ elif page == "⚙️ Paramétrage Veinière":
             # (voir plus bas) : évite que les éditions soient écrasées par le
             # rechargement de df_groupes à chaque rerun déclenché par data_editor.
             if ("veiniere_groupes_df_edit" not in st.session_state
-                    or st.session_state.get("veiniere_groupes_refresh")):
+                    or st.session_state.get("veiniere_groupes_refresh")
+                    or "Catégorie" not in st.session_state["veiniere_groupes_df_edit"].columns):
                 st.session_state["veiniere_groupes_df_edit"] = df_groupes.copy()
                 st.session_state["veiniere_groupes_refresh"] = False
 
@@ -2114,9 +2115,6 @@ elif page == "⚙️ Paramétrage Veinière":
                     for col, val in changes.items():
                         df_base.at[int(idx), col] = val
                 st.session_state["veiniere_groupes_df_edit"] = df_base
-
-            # DEBUG temporaire
-            st.write("DEBUG — df_groupes.columns:", list(df_groupes.columns))
 
             st.data_editor(
                 st.session_state["veiniere_groupes_df_edit"],
