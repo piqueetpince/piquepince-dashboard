@@ -2301,14 +2301,13 @@ elif page == "🏆 Best-sellers Veinière":
         c for c in categories_data
         if (c.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
     ]
-    categories_liste = ["Toutes"] + sorted(
-        c.get("categorie") for c in categories_veiniere if c.get("categorie")
-    )
+    # Ordre d'affichage des tableaux par catégorie = ordre de création dans
+    # categories_fournisseur (id croissant), pas l'ordre alphabétique.
+    categories_veiniere_triees = sorted(categories_veiniere, key=lambda c: c.get("id") or 0)
 
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
-        categorie_filtre = st.selectbox("Catégorie", categories_liste)
 
     st.subheader("🏆 Best-sellers Veinière")
 
@@ -2363,8 +2362,6 @@ elif page == "🏆 Best-sellers Veinière":
     rows = []
     for sku_parent, variations in groupes.items():
         categorie_nom = categorie_par_parent.get(sku_parent, "")
-        if categorie_filtre != "Toutes" and categorie_nom != categorie_filtre:
-            continue
 
         total_unites = sum(v["unites"] for v in variations)
         rows.append({
@@ -2414,6 +2411,19 @@ elif page == "🏆 Best-sellers Veinière":
                         "Ventes/mois": round(v["unites"] / nb_mois, 1),
                     })
                 st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+        st.divider()
+        for cat_obj in categories_veiniere_triees:
+            cat_nom = cat_obj.get("categorie")
+            if not cat_nom:
+                continue
+            st.subheader(cat_nom)
+            df_cat = df_best[(df_best["Catégorie"] == cat_nom) & (df_best["Unités vendues total"] > 0)]
+            df_cat = df_cat.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
+            if df_cat.empty:
+                st.info("Aucun groupe avec des ventes dans cette catégorie.")
+            else:
+                st.dataframe(df_cat[cols_affichage], use_container_width=True, hide_index=True)
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
