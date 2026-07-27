@@ -2578,7 +2578,7 @@ elif page == "🎨 Meilleures variations Veinière":
                 couleur_nom = couleur_row["Couleur fournisseur"]
                 with st.expander(couleur_nom):
                     lignes_expander = []
-                    for g in groupes_cat:
+                    for rang, g in enumerate(groupes_cat, start=1):
                         skus_cette_couleur = [
                             sku for sku in g["skus"] if couleur_disponible_par_sku.get(sku) == couleur_nom
                         ]
@@ -2592,6 +2592,7 @@ elif page == "🎨 Meilleures variations Veinière":
                             unites_couleur = None
 
                         lignes_expander.append({
+                            "Rang": rang,
                             "Nom groupe": g["nom_groupe"],
                             "SKU parent": g["sku_parent"],
                             "Unités vendues total": g["unites"],
