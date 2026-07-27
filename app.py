@@ -2439,9 +2439,12 @@ elif page == "🎨 Meilleures variations Veinière":
 
     parametrage_data = select("veiniere_parametrage", "select=sku,sku_parent,id_variation") or []
 
-    groupes_data = select("veiniere_groupes", "select=sku_parent,categorie") or []
+    groupes_data = select("veiniere_groupes", "select=sku_parent,nom_groupe,categorie") or []
     categorie_par_parent = {
         g["sku_parent"]: g.get("categorie") or "" for g in groupes_data if g.get("sku_parent")
+    }
+    nom_groupe_par_parent = {
+        g["sku_parent"]: g.get("nom_groupe") or "" for g in groupes_data if g.get("sku_parent")
     }
 
     variations_data = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
@@ -2450,6 +2453,30 @@ elif page == "🎨 Meilleures variations Veinière":
         if (v.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
     ]
     couleur_par_id_variation = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_veiniere}
+
+    # Disponibilité couleur par SKU = source de vérité sku_variations_fournisseur
+    # (pas veiniere_parametrage.id_variation, qui n'en est qu'une copie) —
+    # utilisé pour la colonne "Disponible" des expanders par couleur ci-dessous.
+    associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+    couleur_disponible_par_sku = {
+        a["sku"]: couleur_par_id_variation[a["id_variation"]]
+        for a in associations_data
+        if a.get("sku") and a.get("id_variation") in couleur_par_id_variation
+    }
+
+    # Regroupement de tous les SKUs par sku_parent (indépendamment de la
+    # couleur), pour les tableaux "best-sellers" affichés dans chaque
+    # expander couleur.
+    groupes_par_parent = {}
+    for p in parametrage_data:
+        sku_g = p.get("sku")
+        sku_parent_g = (p.get("sku_parent") or "").strip()
+        if not sku_g or not sku_parent_g:
+            continue
+        q_total_g = ventes_wizi.get(sku_g, 0) + ventes_etsy.get(sku_g, 0) + ventes_faire.get(sku_g, 0)
+        entry_g = groupes_par_parent.setdefault(sku_parent_g, {"skus": [], "unites": 0})
+        entry_g["skus"].append(sku_g)
+        entry_g["unites"] += q_total_g
 
     categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
     categories_veiniere = [
@@ -2531,6 +2558,38 @@ elif page == "🎨 Meilleures variations Veinière":
             st.dataframe(df_cat, use_container_width=True, hide_index=True)
             for r in df_cat.to_dict("records"):
                 rows_export.append({"Catégorie": cat_nom, **r})
+
+            # Groupes (sku_parent) de cette catégorie, triés par unités
+            # vendues décroissant — réutilisés dans chaque expander couleur
+            # ci-dessous avec une colonne "Disponible" spécifique à la couleur.
+            groupes_cat = [
+                {
+                    "sku_parent": sp,
+                    "nom_groupe": nom_groupe_par_parent.get(sp) or sp,
+                    "unites": g["unites"],
+                    "skus": g["skus"],
+                }
+                for sp, g in groupes_par_parent.items()
+                if categorie_par_parent.get(sp) == cat_nom
+            ]
+            groupes_cat.sort(key=lambda x: -x["unites"])
+
+            for couleur_row in df_cat.to_dict("records"):
+                couleur_nom = couleur_row["Couleur fournisseur"]
+                with st.expander(couleur_nom):
+                    lignes_expander = []
+                    for g in groupes_cat:
+                        disponible = any(
+                            couleur_disponible_par_sku.get(sku) == couleur_nom for sku in g["skus"]
+                        )
+                        lignes_expander.append({
+                            "Nom groupe": g["nom_groupe"],
+                            "SKU parent": g["sku_parent"],
+                            "Unités vendues total": g["unites"],
+                            "Ventes/mois": round(g["unites"] / nb_mois, 1),
+                            "Disponible": "✅" if disponible else "❌",
+                        })
+                    st.dataframe(pd.DataFrame(lignes_expander), use_container_width=True, hide_index=True)
 
     if rows_export:
         st.divider()
