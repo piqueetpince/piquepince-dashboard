@@ -2158,7 +2158,11 @@ elif page == "⚙️ Paramétrage Veinière":
         for g in groupes_existants_data if g.get("sku_parent")
     }
 
+    # DEBUG temporaire
+    st.write("DEBUG — categorie_par_parent_affichage:", categorie_par_parent_affichage)
+
     rows = []
+    debug_premiers_skus = []
     for p in produits_veiniere:
         sku = p.get("sku")
         nom = p.get("nom") or ""
@@ -2175,6 +2179,14 @@ elif page == "⚙️ Paramétrage Veinière":
             categorie_par_parent_affichage.get(sku_parent_enregistre, "") if sku_parent_enregistre else ""
         )
 
+        if len(debug_premiers_skus) < 3:
+            debug_premiers_skus.append({
+                "SKU": sku,
+                "sku_parent (existant.get)": existant.get("sku_parent"),
+                "sku_parent_enregistre": sku_parent_enregistre,
+                "Catégorie résolue": categorie_groupe,
+            })
+
         rows.append({
             "SKU": sku,
             "Nom produit": nom,
@@ -2183,6 +2195,9 @@ elif page == "⚙️ Paramétrage Veinière":
             "Catégorie": categorie_groupe,
             "Couleur fournisseur": couleur_defaut,
         })
+
+    # DEBUG temporaire
+    st.write("DEBUG — 3 premiers SKUs (sku_parent + catégorie résolue):", debug_premiers_skus)
 
     df_param = pd.DataFrame(rows)
     if not df_param.empty:
