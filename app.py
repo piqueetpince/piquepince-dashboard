@@ -2115,6 +2115,9 @@ elif page == "⚙️ Paramétrage Veinière":
                         df_base.at[int(idx), col] = val
                 st.session_state["veiniere_groupes_df_edit"] = df_base
 
+            # DEBUG temporaire
+            st.write("DEBUG — df_groupes.columns:", list(df_groupes.columns))
+
             st.data_editor(
                 st.session_state["veiniere_groupes_df_edit"],
                 use_container_width=True,
