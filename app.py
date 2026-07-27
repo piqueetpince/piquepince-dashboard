@@ -2080,10 +2080,27 @@ elif page == "⚙️ Paramétrage Veinière":
     if not df_param.empty:
         df_param = df_param.sort_values("SKU").reset_index(drop=True)
 
+    def _est_renseigne(valeur, vide=""):
+        """True si valeur n'est ni NULL/NaN, ni vide/blanche, ni le
+        sentinel "vide" (ex: "(aucune)") une fois strippée."""
+        if pd.isna(valeur):
+            return False
+        valeur_str = str(valeur).strip()
+        return valeur_str != "" and valeur_str != vide
+
     total_skus = len(df_param)
-    nb_avec_categorie = len(df_param[df_param["Catégorie"] != "(aucune)"]) if not df_param.empty else 0
-    nb_avec_couleur = len(df_param[df_param["Couleur fournisseur"] != "(aucune)"]) if not df_param.empty else 0
-    nb_avec_parent = len(df_param[df_param["SKU parent"].str.strip() != ""]) if not df_param.empty else 0
+    nb_avec_categorie = (
+        int(df_param["Catégorie"].apply(lambda v: _est_renseigne(v, "(aucune)")).sum())
+        if not df_param.empty else 0
+    )
+    nb_avec_couleur = (
+        int(df_param["Couleur fournisseur"].apply(lambda v: _est_renseigne(v, "(aucune)")).sum())
+        if not df_param.empty else 0
+    )
+    nb_avec_parent = (
+        int(df_param["SKU parent"].apply(lambda v: _est_renseigne(v, "")).sum())
+        if not df_param.empty else 0
+    )
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
