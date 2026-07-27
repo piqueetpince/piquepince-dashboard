@@ -2579,15 +2579,25 @@ elif page == "🎨 Meilleures variations Veinière":
                 with st.expander(couleur_nom):
                     lignes_expander = []
                     for g in groupes_cat:
-                        disponible = any(
-                            couleur_disponible_par_sku.get(sku) == couleur_nom for sku in g["skus"]
-                        )
+                        skus_cette_couleur = [
+                            sku for sku in g["skus"] if couleur_disponible_par_sku.get(sku) == couleur_nom
+                        ]
+                        disponible = bool(skus_cette_couleur)
+                        if disponible:
+                            unites_couleur = sum(
+                                ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+                                for sku in skus_cette_couleur
+                            )
+                        else:
+                            unites_couleur = None
+
                         lignes_expander.append({
                             "Nom groupe": g["nom_groupe"],
                             "SKU parent": g["sku_parent"],
                             "Unités vendues total": g["unites"],
                             "Ventes/mois": round(g["unites"] / nb_mois, 1),
                             "Disponible": "✅" if disponible else "❌",
+                            "Unités (couleur)": unites_couleur if disponible else "-",
                         })
                     st.dataframe(pd.DataFrame(lignes_expander), use_container_width=True, hide_index=True)
 
