@@ -2355,6 +2355,43 @@ elif page == "🏆 Best-sellers Veinière":
         groupe = groupes.setdefault(sku_parent, [])
         groupe.append({"sku": sku, "couleur": couleur, "unites": q_total})
 
+    # Couleur "réellement" associée par SKU = source de vérité
+    # sku_variations_fournisseur (pas veiniere_parametrage.id_variation) —
+    # utilisé pour détecter les couleurs manquantes par groupe ci-dessous.
+    couleur_reelle_par_sku = {
+        a["sku"]: couleur_par_id_variation.get(a["id_variation"])
+        for a in associations_data
+        if a.get("sku") and a.get("id_variation") in couleur_par_id_variation
+    }
+
+    # Agrégation (catégorie, couleur) -> ventes, même logique que la page
+    # "🎨 Meilleures variations Veinière", pour classer les couleurs par
+    # Ventes/SKU/mois au sein de chaque catégorie (utilisé par la section
+    # "Couleurs manquantes" de chaque expander de groupe).
+    agg_couleur = {}
+    for sku_parent_c, variations_c in groupes.items():
+        cat_c = categorie_par_parent.get(sku_parent_c, "")
+        if not cat_c:
+            continue
+        for v in variations_c:
+            if not v["couleur"]:
+                continue
+            entry_c = agg_couleur.setdefault((cat_c, v["couleur"]), {"skus": set(), "unites": 0})
+            entry_c["skus"].add(v["sku"])
+            entry_c["unites"] += v["unites"]
+
+    classement_par_categorie = {}
+    for (cat_c, couleur_c), v in agg_couleur.items():
+        nb_skus_c = len(v["skus"])
+        vsm_c = round(v["unites"] / nb_skus_c / nb_mois, 1) if nb_skus_c > 0 else 0
+        classement_par_categorie.setdefault(cat_c, []).append(
+            {"couleur": couleur_c, "ventes_sku_mois": vsm_c}
+        )
+    for cat_c, liste_c in classement_par_categorie.items():
+        liste_c.sort(key=lambda x: -x["ventes_sku_mois"])
+        for i, it in enumerate(liste_c, start=1):
+            it["rang"] = i
+
     # Répartition par catégorie sur l'ENSEMBLE des groupes (indépendante du
     # filtre "Catégorie" de la sidebar, qui n'affecte que le tableau
     # détaillé plus bas) — sert de barre de métriques globale.
@@ -2453,6 +2490,31 @@ elif page == "🏆 Best-sellers Veinière":
                                 "Ventes/mois": round(v["unites"] / nb_mois, 1),
                             })
                         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+                        st.markdown("**Couleurs manquantes**")
+                        couleurs_du_groupe = {
+                            couleur_reelle_par_sku.get(v["sku"])
+                            for v in r["_variations"]
+                            if couleur_reelle_par_sku.get(v["sku"])
+                        }
+                        classement_categorie = classement_par_categorie.get(cat_nom, [])
+                        manquantes = [
+                            it for it in classement_categorie if it["couleur"] not in couleurs_du_groupe
+                        ]
+                        manquantes.sort(key=lambda x: x["rang"])
+
+                        if not manquantes:
+                            st.success("✅ Toutes les meilleures couleurs sont disponibles pour ce produit")
+                        else:
+                            df_manquantes = pd.DataFrame([
+                                {
+                                    "Couleur fournisseur manquante": it["couleur"],
+                                    "Rang (Meilleures variations)": it["rang"],
+                                    "Ventes/SKU/mois": it["ventes_sku_mois"],
+                                }
+                                for it in manquantes
+                            ])
+                            st.dataframe(df_manquantes, use_container_width=True, hide_index=True)
 
 elif page == "🎨 Meilleures variations Veinière":
     FOURNISSEUR_VEINIERE = "VEINIERE"
