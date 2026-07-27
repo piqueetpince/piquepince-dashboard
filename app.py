@@ -1768,20 +1768,27 @@ elif page == "📊 Ventes par variation fournisseur":
             q_etsy = sum(ventes_etsy.get(s, 0) for s in skus_assoc)
             q_faire = sum(ventes_faire.get(s, 0) for s in skus_assoc)
             q_total = q_wizi + q_etsy + q_faire
+            nb_skus_assoc = len(skus_assoc)
 
             rows.append({
                 "Couleur fournisseur": couleur,
-                "Nb SKUs associés": len(skus_assoc),
+                "Nb SKUs associés": nb_skus_assoc,
                 "Unités vendues total": q_total,
                 "Unités vendues Wizishop": q_wizi,
                 "Unités vendues Etsy": q_etsy,
                 "Unités vendues Faire": q_faire,
                 "Ventes/mois": round(q_total / nb_mois, 1),
+                "Ventes/SKU/mois": round(q_total / nb_skus_assoc / nb_mois, 1) if nb_skus_assoc > 0 else None,
             })
 
         df_var_ventes = pd.DataFrame(rows)
         if not df_var_ventes.empty:
-            df_var_ventes = df_var_ventes.sort_values("Unités vendues total", ascending=False).reset_index(drop=True)
+            df_var_ventes = df_var_ventes.sort_values(
+                "Ventes/SKU/mois", ascending=False, na_position="last"
+            ).reset_index(drop=True)
+            df_var_ventes["Ventes/SKU/mois"] = df_var_ventes["Ventes/SKU/mois"].apply(
+                lambda x: "—" if pd.isna(x) else x
+            )
 
         total_unites = int(df_var_ventes["Unités vendues total"].sum()) if not df_var_ventes.empty else 0
         nb_avec_ventes = (
