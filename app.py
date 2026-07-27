@@ -2309,7 +2309,6 @@ elif page == "🏆 Best-sellers Veinière":
     with st.sidebar:
         st.divider()
         nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
-        tri_choix = st.radio("Trier par", ["📊 Ventes totales", "🎨 Ventes par couleur"])
 
     st.subheader("🏆 Best-sellers Veinière")
 
@@ -2389,13 +2388,7 @@ elif page == "🏆 Best-sellers Veinière":
             "_variations": variations,
         })
 
-    # Colonne de tri choisie via le radio sidebar, appliquée au tableau
-    # principal ET à chaque tableau par catégorie (choix global à la page).
-    colonne_tri = "Unités vendues total" if tri_choix.startswith("📊") else "Ventes/couleur"
-
     df_best = pd.DataFrame(rows)
-    if not df_best.empty:
-        df_best = df_best.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
 
     cols_metriques = st.columns(1 + len(categories_noms))
     with cols_metriques[0]:
@@ -2405,6 +2398,15 @@ elif page == "🏆 Best-sellers Veinière":
         pct = round(unites_cat / total_unites_tous_groupes * 100) if total_unites_tous_groupes > 0 else 0
         with col_cat:
             st.metric(cat, unites_cat, delta=f"{pct}%", delta_color="off")
+
+    # Choix de tri global à la page — appliqué au tableau principal ET à
+    # chaque tableau par catégorie en dessous.
+    tri_choix = st.radio(
+        "Trier par", ["📊 Ventes totales", "🎨 Ventes par couleur"], horizontal=True,
+    )
+    colonne_tri = "Unités vendues total" if tri_choix.startswith("📊") else "Ventes/couleur"
+    if not df_best.empty:
+        df_best = df_best.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
 
     def _formater_ventes_couleur(df):
         """Copie d'affichage : NaN -> '—' sur Ventes/couleur, sans toucher au
