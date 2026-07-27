@@ -2050,7 +2050,7 @@ elif page == "⚙️ Paramétrage Veinière":
             return nom.strip()
         return nom[:min(indices)].strip()
 
-    with st.expander("📝 Noms des groupes", expanded=False):
+    with st.expander("📝 Noms des groupes et catégories", expanded=False):
         skus_parents_distincts = sorted({
             (p.get("sku_parent") or "").strip()
             for p in parametrage_data
@@ -2148,6 +2148,16 @@ elif page == "⚙️ Paramétrage Veinière":
                 st.session_state["veiniere_groupes_refresh"] = True
                 st.rerun()
 
+    # Catégorie affichée dans le tableau principal = celle du groupe
+    # (veiniere_groupes), retrouvée via le sku_parent ENREGISTRÉ en base
+    # (pas la valeur calculée/pas encore sauvegardée) — cohérent avec le
+    # fait qu'une catégorie n'est assignable qu'à un groupe réellement créé
+    # dans la section "📝 Noms des groupes et catégories" ci-dessus.
+    categorie_par_parent_affichage = {
+        g["sku_parent"]: g.get("categorie") or ""
+        for g in groupes_existants_data if g.get("sku_parent")
+    }
+
     rows = []
     for p in produits_veiniere:
         sku = p.get("sku")
@@ -2155,16 +2165,22 @@ elif page == "⚙️ Paramétrage Veinière":
         existant = parametrage_map.get(sku, {})
 
         sku_parent_calcule = _trouver_prefixe_parent_veiniere(sku)
-        sku_parent_defaut = existant.get("sku_parent") or sku_parent_calcule
+        sku_parent_enregistre = existant.get("sku_parent") or ""
+        sku_parent_defaut = sku_parent_enregistre or sku_parent_calcule
         nom_groupe = _extraire_nom_groupe(nom)
 
         couleur_defaut = couleur_par_sku.get(sku, "(aucune)")
+
+        categorie_groupe = (
+            categorie_par_parent_affichage.get(sku_parent_enregistre, "") if sku_parent_enregistre else ""
+        )
 
         rows.append({
             "SKU": sku,
             "Nom produit": nom,
             "Nom groupe": nom_groupe,
             "SKU parent": sku_parent_defaut or "",
+            "Catégorie": categorie_groupe,
             "Couleur fournisseur": couleur_defaut,
         })
 
@@ -2208,7 +2224,9 @@ elif page == "⚙️ Paramétrage Veinière":
         # via le flag veiniere_refresh), et on_change applique les deltas
         # d'édition sur CETTE copie persistante — qui n'est donc jamais
         # écrasée par le rechargement de df_param entre deux éditions.
-        if "veiniere_df_edit" not in st.session_state or st.session_state.get("veiniere_refresh"):
+        if ("veiniere_df_edit" not in st.session_state
+                or st.session_state.get("veiniere_refresh")
+                or "Catégorie" not in st.session_state["veiniere_df_edit"].columns):
             st.session_state["veiniere_df_edit"] = df_param.copy()
             st.session_state["veiniere_refresh"] = False
 
@@ -2231,6 +2249,7 @@ elif page == "⚙️ Paramétrage Veinière":
                 "Nom produit": st.column_config.TextColumn(disabled=True),
                 "Nom groupe": st.column_config.TextColumn(disabled=True),
                 "SKU parent": st.column_config.TextColumn(),
+                "Catégorie": st.column_config.TextColumn(disabled=True),
                 "Couleur fournisseur": st.column_config.SelectboxColumn(options=options_variation),
             }
         )
