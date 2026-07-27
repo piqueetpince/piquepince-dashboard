@@ -2025,8 +2025,6 @@ elif page == "⚙️ Paramétrage Veinière":
     options_categorie = ["(aucune)"] + sorted(
         c.get("categorie") for c in categories_veiniere if c.get("categorie")
     )
-    categorie_id_par_nom = {c.get("categorie"): c["id"] for c in categories_veiniere}
-    categorie_nom_par_id = {c["id"]: c.get("categorie") for c in categories_veiniere}
 
     # SKU parent = préfixe parent trouvé via _get_skus_parents_catalogue (même
     # logique que "🏆 Best-sellers par variation"), mais laissé vide ici si
@@ -2059,9 +2057,13 @@ elif page == "⚙️ Paramétrage Veinière":
             if (p.get("sku_parent") or "").strip()
         })
 
-        groupes_existants_data = select("veiniere_groupes", "select=sku_parent,nom_groupe") or []
+        groupes_existants_data = select("veiniere_groupes", "select=sku_parent,nom_groupe,categorie") or []
         nom_groupe_enregistre = {
             g["sku_parent"]: g.get("nom_groupe") or ""
+            for g in groupes_existants_data if g.get("sku_parent")
+        }
+        categorie_groupe_enregistree = {
+            g["sku_parent"]: g.get("categorie") or "(aucune)"
             for g in groupes_existants_data if g.get("sku_parent")
         }
 
@@ -2088,6 +2090,7 @@ elif page == "⚙️ Paramétrage Veinière":
             rows_groupes.append({
                 "SKU parent": sku_parent,
                 "Nom groupe": nom_groupe_defaut,
+                "Catégorie": categorie_groupe_enregistree.get(sku_parent, "(aucune)"),
                 "Nb SKUs associés": len(enfants),
             })
 
@@ -2121,6 +2124,7 @@ elif page == "⚙️ Paramétrage Veinière":
                 column_config={
                     "SKU parent": st.column_config.TextColumn(disabled=True),
                     "Nom groupe": st.column_config.TextColumn(),
+                    "Catégorie": st.column_config.SelectboxColumn(options=options_categorie),
                     "Nb SKUs associés": st.column_config.NumberColumn(disabled=True),
                 }
             )
@@ -2132,9 +2136,11 @@ elif page == "⚙️ Paramétrage Veinière":
                     nom_groupe_r = (r["Nom groupe"] or "").strip()
                     if not nom_groupe_r:
                         continue
+                    categorie_groupe_r = r["Catégorie"]
                     upsert("veiniere_groupes", [{
                         "sku_parent": r["SKU parent"],
                         "nom_groupe": nom_groupe_r,
+                        "categorie": categorie_groupe_r if categorie_groupe_r != "(aucune)" else None,
                     }], "sku_parent")
                     nb_ok_groupes += 1
                 st.success(f"✓ {nb_ok_groupes} nom(s) de groupe enregistré(s) !")
@@ -2153,15 +2159,11 @@ elif page == "⚙️ Paramétrage Veinière":
 
         couleur_defaut = couleur_par_sku.get(sku, "(aucune)")
 
-        id_cat_existant = existant.get("id_categorie")
-        categorie_defaut = categorie_nom_par_id.get(id_cat_existant, "(aucune)") if id_cat_existant else "(aucune)"
-
         rows.append({
             "SKU": sku,
             "Nom produit": nom,
             "Nom groupe": nom_groupe,
             "SKU parent": sku_parent_defaut or "",
-            "Catégorie": categorie_defaut,
             "Couleur fournisseur": couleur_defaut,
         })
 
@@ -2178,10 +2180,6 @@ elif page == "⚙️ Paramétrage Veinière":
         return valeur_str != "" and valeur_str != vide
 
     total_skus = len(df_param)
-    nb_avec_categorie = (
-        int(df_param["Catégorie"].apply(lambda v: _est_renseigne(v, "(aucune)")).sum())
-        if not df_param.empty else 0
-    )
     nb_avec_couleur = (
         int(df_param["Couleur fournisseur"].apply(lambda v: _est_renseigne(v, "(aucune)")).sum())
         if not df_param.empty else 0
@@ -2191,14 +2189,12 @@ elif page == "⚙️ Paramétrage Veinière":
         if not df_param.empty else 0
     )
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total SKUs Veinière", total_skus)
     with col2:
-        st.metric("Avec catégorie", nb_avec_categorie)
-    with col3:
         st.metric("Avec couleur fournisseur", nb_avec_couleur)
-    with col4:
+    with col3:
         st.metric("Avec SKU parent", nb_avec_parent)
 
     if df_param.empty:
@@ -2234,7 +2230,6 @@ elif page == "⚙️ Paramétrage Veinière":
                 "Nom produit": st.column_config.TextColumn(disabled=True),
                 "Nom groupe": st.column_config.TextColumn(disabled=True),
                 "SKU parent": st.column_config.TextColumn(),
-                "Catégorie": st.column_config.SelectboxColumn(options=options_categorie),
                 "Couleur fournisseur": st.column_config.SelectboxColumn(options=options_variation),
             }
         )
@@ -2242,33 +2237,21 @@ elif page == "⚙️ Paramétrage Veinière":
         if st.button("💾 Enregistrer", type="primary", key="btn_enregistrer_veiniere"):
             df_a_enregistrer = st.session_state["veiniere_df_edit"]
 
-            # DEBUG temporaire
-            nb_avec_categorie_session = len(
-                df_a_enregistrer[df_a_enregistrer["Catégorie"] != "(aucune)"]
-            )
-            st.write(
-                "DEBUG — Lignes avec catégorie renseignée dans session_state juste avant l'upsert:",
-                nb_avec_categorie_session,
-            )
-
             nb_ok = 0
             for _, r in df_a_enregistrer.iterrows():
                 sku_r = r["SKU"]
                 sku_parent_r = (r["SKU parent"] or "").strip()
-                categorie_r = r["Catégorie"]
                 couleur_r = r["Couleur fournisseur"]
-                if not sku_parent_r and categorie_r == "(aucune)" and couleur_r == "(aucune)":
+                if not sku_parent_r and couleur_r == "(aucune)":
                     continue
 
                 id_var_r = variation_id_par_couleur.get(couleur_r)
-                id_cat_r = categorie_id_par_nom.get(categorie_r)
 
                 upsert("veiniere_parametrage", [{
                     "sku": sku_r,
                     "sku_parent": sku_parent_r or None,
                     "nom_groupe": r["Nom groupe"],
                     "id_variation": id_var_r,
-                    "id_categorie": id_cat_r,
                 }], "sku")
 
                 if id_var_r is not None:
@@ -2294,7 +2277,6 @@ elif page == "🏆 Best-sellers Veinière":
         c for c in categories_data
         if (c.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
     ]
-    categorie_nom_par_id = {c["id"]: c.get("categorie") or "" for c in categories_veiniere}
     categories_liste = ["Toutes"] + sorted(
         c.get("categorie") for c in categories_veiniere if c.get("categorie")
     )
@@ -2309,10 +2291,13 @@ elif page == "🏆 Best-sellers Veinière":
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
 
-    parametrage_data = select("veiniere_parametrage", "select=sku,sku_parent,id_variation,id_categorie") or []
-    groupes_data = select("veiniere_groupes", "select=sku_parent,nom_groupe") or []
+    parametrage_data = select("veiniere_parametrage", "select=sku,sku_parent,id_variation") or []
+    groupes_data = select("veiniere_groupes", "select=sku_parent,nom_groupe,categorie") or []
     nom_groupe_par_parent = {
         g["sku_parent"]: g.get("nom_groupe") or "" for g in groupes_data if g.get("sku_parent")
+    }
+    categorie_par_parent = {
+        g["sku_parent"]: g.get("categorie") or "" for g in groupes_data if g.get("sku_parent")
     }
 
     variations_data = select("variations_fournisseur", "select=id,couleur_fournisseur") or []
@@ -2321,7 +2306,8 @@ elif page == "🏆 Best-sellers Veinière":
     # Regroupement par sku_parent : pour chaque SKU présent dans
     # veiniere_parametrage avec un sku_parent renseigné, on cumule ses
     # ventes sous ce parent. Les SKUs sans sku_parent renseigné (pas encore
-    # paramétrés) ne sont pas inclus.
+    # paramétrés) ne sont pas inclus. La catégorie est désormais portée par
+    # le groupe (veiniere_groupes.categorie), plus par chaque SKU.
     groupes = {}
     for p in parametrage_data:
         sku = p.get("sku")
@@ -2329,24 +2315,20 @@ elif page == "🏆 Best-sellers Veinière":
         if not sku or not sku_parent:
             continue
 
-        id_cat = p.get("id_categorie")
         id_var = p.get("id_variation")
         couleur = couleur_par_id_variation.get(id_var, "") if id_var else ""
 
         q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
 
-        groupe = groupes.setdefault(sku_parent, {"id_categorie": None, "variations": []})
-        if groupe["id_categorie"] is None and id_cat is not None:
-            groupe["id_categorie"] = id_cat
-        groupe["variations"].append({"sku": sku, "couleur": couleur, "unites": q_total})
+        groupe = groupes.setdefault(sku_parent, [])
+        groupe.append({"sku": sku, "couleur": couleur, "unites": q_total})
 
     rows = []
-    for sku_parent, g in groupes.items():
-        categorie_nom = categorie_nom_par_id.get(g["id_categorie"], "") if g["id_categorie"] else ""
+    for sku_parent, variations in groupes.items():
+        categorie_nom = categorie_par_parent.get(sku_parent, "")
         if categorie_filtre != "Toutes" and categorie_nom != categorie_filtre:
             continue
 
-        variations = g["variations"]
         total_unites = sum(v["unites"] for v in variations)
         rows.append({
             "Nom groupe": nom_groupe_par_parent.get(sku_parent) or sku_parent,

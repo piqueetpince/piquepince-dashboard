@@ -20,3 +20,15 @@ CREATE POLICY "Accès total veiniere_groupes"
     ON veiniere_groupes FOR ALL
     USING (true)
     WITH CHECK (true);
+
+
+-- ============================================================
+-- Ajout : catégorie par groupe (au lieu de par SKU dans
+-- veiniere_parametrage) — colonne texte simple, alignée sur
+-- categories_fournisseur.categorie plutôt qu'une FK id_categorie, pour
+-- rester cohérente avec le nom demandé ("categorie").
+-- GRANT/RLS déjà en place sur la table, pas besoin de les redéfinir pour
+-- un ADD COLUMN.
+-- ============================================================
+
+ALTER TABLE veiniere_groupes ADD COLUMN IF NOT EXISTS categorie TEXT;
