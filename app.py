@@ -2026,6 +2026,52 @@ elif page == "⚙️ Paramétrage Veinière":
         c.get("categorie") for c in categories_veiniere if c.get("categorie")
     )
 
+    # Noms de groupe et catégories déjà enregistrés (veiniere_groupes), par
+    # sku_parent — récupérés tôt pour être réutilisés à la fois par les
+    # métriques ci-dessous, la section "Noms des groupes et catégories" et
+    # le tableau principal.
+    groupes_existants_data = select("veiniere_groupes", "select=sku_parent,nom_groupe,categorie") or []
+    nom_groupe_enregistre = {
+        g["sku_parent"]: g.get("nom_groupe") or ""
+        for g in groupes_existants_data if g.get("sku_parent")
+    }
+    categorie_par_parent_affichage = {
+        g["sku_parent"]: g.get("categorie") or ""
+        for g in groupes_existants_data if g.get("sku_parent")
+    }
+
+    # Métriques d'alerte : parmi les SKUs Veinière, combien n'ont pas
+    # (encore) de nom de groupe / catégorie / couleur fournisseur renseignés.
+    nb_nom_manquant = 0
+    nb_categorie_manquante = 0
+    nb_couleur_manquante = 0
+    for p in produits_veiniere:
+        sku_m = p.get("sku")
+        sku_parent_m = (parametrage_map.get(sku_m, {}).get("sku_parent") or "").strip()
+        if not sku_parent_m or not nom_groupe_enregistre.get(sku_parent_m):
+            nb_nom_manquant += 1
+        if not sku_parent_m or not categorie_par_parent_affichage.get(sku_parent_m):
+            nb_categorie_manquante += 1
+        if sku_m not in couleur_par_sku:
+            nb_couleur_manquante += 1
+
+    col_m1, col_m2, col_m3 = st.columns(3)
+    with col_m1:
+        st.metric(
+            "⚠️ Nom groupe manquant", nb_nom_manquant,
+            delta=f"-{nb_nom_manquant}" if nb_nom_manquant > 0 else "0",
+        )
+    with col_m2:
+        st.metric(
+            "⚠️ Catégorie manquante", nb_categorie_manquante,
+            delta=f"-{nb_categorie_manquante}" if nb_categorie_manquante > 0 else "0",
+        )
+    with col_m3:
+        st.metric(
+            "⚠️ Couleur fournisseur manquante", nb_couleur_manquante,
+            delta=f"-{nb_couleur_manquante}" if nb_couleur_manquante > 0 else "0",
+        )
+
     # SKU parent = préfixe parent trouvé via _get_skus_parents_catalogue (même
     # logique que "🏆 Best-sellers par variation"), mais laissé vide ici si
     # aucun préfixe parent n'existe (pas de repli sur le SKU lui-même).
@@ -2057,11 +2103,8 @@ elif page == "⚙️ Paramétrage Veinière":
             if (p.get("sku_parent") or "").strip()
         })
 
-        groupes_existants_data = select("veiniere_groupes", "select=sku_parent,nom_groupe,categorie") or []
-        nom_groupe_enregistre = {
-            g["sku_parent"]: g.get("nom_groupe") or ""
-            for g in groupes_existants_data if g.get("sku_parent")
-        }
+        # groupes_existants_data / nom_groupe_enregistre déjà chargés plus haut
+        # (réutilisés pour les métriques d'alerte).
         categorie_groupe_enregistree = {
             g["sku_parent"]: g.get("categorie") or "(aucune)"
             for g in groupes_existants_data if g.get("sku_parent")
@@ -2148,15 +2191,11 @@ elif page == "⚙️ Paramétrage Veinière":
                 st.session_state["veiniere_groupes_refresh"] = True
                 st.rerun()
 
-    # Catégorie affichée dans le tableau principal = celle du groupe
-    # (veiniere_groupes), retrouvée via le sku_parent ENREGISTRÉ en base
-    # (pas la valeur calculée/pas encore sauvegardée) — cohérent avec le
-    # fait qu'une catégorie n'est assignable qu'à un groupe réellement créé
-    # dans la section "📝 Noms des groupes et catégories" ci-dessus.
-    categorie_par_parent_affichage = {
-        g["sku_parent"]: g.get("categorie") or ""
-        for g in groupes_existants_data if g.get("sku_parent")
-    }
+    # categorie_par_parent_affichage déjà chargée plus haut (métriques
+    # d'alerte) ; réutilisée ici, résolue via le sku_parent ENREGISTRÉ en
+    # base (pas la valeur calculée/pas encore sauvegardée) — cohérent avec
+    # le fait qu'une catégorie n'est assignable qu'à un groupe réellement
+    # créé dans la section "📝 Noms des groupes et catégories" ci-dessus.
 
     rows = []
     for p in produits_veiniere:
