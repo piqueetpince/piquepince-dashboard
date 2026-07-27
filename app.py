@@ -284,11 +284,11 @@ def _get_catalogue_ventes(date_limite):
 
 
 @st.cache_data(ttl=300)
-def _get_skus_catalogue():
-    """SKUs visibles pour l'analyse catalogue, en excluant les SKUs parents :
-    tout SKU pour lequel il existe un autre SKU visible qui commence par lui
-    (SKU + suffixe) est un parent dont le stock/les ventes réels sont portés
-    par ses variations.
+def _get_skus_visibles_et_parents():
+    """SKUs visibles (hors AliExpress, via le filtre auto de select()) et le
+    sous-ensemble identifié comme "parent" : tout SKU pour lequel il existe
+    un autre SKU visible qui commence par lui (SKU + suffixe) — son
+    stock/ses ventes réels sont portés par ses variations, pas par lui-même.
     skus.type n'est PAS fiable pour cette distinction : vérifié en base, de
     vraies variantes couleur (ex: BAR0004ROUGE, BAR0004GLOSSY, stock réel)
     sont typées "product" au même titre que le parent placeholder
@@ -297,7 +297,7 @@ def _get_skus_catalogue():
     base par sync_skus — l'API Wizishop /skus ne retourne pas prod_id)."""
     skus_data = select("skus", "select=sku,stock,type&statut=eq.visible")
     if not skus_data:
-        return []
+        return [], set()
     skus_tries = sorted(s["sku"] for s in skus_data if s.get("sku"))
     parents_a_exclure = set()
     for i, sku in enumerate(skus_tries):
@@ -306,7 +306,45 @@ def _get_skus_catalogue():
                 break
             parents_a_exclure.add(sku)
             break
+    return skus_data, parents_a_exclure
+
+
+@st.cache_data(ttl=300)
+def _get_skus_catalogue():
+    """SKUs visibles pour l'analyse catalogue, en excluant les SKUs parents
+    (voir _get_skus_visibles_et_parents)."""
+    skus_data, parents_a_exclure = _get_skus_visibles_et_parents()
     return [s for s in skus_data if s.get("sku") not in parents_a_exclure]
+
+
+@st.cache_data(ttl=300)
+def _get_skus_parents_catalogue():
+    """Liste triée des SKUs "parents" (préfixes) à utiliser pour regrouper des
+    SKUs de vente sous leur produit parent — ex: BAR0031 pour
+    BAR0031NOIR/BAR0031ALBA/...
+    Contrairement à _get_skus_catalogue (qui ne considère que les SKUs
+    visibles, y compris pour repérer les parents), le SKU parent lui-même
+    n'a pas besoin d'être visible : vérifié en base, de nombreux parents
+    réels (ex: BAR0031) sont en statut 'draft' alors que leurs variations
+    sont bien visibles et vendues — les ignorer fragmente le regroupement
+    au lieu de le faire. On cherche donc les candidats parents parmi TOUS
+    les SKUs (tous statuts), à condition qu'ils aient au moins un SKU
+    enfant VISIBLE strictement plus long."""
+    tous_skus = select("skus", "select=sku,statut")
+    if not tous_skus:
+        return []
+    skus_visibles_set = {s["sku"] for s in tous_skus if s.get("statut") == "visible" and s.get("sku")}
+    tous_skus_tries = sorted({s["sku"] for s in tous_skus if s.get("sku")})
+
+    parents = set()
+    for i, candidat in enumerate(tous_skus_tries):
+        for autre in tous_skus_tries[i + 1:]:
+            if not autre.startswith(candidat):
+                break
+            if autre != candidat and autre in skus_visibles_set:
+                parents.add(candidat)
+                break
+    return sorted(parents)
 
 
 st.title("Pique&Pince — Dashboard ventes")
@@ -1840,19 +1878,24 @@ elif page == "🏆 Best-sellers par variation":
         skus_catalogue_set = {s["sku"] for s in (skus_catalogue or []) if s.get("sku")}
 
         produits_data = select("produits",
-            "select=sku,nom,id_wizi,fournisseur,reference_fournisseur&statut=eq.visible") or []
+            "select=sku,nom,fournisseur,reference_fournisseur&statut=eq.visible") or []
         prod_map = {p["sku"]: p for p in produits_data}
 
-        # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
-        # — même logique que l'onglet "💰 Prix d'achat manquants" de la page Vérification Wizishop.
-        parent_par_id_wizi = {}
-        for p in produits_data:
-            iw, sku = p.get("id_wizi"), p.get("sku")
-            if iw is None or not sku:
-                continue
-            courant = parent_par_id_wizi.get(iw)
-            if courant is None or len(sku) < len(courant["sku"]):
-                parent_par_id_wizi[iw] = p
+        # Préfixe parent = le plus long SKU "parent" (cf. _get_skus_parents_catalogue,
+        # qui cherche aussi parmi les SKUs non-visibles comme BAR0031 en
+        # statut draft) dont un SKU de vente donné commence — ex:
+        # BAR0031NOIR/BAR0031ALBA -> BAR0031. Regrouper par ce préfixe
+        # plutôt que par id_wizi évite d'éclater un même modèle en
+        # plusieurs lignes quand ses variations proviennent de plusieurs
+        # fiches produit Wizishop distinctes.
+        skus_parents_liste = _get_skus_parents_catalogue()
+        parents_tries_desc = sorted(skus_parents_liste, key=len, reverse=True)
+
+        def _trouver_prefixe_parent(sku):
+            for p in parents_tries_desc:
+                if len(p) < len(sku) and sku.startswith(p):
+                    return p
+            return sku  # fiche produit unique sans variation : le SKU est son propre parent
 
         associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
         variations_id_vers_couleur = {
@@ -1866,20 +1909,19 @@ elif page == "🏆 Best-sellers par variation":
             if a.get("id_variation") in variations_id_vers_couleur and a.get("sku")
         }
 
-        # Regroupement des SKUs catalogue (leaf, non-parents) par produit parent (id_wizi)
+        # Regroupement des SKUs catalogue (leaf, non-parents) par préfixe SKU parent
         groupes = {}
         for sku in skus_catalogue_set:
             prod = get_prod_parent(sku, prod_map)
             if not prod or (prod.get("fournisseur") or "").strip() != fournisseur_selectionne:
                 continue
-            iw = prod.get("id_wizi")
-            parent_info = parent_par_id_wizi.get(iw, prod)
-            sku_parent = parent_info.get("sku") or sku
-            nom_parent = get_prod_parent(sku_parent, prod_map).get("nom") or parent_info.get("nom") or sku_parent
+
+            sku_parent = _trouver_prefixe_parent(sku)
+            nom_parent = get_prod_parent(sku_parent, prod_map).get("nom") or prod.get("nom") or sku_parent
 
             q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
 
-            groupe = groupes.setdefault(iw, {
+            groupe = groupes.setdefault(sku_parent, {
                 "sku_parent": sku_parent,
                 "nom_parent": nom_parent,
                 "variations": [],
