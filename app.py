@@ -367,6 +367,7 @@ _NAV_GROUPES = {
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
                          "🚀 Créer produits sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
+    "🏭 Veinière":      ["⚙️ Paramétrage Veinière"],
     "🛍️ Ankorstore":    ["⭐ Best-sellers Ankorstore", "📊 Gestion stock Ankorstore",
                          "🔎 Produits manquants sur Ankorstore", "🔍 Vérification Ankorstore"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
@@ -1973,6 +1974,153 @@ elif page == "🏆 Best-sellers par variation":
                             "Ventes/SKU/mois": round(v["unites"] / nb_mois, 1),
                         })
                     st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+elif page == "⚙️ Paramétrage Veinière":
+    FOURNISSEUR_VEINIERE = "VEINIERE"
+
+    st.subheader("⚙️ Paramétrage Veinière")
+
+    produits_data = select("produits", "select=sku,nom,fournisseur&statut=eq.visible") or []
+    produits_veiniere = [
+        p for p in produits_data
+        if (p.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
+    ]
+
+    skus_visibles_data = select("skus", "select=sku,statut&statut=eq.visible") or []
+    skus_visibles_set = {s["sku"] for s in skus_visibles_data if s.get("sku")}
+    produits_veiniere = [p for p in produits_veiniere if p.get("sku") in skus_visibles_set]
+
+    parametrage_data = select("veiniere_parametrage",
+        "select=sku,sku_parent,nom_groupe,id_variation,id_categorie") or []
+    parametrage_map = {p["sku"]: p for p in parametrage_data}
+
+    variations_data = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
+    variations_veiniere = [
+        v for v in variations_data
+        if (v.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
+    ]
+    options_variation = ["(aucune)"] + sorted(
+        v.get("couleur_fournisseur") for v in variations_veiniere if v.get("couleur_fournisseur")
+    )
+    variation_id_par_couleur = {v.get("couleur_fournisseur"): v["id"] for v in variations_veiniere}
+    variation_couleur_par_id = {v["id"]: v.get("couleur_fournisseur") for v in variations_veiniere}
+
+    categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
+    categories_veiniere = [
+        c for c in categories_data
+        if (c.get("fournisseur") or "").strip() == FOURNISSEUR_VEINIERE
+    ]
+    options_categorie = ["(aucune)"] + sorted(
+        c.get("categorie") for c in categories_veiniere if c.get("categorie")
+    )
+    categorie_id_par_nom = {c.get("categorie"): c["id"] for c in categories_veiniere}
+    categorie_nom_par_id = {c["id"]: c.get("categorie") for c in categories_veiniere}
+
+    # SKU parent = préfixe parent trouvé via _get_skus_parents_catalogue (même
+    # logique que "🏆 Best-sellers par variation"), mais laissé vide ici si
+    # aucun préfixe parent n'existe (pas de repli sur le SKU lui-même).
+    skus_parents_liste = _get_skus_parents_catalogue()
+    parents_tries_desc = sorted(skus_parents_liste, key=len, reverse=True)
+
+    def _trouver_prefixe_parent_veiniere(sku):
+        for p in parents_tries_desc:
+            if len(p) < len(sku) and sku.startswith(p):
+                return p
+        return ""
+
+    def _extraire_nom_groupe(nom):
+        """Nom sans la couleur : texte avant ' collection ' ou avant ' - ',
+        le premier des deux trouvé dans le nom."""
+        if not nom:
+            return ""
+        idx_collection = nom.find(" collection ")
+        idx_tiret = nom.find(" - ")
+        indices = [i for i in (idx_collection, idx_tiret) if i != -1]
+        if not indices:
+            return nom.strip()
+        return nom[:min(indices)].strip()
+
+    rows = []
+    for p in produits_veiniere:
+        sku = p.get("sku")
+        nom = p.get("nom") or ""
+        existant = parametrage_map.get(sku, {})
+
+        sku_parent_calcule = _trouver_prefixe_parent_veiniere(sku)
+        sku_parent_defaut = existant.get("sku_parent") or sku_parent_calcule
+        nom_groupe = _extraire_nom_groupe(nom)
+
+        id_var_existant = existant.get("id_variation")
+        couleur_defaut = variation_couleur_par_id.get(id_var_existant, "(aucune)") if id_var_existant else "(aucune)"
+
+        id_cat_existant = existant.get("id_categorie")
+        categorie_defaut = categorie_nom_par_id.get(id_cat_existant, "(aucune)") if id_cat_existant else "(aucune)"
+
+        rows.append({
+            "SKU": sku,
+            "Nom produit": nom,
+            "Nom groupe": nom_groupe,
+            "SKU parent": sku_parent_defaut or "",
+            "Catégorie": categorie_defaut,
+            "Couleur fournisseur": couleur_defaut,
+        })
+
+    df_param = pd.DataFrame(rows)
+    if not df_param.empty:
+        df_param = df_param.sort_values("SKU").reset_index(drop=True)
+
+    total_skus = len(df_param)
+    nb_avec_categorie = len(df_param[df_param["Catégorie"] != "(aucune)"]) if not df_param.empty else 0
+    nb_avec_couleur = len(df_param[df_param["Couleur fournisseur"] != "(aucune)"]) if not df_param.empty else 0
+    nb_avec_parent = len(df_param[df_param["SKU parent"].str.strip() != ""]) if not df_param.empty else 0
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total SKUs Veinière", total_skus)
+    with col2:
+        st.metric("Avec catégorie", nb_avec_categorie)
+    with col3:
+        st.metric("Avec couleur fournisseur", nb_avec_couleur)
+    with col4:
+        st.metric("Avec SKU parent", nb_avec_parent)
+
+    if df_param.empty:
+        st.info("Aucun SKU visible pour Veinière.")
+    else:
+        with st.form("form_veiniere_parametrage"):
+            edited_param = st.data_editor(
+                df_param,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "SKU": st.column_config.TextColumn(disabled=True),
+                    "Nom produit": st.column_config.TextColumn(disabled=True),
+                    "Nom groupe": st.column_config.TextColumn(disabled=True),
+                    "SKU parent": st.column_config.TextColumn(),
+                    "Catégorie": st.column_config.SelectboxColumn(options=options_categorie),
+                    "Couleur fournisseur": st.column_config.SelectboxColumn(options=options_variation),
+                }
+            )
+            submitted_param = st.form_submit_button("💾 Enregistrer", type="primary")
+
+        if submitted_param:
+            nb_ok = 0
+            for _, r in edited_param.iterrows():
+                sku_parent_r = (r["SKU parent"] or "").strip()
+                categorie_r = r["Catégorie"]
+                couleur_r = r["Couleur fournisseur"]
+                if not sku_parent_r and categorie_r == "(aucune)" and couleur_r == "(aucune)":
+                    continue
+                upsert("veiniere_parametrage", [{
+                    "sku": r["SKU"],
+                    "sku_parent": sku_parent_r or None,
+                    "nom_groupe": r["Nom groupe"],
+                    "id_variation": variation_id_par_couleur.get(couleur_r),
+                    "id_categorie": categorie_id_par_nom.get(categorie_r),
+                }], "sku")
+                nb_ok += 1
+            st.success(f"✓ {nb_ok} SKU(s) enregistré(s) !")
+            st.rerun()
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
