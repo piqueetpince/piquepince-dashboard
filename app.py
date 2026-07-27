@@ -2398,21 +2398,6 @@ elif page == "🏆 Best-sellers Veinière":
         st.download_button("📥 Exporter CSV", csv, "best_sellers_veiniere.csv", "text/csv")
 
         st.divider()
-        for _, r in df_best.iterrows():
-            titre = f"{r['Nom groupe']} ({r['SKU parent']}) — {r['Unités vendues total']} unités"
-            with st.expander(titre):
-                detail_rows = []
-                for v in sorted(r["_variations"], key=lambda x: -x["unites"]):
-                    couleur = v["couleur"] or "⚠️ Couleur fournisseur non renseignée"
-                    detail_rows.append({
-                        "Couleur fournisseur": couleur,
-                        "SKU variation": v["sku"],
-                        "Unités vendues": v["unites"],
-                        "Ventes/mois": round(v["unites"] / nb_mois, 1),
-                    })
-                st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
-
-        st.divider()
         for cat_obj in categories_veiniere_triees:
             cat_nom = cat_obj.get("categorie")
             if not cat_nom:
@@ -2424,6 +2409,20 @@ elif page == "🏆 Best-sellers Veinière":
                 st.info("Aucun groupe avec des ventes dans cette catégorie.")
             else:
                 st.dataframe(df_cat[cols_affichage], use_container_width=True, hide_index=True)
+
+                for _, r in df_cat.iterrows():
+                    titre = f"{r['Nom groupe']} ({r['SKU parent']}) — {r['Unités vendues total']} unités"
+                    with st.expander(titre):
+                        detail_rows = []
+                        for v in sorted(r["_variations"], key=lambda x: -x["unites"]):
+                            couleur = v["couleur"] or "⚠️ Couleur fournisseur non renseignée"
+                            detail_rows.append({
+                                "Couleur fournisseur": couleur,
+                                "SKU variation": v["sku"],
+                                "Unités vendues": v["unites"],
+                                "Ventes/mois": round(v["unites"] / nb_mois, 1),
+                            })
+                        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
