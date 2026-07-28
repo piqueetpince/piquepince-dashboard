@@ -2621,6 +2621,11 @@ elif page == "🎨 Meilleures variations Veinière":
 
     st.divider()
 
+    tri_choix = st.radio(
+        "Trier par", ["📊 Ventes totales", "🎨 Ventes/SKU/mois"], horizontal=True,
+    )
+    colonne_tri = "Unités vendues total" if tri_choix.startswith("📊") else "Ventes/SKU/mois"
+
     rows_export = []
     for cat_obj in categories_veiniere_triees:
         cat_nom = cat_obj.get("categorie")
@@ -2645,7 +2650,7 @@ elif page == "🎨 Meilleures variations Veinière":
         if not rows_cat:
             st.info("Aucune variation avec des ventes dans cette catégorie.")
         else:
-            df_cat = pd.DataFrame(rows_cat).sort_values("Ventes/SKU/mois", ascending=False).reset_index(drop=True)
+            df_cat = pd.DataFrame(rows_cat).sort_values(colonne_tri, ascending=False).reset_index(drop=True)
             st.dataframe(df_cat, use_container_width=True, hide_index=True)
             for r in df_cat.to_dict("records"):
                 rows_export.append({"Catégorie": cat_nom, **r})
