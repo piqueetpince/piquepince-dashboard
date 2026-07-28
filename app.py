@@ -2350,10 +2350,16 @@ elif page == "🏆 Best-sellers Veinière":
         id_var = p.get("id_variation")
         couleur = couleur_par_id_variation.get(id_var, "") if id_var else ""
 
-        q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+        q_wizi = ventes_wizi.get(sku, 0)
+        q_etsy = ventes_etsy.get(sku, 0)
+        q_faire = ventes_faire.get(sku, 0)
+        q_total = q_wizi + q_etsy + q_faire
 
         groupe = groupes.setdefault(sku_parent, [])
-        groupe.append({"sku": sku, "couleur": couleur, "unites": q_total})
+        groupe.append({
+            "sku": sku, "couleur": couleur, "unites": q_total,
+            "unites_wizi": q_wizi, "unites_etsy": q_etsy, "unites_faire": q_faire,
+        })
 
     # Couleur "réellement" associée par SKU = source de vérité
     # sku_variations_fournisseur (pas veiniere_parametrage.id_variation) —
@@ -2413,7 +2419,15 @@ elif page == "🏆 Best-sellers Veinière":
     for sku_parent, variations in groupes.items():
         categorie_nom = categorie_par_parent.get(sku_parent, "")
 
-        total_unites = sum(v["unites"] for v in variations)
+        # "Unités vendues total" est dérivé des 3 colonnes plateforme
+        # ci-dessous (somme exacte), pas recalculé séparément depuis
+        # v["unites"] — garantit Wizishop + Etsy + Faire == Total par
+        # construction, même si les définitions changent un jour.
+        unites_wizishop = sum(v["unites_wizi"] for v in variations)
+        unites_etsy = sum(v["unites_etsy"] for v in variations)
+        unites_faire = sum(v["unites_faire"] for v in variations)
+        total_unites = unites_wizishop + unites_etsy + unites_faire
+
         nb_variations_avec_couleur = sum(1 for v in variations if v["sku"] in skus_avec_couleur_assoc)
         ventes_couleur = (
             round(total_unites / nb_variations_avec_couleur, 1) if nb_variations_avec_couleur > 0 else None
@@ -2423,6 +2437,9 @@ elif page == "🏆 Best-sellers Veinière":
             "SKU parent": sku_parent,
             "Catégorie": categorie_nom or "(aucune)",
             "Nb variations": len(variations),
+            "Unités Wizishop": unites_wizishop,
+            "Unités Etsy": unites_etsy,
+            "Unités Faire": unites_faire,
             "Unités vendues total": total_unites,
             "Ventes/mois": round(total_unites / nb_mois, 1),
             "Ventes/couleur": ventes_couleur,
@@ -2468,6 +2485,13 @@ elif page == "🏆 Best-sellers Veinière":
         csv = _formater_ventes_couleur(df_best)[cols_affichage].to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exporter CSV", csv, "best_sellers_veiniere.csv", "text/csv")
 
+        # Tableaux par catégorie : pas de colonne "Catégorie" (un seul
+        # tableau par catégorie), détail par plateforme avant le total, et
+        # "Rang" en tête selon le tri actif (colonne_tri).
+        cols_affichage_categorie = ["Rang", "Nom groupe", "SKU parent", "Nb variations",
+                                     "Unités Wizishop", "Unités Etsy", "Unités Faire",
+                                     "Unités vendues total", "Ventes/mois", "Ventes/couleur"]
+
         st.divider()
         for cat_obj in categories_veiniere_triees:
             cat_nom = cat_obj.get("categorie")
@@ -2479,7 +2503,11 @@ elif page == "🏆 Best-sellers Veinière":
             if df_cat.empty:
                 st.info("Aucun groupe avec des ventes dans cette catégorie.")
             else:
-                st.dataframe(_formater_ventes_couleur(df_cat)[cols_affichage], use_container_width=True, hide_index=True)
+                df_cat["Rang"] = df_cat.index + 1
+                st.dataframe(
+                    _formater_ventes_couleur(df_cat)[cols_affichage_categorie],
+                    use_container_width=True, hide_index=True,
+                )
 
                 for _, r in df_cat.iterrows():
                     titre = f"{r['Nom groupe']} ({r['SKU parent']}) — {r['Unités vendues total']} unités"
