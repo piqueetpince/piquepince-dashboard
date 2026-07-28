@@ -2740,10 +2740,10 @@ elif page == "🎨 Meilleures variations Veinière":
                             "Rang": rang,
                             "Nom groupe": g["nom_groupe"],
                             "SKU parent": g["sku_parent"],
-                            "Unités vendues total": g["unites"],
-                            "Ventes/mois": round(g["unites"] / nb_mois, 1),
                             "Disponible": "✅" if disponible else "❌",
                             "Unités (couleur)": unites_couleur if disponible else "-",
+                            "Ventes/mois": round(g["unites"] / nb_mois, 1),
+                            "Unités vendues total": g["unites"],
                         })
                     st.dataframe(pd.DataFrame(lignes_expander), use_container_width=True, hide_index=True)
 
