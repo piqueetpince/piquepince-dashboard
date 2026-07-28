@@ -2182,7 +2182,7 @@ elif page == "⚙️ Paramétrage Veinière":
                 df_groupes_a_enregistrer = st.session_state["veiniere_groupes_df_edit"]
                 nb_ok_groupes = 0
                 for _, r in df_groupes_a_enregistrer.iterrows():
-                    nom_groupe_r = (r["Nom groupe"] or "").strip()
+                    nom_groupe_r = ("" if pd.isna(r["Nom groupe"]) else str(r["Nom groupe"])).strip()
                     if not nom_groupe_r:
                         continue
                     categorie_groupe_r = r["Catégorie"]
@@ -2276,7 +2276,7 @@ elif page == "⚙️ Paramétrage Veinière":
             nb_ok = 0
             for _, r in edited_df.iterrows():
                 sku_r = r["SKU"]
-                sku_parent_r = (r["SKU parent"] or "").strip()
+                sku_parent_r = ("" if pd.isna(r["SKU parent"]) else str(r["SKU parent"])).strip()
                 couleur_r = r["Couleur fournisseur"]
                 if not sku_parent_r and couleur_r == "(aucune)":
                     continue
@@ -2970,7 +2970,7 @@ elif page == "⚙️ Paramétrage NPC":
                 df_groupes_a_enregistrer = st.session_state["npc_groupes_df_edit"]
                 nb_ok_groupes = 0
                 for _, r in df_groupes_a_enregistrer.iterrows():
-                    nom_groupe_r = (r["Nom groupe"] or "").strip()
+                    nom_groupe_r = ("" if pd.isna(r["Nom groupe"]) else str(r["Nom groupe"])).strip()
                     if not nom_groupe_r:
                         continue
                     categorie_groupe_r = r["Catégorie"]
@@ -3056,7 +3056,7 @@ elif page == "⚙️ Paramétrage NPC":
             nb_ok = 0
             for _, r in edited_df.iterrows():
                 sku_r = r["SKU"]
-                sku_parent_r = (r["SKU parent"] or "").strip()
+                sku_parent_r = ("" if pd.isna(r["SKU parent"]) else str(r["SKU parent"])).strip()
                 couleur_r = r["Couleur fournisseur"]
                 if not sku_parent_r and couleur_r == "(aucune)":
                     continue
