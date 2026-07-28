@@ -2315,6 +2315,19 @@ elif page == "🏆 Best-sellers Veinière":
     date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
     ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
 
+    # Pour la référence fournisseur affichée dans les expanders de détail
+    # ci-dessous (get_prod_parent fait le rapprochement SKU -> produit,
+    # avec repli par préfixe si le SKU exact n'est pas dans produits).
+    produits_ref_data = select("produits", "select=sku,reference_fournisseur&statut=eq.visible") or []
+    prod_map_ref = {p["sku"]: p for p in produits_ref_data}
+
+    def _reference_fournisseur_groupe(variations):
+        for v in variations:
+            ref = get_prod_parent(v["sku"], prod_map_ref).get("reference_fournisseur")
+            if ref:
+                return ref
+        return None
+
     parametrage_data = select("veiniere_parametrage", "select=sku,sku_parent,id_variation") or []
     groupes_data = select("veiniere_groupes", "select=sku_parent,nom_groupe,categorie") or []
     nom_groupe_par_parent = {
@@ -2497,9 +2510,9 @@ elif page == "🏆 Best-sellers Veinière":
             cat_nom = cat_obj.get("categorie")
             if not cat_nom:
                 continue
-            st.subheader(cat_nom)
             df_cat = df_best[(df_best["Catégorie"] == cat_nom) & (df_best["Unités vendues total"] > 0)]
             df_cat = df_cat.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
+            st.subheader(f"🏷️ {cat_nom} ({len(df_cat)} modèles)")
             if df_cat.empty:
                 st.info("Aucun groupe avec des ventes dans cette catégorie.")
             else:
@@ -2510,7 +2523,10 @@ elif page == "🏆 Best-sellers Veinière":
                 )
 
                 for _, r in df_cat.iterrows():
-                    titre = f"{r['Nom groupe']} ({r['SKU parent']}) — {r['Unités vendues total']} unités"
+                    titre = f"{r['Nom groupe']} — {r['Unités vendues total']} unités"
+                    ref_fournisseur = _reference_fournisseur_groupe(r["_variations"])
+                    if ref_fournisseur:
+                        titre += f" — Réf. fournisseur : {ref_fournisseur}"
                     with st.expander(titre):
                         detail_rows = []
                         for v in sorted(r["_variations"], key=lambda x: -x["unites"]):
