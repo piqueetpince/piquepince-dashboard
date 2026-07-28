@@ -2262,6 +2262,14 @@ elif page == "⚙️ Paramétrage Veinière":
             }
         )
 
+        # DEBUG temporaire
+        nb_avec_couleur_debug = len(edited_df[edited_df["Couleur fournisseur"] != "(aucune)"])
+        st.write("DEBUG — Lignes avec couleur différente de \"(aucune)\" dans edited_df:", nb_avec_couleur_debug)
+        st.write(
+            "DEBUG — 3 premières lignes (SKU + Couleur fournisseur):",
+            edited_df[["SKU", "Couleur fournisseur"]].head(3),
+        )
+
         if st.button("💾 Enregistrer", type="primary", key="btn_enregistrer_veiniere"):
             nb_ok = 0
             for _, r in edited_df.iterrows():
