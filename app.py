@@ -2385,12 +2385,16 @@ elif page == "🏆 Best-sellers Veinière":
         nb_skus_c = len(v["skus"])
         vsm_c = round(v["unites"] / nb_skus_c / nb_mois, 1) if nb_skus_c > 0 else 0
         classement_par_categorie.setdefault(cat_c, []).append(
-            {"couleur": couleur_c, "ventes_sku_mois": vsm_c}
+            {"couleur": couleur_c, "ventes_sku_mois": vsm_c, "unites_totales": v["unites"]}
         )
     for cat_c, liste_c in classement_par_categorie.items():
         liste_c.sort(key=lambda x: -x["ventes_sku_mois"])
         for i, it in enumerate(liste_c, start=1):
-            it["rang"] = i
+            it["rang_ventes_sku_mois"] = i
+        # Deuxième classement (ventes totales) sur les MÊMES objets, pour que
+        # les deux rangs coexistent sur chaque entrée.
+        for i, it in enumerate(sorted(liste_c, key=lambda x: -x["unites_totales"]), start=1):
+            it["rang_ventes_totales"] = i
 
     # Répartition par catégorie sur l'ENSEMBLE des groupes (indépendante du
     # filtre "Catégorie" de la sidebar, qui n'affecte que le tableau
@@ -2501,15 +2505,16 @@ elif page == "🏆 Best-sellers Veinière":
                         manquantes = [
                             it for it in classement_categorie if it["couleur"] not in couleurs_du_groupe
                         ]
-                        manquantes.sort(key=lambda x: x["rang"])
+                        manquantes.sort(key=lambda x: x["rang_ventes_sku_mois"])
 
                         if not manquantes:
                             st.success("✅ Toutes les meilleures couleurs sont disponibles pour ce produit")
                         else:
                             df_manquantes = pd.DataFrame([
                                 {
-                                    "Couleur fournisseur manquante": it["couleur"],
-                                    "Rang (Meilleures variations)": it["rang"],
+                                    "Couleur fournisseur": it["couleur"],
+                                    "Rang (ventes/SKU/mois)": it["rang_ventes_sku_mois"],
+                                    "Rang (ventes totales)": it["rang_ventes_totales"],
                                     "Ventes/SKU/mois": it["ventes_sku_mois"],
                                 }
                                 for it in manquantes
