@@ -369,6 +369,8 @@ _NAV_GROUPES = {
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
     "🏭 Veinière":      ["⚙️ Paramétrage Veinière", "🏆 Best-sellers Veinière",
                          "🎨 Meilleures variations Veinière"],
+    "🏭 NPC":           ["⚙️ Paramétrage NPC", "🏆 Best-sellers NPC",
+                         "🎨 Meilleures variations NPC"],
     "🛍️ Ankorstore":    ["⭐ Best-sellers Ankorstore", "📊 Gestion stock Ankorstore",
                          "🔎 Produits manquants sur Ankorstore", "🔍 Vérification Ankorstore"],
     "⚙️ Outils":       ["🌍 Comptabilité TVA", "🔗 Connexion Faire/Shopify", "🔄 Synchronisation"],
@@ -2763,6 +2765,786 @@ elif page == "🎨 Meilleures variations Veinière":
                         "Unités vendues total", "Ventes/mois", "Ventes/SKU/mois"]
         csv = df_export[cols_export].to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exporter CSV", csv, "meilleures_variations_veiniere.csv", "text/csv")
+
+elif page == "⚙️ Paramétrage NPC":
+    FOURNISSEUR_NPC = "NPC"
+
+    st.subheader("⚙️ Paramétrage NPC")
+
+    produits_data = select("produits",
+        "select=sku,nom,fournisseur,reference_fournisseur&statut=eq.visible") or []
+    produits_npc = [
+        p for p in produits_data
+        if (p.get("fournisseur") or "").strip() == FOURNISSEUR_NPC
+    ]
+
+    skus_visibles_data = select("skus", "select=sku,statut&statut=eq.visible") or []
+    skus_visibles_set = {s["sku"] for s in skus_visibles_data if s.get("sku")}
+    produits_npc = [p for p in produits_npc if p.get("sku") in skus_visibles_set]
+    prod_map_npc = {p["sku"]: p for p in produits_npc}
+
+    parametrage_data = select("npc_parametrage",
+        "select=sku,sku_parent,nom_groupe,id_variation,id_categorie") or []
+    parametrage_map = {p["sku"]: p for p in parametrage_data}
+
+    variations_data = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
+    variations_npc = [
+        v for v in variations_data
+        if (v.get("fournisseur") or "").strip() == FOURNISSEUR_NPC
+    ]
+    options_variation = ["(aucune)"] + sorted(
+        v.get("couleur_fournisseur") for v in variations_npc if v.get("couleur_fournisseur")
+    )
+    variation_id_par_couleur = {v.get("couleur_fournisseur"): v["id"] for v in variations_npc}
+    variation_couleur_par_id = {v["id"]: v.get("couleur_fournisseur") for v in variations_npc}
+
+    # Les associations SKU -> variation vivent dans sku_variations_fournisseur
+    # (source de vérité, partagée avec la page "🎨 Variations fournisseurs"),
+    # pas dans npc_parametrage.id_variation qui n'est qu'une copie.
+    associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+    couleur_par_sku = {
+        a["sku"]: variation_couleur_par_id[a["id_variation"]]
+        for a in associations_data
+        if a.get("sku") and a.get("id_variation") in variation_couleur_par_id
+    }
+
+    categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
+    categories_npc = [
+        c for c in categories_data
+        if (c.get("fournisseur") or "").strip() == FOURNISSEUR_NPC
+    ]
+    options_categorie = ["(aucune)"] + sorted(
+        c.get("categorie") for c in categories_npc if c.get("categorie")
+    )
+
+    # Noms de groupe et catégories déjà enregistrés (npc_groupes), par
+    # sku_parent — récupérés tôt pour être réutilisés à la fois par les
+    # métriques ci-dessous, la section "Noms des groupes et catégories" et
+    # le tableau principal.
+    groupes_existants_data = select("npc_groupes", "select=sku_parent,nom_groupe,categorie") or []
+    nom_groupe_enregistre = {
+        g["sku_parent"]: g.get("nom_groupe") or ""
+        for g in groupes_existants_data if g.get("sku_parent")
+    }
+    categorie_par_parent_affichage = {
+        g["sku_parent"]: g.get("categorie") or ""
+        for g in groupes_existants_data if g.get("sku_parent")
+    }
+
+    # Métriques d'alerte : parmi les SKUs NPC, combien n'ont pas
+    # (encore) de nom de groupe / catégorie / couleur fournisseur renseignés.
+    nb_nom_manquant = 0
+    nb_categorie_manquante = 0
+    nb_couleur_manquante = 0
+    for p in produits_npc:
+        sku_m = p.get("sku")
+        sku_parent_m = (parametrage_map.get(sku_m, {}).get("sku_parent") or "").strip()
+        if not sku_parent_m or not nom_groupe_enregistre.get(sku_parent_m):
+            nb_nom_manquant += 1
+        if not sku_parent_m or not categorie_par_parent_affichage.get(sku_parent_m):
+            nb_categorie_manquante += 1
+        if sku_m not in couleur_par_sku:
+            nb_couleur_manquante += 1
+
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    with col_m1:
+        st.metric("Total SKUs NPC", len(produits_npc))
+    with col_m2:
+        st.metric(
+            "⚠️ Nom groupe manquant", nb_nom_manquant,
+            delta=f"-{nb_nom_manquant}" if nb_nom_manquant > 0 else "0",
+        )
+    with col_m3:
+        st.metric(
+            "⚠️ Catégorie manquante", nb_categorie_manquante,
+            delta=f"-{nb_categorie_manquante}" if nb_categorie_manquante > 0 else "0",
+        )
+    with col_m4:
+        st.metric(
+            "⚠️ Couleur fournisseur manquante", nb_couleur_manquante,
+            delta=f"-{nb_couleur_manquante}" if nb_couleur_manquante > 0 else "0",
+        )
+
+    # SKU parent = préfixe parent trouvé via _get_skus_parents_catalogue (même
+    # logique que "🏆 Best-sellers par variation"), mais laissé vide ici si
+    # aucun préfixe parent n'existe (pas de repli sur le SKU lui-même).
+    skus_parents_liste = _get_skus_parents_catalogue()
+    parents_tries_desc = sorted(skus_parents_liste, key=len, reverse=True)
+
+    def _trouver_prefixe_parent_npc(sku):
+        for p in parents_tries_desc:
+            if len(p) < len(sku) and sku.startswith(p):
+                return p
+        return ""
+
+    def _extraire_nom_groupe(nom):
+        """Nom sans la couleur : texte avant ' collection ' ou avant ' - ',
+        le premier des deux trouvé dans le nom."""
+        if not nom:
+            return ""
+        idx_collection = nom.find(" collection ")
+        idx_tiret = nom.find(" - ")
+        indices = [i for i in (idx_collection, idx_tiret) if i != -1]
+        if not indices:
+            return nom.strip()
+        return nom[:min(indices)].strip()
+
+    with st.expander("📝 Noms des groupes et catégories", expanded=False):
+        skus_parents_distincts = sorted({
+            (p.get("sku_parent") or "").strip()
+            for p in parametrage_data
+            if (p.get("sku_parent") or "").strip()
+        })
+
+        # groupes_existants_data / nom_groupe_enregistre déjà chargés plus haut
+        # (réutilisés pour les métriques d'alerte).
+        categorie_groupe_enregistree = {
+            g["sku_parent"]: g.get("categorie") or "(aucune)"
+            for g in groupes_existants_data if g.get("sku_parent")
+        }
+
+        skus_par_parent = {}
+        for p in parametrage_data:
+            sp = (p.get("sku_parent") or "").strip()
+            if sp and p.get("sku"):
+                skus_par_parent.setdefault(sp, []).append(p["sku"])
+
+        rows_groupes = []
+        for sku_parent in skus_parents_distincts:
+            enfants = skus_par_parent.get(sku_parent, [])
+            nom_enregistre = nom_groupe_enregistre.get(sku_parent, "")
+            if nom_enregistre:
+                nom_groupe_defaut = nom_enregistre
+            else:
+                nom_groupe_defaut = ""
+                for enfant in enfants:
+                    nom_produit_enfant = prod_map_npc.get(enfant, {}).get("nom")
+                    if nom_produit_enfant:
+                        nom_groupe_defaut = _extraire_nom_groupe(nom_produit_enfant)
+                        break
+
+            rows_groupes.append({
+                "SKU parent": sku_parent,
+                "Nom groupe": nom_groupe_defaut,
+                "Catégorie": categorie_groupe_enregistree.get(sku_parent, "(aucune)"),
+                "Nb SKUs associés": len(enfants),
+            })
+
+        df_groupes = pd.DataFrame(rows_groupes)
+
+        if df_groupes.empty:
+            st.info("Aucun SKU parent renseigné pour l'instant dans le tableau principal ci-dessous.")
+        else:
+            # Même pattern on_change + session_state que le tableau principal
+            # (voir plus bas) : évite que les éditions soient écrasées par le
+            # rechargement de df_groupes à chaque rerun déclenché par data_editor.
+            if ("npc_groupes_df_edit" not in st.session_state
+                    or st.session_state.get("npc_groupes_refresh")
+                    or "Catégorie" not in st.session_state["npc_groupes_df_edit"].columns):
+                st.session_state["npc_groupes_df_edit"] = df_groupes.copy()
+                st.session_state["npc_groupes_refresh"] = False
+
+            def _appliquer_edits_groupes():
+                edits = st.session_state["npc_groupes_data_editor"]
+                df_base = st.session_state["npc_groupes_df_edit"].copy()
+                for idx, changes in edits.get("edited_rows", {}).items():
+                    for col, val in changes.items():
+                        df_base.at[int(idx), col] = val
+                st.session_state["npc_groupes_df_edit"] = df_base
+
+            st.data_editor(
+                st.session_state["npc_groupes_df_edit"],
+                use_container_width=True,
+                hide_index=True,
+                key="npc_groupes_data_editor",
+                on_change=_appliquer_edits_groupes,
+                column_config={
+                    "SKU parent": st.column_config.TextColumn(disabled=True),
+                    "Nom groupe": st.column_config.TextColumn(),
+                    "Catégorie": st.column_config.SelectboxColumn(options=options_categorie),
+                    "Nb SKUs associés": st.column_config.NumberColumn(disabled=True),
+                }
+            )
+
+            if st.button("💾 Enregistrer les noms de groupes", type="primary", key="btn_enregistrer_groupes_npc"):
+                df_groupes_a_enregistrer = st.session_state["npc_groupes_df_edit"]
+                nb_ok_groupes = 0
+                for _, r in df_groupes_a_enregistrer.iterrows():
+                    nom_groupe_r = (r["Nom groupe"] or "").strip()
+                    if not nom_groupe_r:
+                        continue
+                    categorie_groupe_r = r["Catégorie"]
+                    upsert("npc_groupes", [{
+                        "sku_parent": r["SKU parent"],
+                        "nom_groupe": nom_groupe_r,
+                        "categorie": categorie_groupe_r if categorie_groupe_r != "(aucune)" else None,
+                    }], "sku_parent")
+                    nb_ok_groupes += 1
+                st.success(f"✓ {nb_ok_groupes} nom(s) de groupe enregistré(s) !")
+                st.session_state["npc_groupes_refresh"] = True
+                st.rerun()
+
+    # categorie_par_parent_affichage déjà chargée plus haut (métriques
+    # d'alerte) ; réutilisée ici, résolue via le sku_parent ENREGISTRÉ en
+    # base (pas la valeur calculée/pas encore sauvegardée) — cohérent avec
+    # le fait qu'une catégorie n'est assignable qu'à un groupe réellement
+    # créé dans la section "📝 Noms des groupes et catégories" ci-dessus.
+
+    rows = []
+    for p in produits_npc:
+        sku = p.get("sku")
+        nom = p.get("nom") or ""
+        existant = parametrage_map.get(sku, {})
+
+        sku_parent_calcule = _trouver_prefixe_parent_npc(sku)
+        sku_parent_enregistre = existant.get("sku_parent") or ""
+        sku_parent_defaut = sku_parent_enregistre or sku_parent_calcule
+
+        # Priorité au nom de groupe enregistré (npc_groupes.nom_groupe),
+        # même logique que "Catégorie" — repli sur le calcul automatique
+        # (produits.nom) si pas encore enregistré pour ce sku_parent.
+        nom_groupe_enregistre_pour_sku = (
+            nom_groupe_enregistre.get(sku_parent_enregistre, "") if sku_parent_enregistre else ""
+        )
+        nom_groupe = nom_groupe_enregistre_pour_sku or _extraire_nom_groupe(nom)
+
+        couleur_defaut = couleur_par_sku.get(sku, "(aucune)")
+
+        categorie_groupe = (
+            categorie_par_parent_affichage.get(sku_parent_enregistre, "") if sku_parent_enregistre else ""
+        )
+
+        rows.append({
+            "SKU": sku,
+            "Nom produit": nom,
+            "Nom groupe": nom_groupe,
+            "SKU parent": sku_parent_defaut or "",
+            "Catégorie": categorie_groupe,
+            "Couleur fournisseur": couleur_defaut,
+        })
+
+    df_param = pd.DataFrame(rows)
+    if not df_param.empty:
+        df_param = df_param.sort_values("SKU").reset_index(drop=True)
+
+    if df_param.empty:
+        st.info("Aucun SKU visible pour NPC.")
+    else:
+        # Pas de session_state ici : df_param est reconstruit depuis la base
+        # à chaque chargement de page, et st.data_editor renvoie directement
+        # le DataFrame édité (fusion automatique de ses propres éditions avec
+        # les données fraîches). Plus simple et plus fiable que le pattern
+        # session_state + on_change, au prix d'un rechargement un peu plus
+        # lent — mais ça élimine les problèmes de cache périmé rencontrés
+        # avec l'approche précédente.
+        edited_df = st.data_editor(
+            df_param,
+            use_container_width=True,
+            hide_index=True,
+            key="npc_data_editor",
+            column_config={
+                "SKU": st.column_config.TextColumn(disabled=True),
+                "Nom produit": st.column_config.TextColumn(disabled=True),
+                "Nom groupe": st.column_config.TextColumn(disabled=True),
+                "SKU parent": st.column_config.TextColumn(),
+                "Catégorie": st.column_config.TextColumn(disabled=True),
+                "Couleur fournisseur": st.column_config.SelectboxColumn(options=options_variation),
+            }
+        )
+
+        if st.button("💾 Enregistrer", type="primary", key="btn_enregistrer_npc"):
+            nb_ok = 0
+            for _, r in edited_df.iterrows():
+                sku_r = r["SKU"]
+                sku_parent_r = (r["SKU parent"] or "").strip()
+                couleur_r = r["Couleur fournisseur"]
+                if not sku_parent_r and couleur_r == "(aucune)":
+                    continue
+
+                id_var_r = variation_id_par_couleur.get(couleur_r)
+
+                upsert("npc_parametrage", [{
+                    "sku": sku_r,
+                    "sku_parent": sku_parent_r or None,
+                    "nom_groupe": r["Nom groupe"],
+                    "id_variation": id_var_r,
+                }], "sku")
+
+                if id_var_r is not None:
+                    prod_r = prod_map_npc.get(sku_r, {})
+                    upsert("sku_variations_fournisseur", [{
+                        "sku": sku_r,
+                        "fournisseur": FOURNISSEUR_NPC,
+                        "reference_fournisseur": prod_r.get("reference_fournisseur") or "",
+                        "id_variation": id_var_r,
+                    }], "sku")
+
+                nb_ok += 1
+
+            st.success(f"✓ {nb_ok} SKU(s) enregistré(s) !")
+            st.rerun()
+
+elif page == "🏆 Best-sellers NPC":
+    FOURNISSEUR_NPC = "NPC"
+
+    categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
+    categories_npc = [
+        c for c in categories_data
+        if (c.get("fournisseur") or "").strip() == FOURNISSEUR_NPC
+    ]
+    # Ordre d'affichage des tableaux par catégorie = ordre de création dans
+    # categories_fournisseur (id croissant), pas l'ordre alphabétique.
+    categories_npc_triees = sorted(categories_npc, key=lambda c: c.get("id") or 0)
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+
+    st.subheader("🏆 Best-sellers NPC")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
+
+    # Pour la référence fournisseur affichée dans les expanders de détail
+    # ci-dessous (get_prod_parent fait le rapprochement SKU -> produit,
+    # avec repli par préfixe si le SKU exact n'est pas dans produits).
+    produits_ref_data = select("produits", "select=sku,reference_fournisseur&statut=eq.visible") or []
+    prod_map_ref = {p["sku"]: p for p in produits_ref_data}
+
+    def _reference_fournisseur_groupe(variations):
+        for v in variations:
+            ref = get_prod_parent(v["sku"], prod_map_ref).get("reference_fournisseur")
+            if ref:
+                return ref
+        return None
+
+    parametrage_data = select("npc_parametrage", "select=sku,sku_parent,id_variation") or []
+    groupes_data = select("npc_groupes", "select=sku_parent,nom_groupe,categorie") or []
+    nom_groupe_par_parent = {
+        g["sku_parent"]: g.get("nom_groupe") or "" for g in groupes_data if g.get("sku_parent")
+    }
+    categorie_par_parent = {
+        g["sku_parent"]: g.get("categorie") or "" for g in groupes_data if g.get("sku_parent")
+    }
+
+    variations_data = select("variations_fournisseur", "select=id,couleur_fournisseur") or []
+    couleur_par_id_variation = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_data}
+
+    # Nb de variations avec couleur "réellement" renseignée = source de
+    # vérité sku_variations_fournisseur (pas npc_parametrage.id_variation,
+    # qui n'en est qu'une copie) — utilisé pour la colonne "Ventes/couleur".
+    associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+    skus_avec_couleur_assoc = {
+        a["sku"] for a in associations_data if a.get("sku") and a.get("id_variation") is not None
+    }
+
+    # Regroupement par sku_parent : pour chaque SKU présent dans
+    # npc_parametrage avec un sku_parent renseigné, on cumule ses
+    # ventes sous ce parent. Les SKUs sans sku_parent renseigné (pas encore
+    # paramétrés) ne sont pas inclus. La catégorie est désormais portée par
+    # le groupe (npc_groupes.categorie), plus par chaque SKU.
+    groupes = {}
+    for p in parametrage_data:
+        sku = p.get("sku")
+        sku_parent = (p.get("sku_parent") or "").strip()
+        if not sku or not sku_parent:
+            continue
+
+        id_var = p.get("id_variation")
+        couleur = couleur_par_id_variation.get(id_var, "") if id_var else ""
+
+        q_wizi = ventes_wizi.get(sku, 0)
+        q_etsy = ventes_etsy.get(sku, 0)
+        q_faire = ventes_faire.get(sku, 0)
+        q_total = q_wizi + q_etsy + q_faire
+
+        groupe = groupes.setdefault(sku_parent, [])
+        groupe.append({
+            "sku": sku, "couleur": couleur, "unites": q_total,
+            "unites_wizi": q_wizi, "unites_etsy": q_etsy, "unites_faire": q_faire,
+        })
+
+    # Couleur "réellement" associée par SKU = source de vérité
+    # sku_variations_fournisseur (pas npc_parametrage.id_variation) —
+    # utilisé pour détecter les couleurs manquantes par groupe ci-dessous.
+    couleur_reelle_par_sku = {
+        a["sku"]: couleur_par_id_variation.get(a["id_variation"])
+        for a in associations_data
+        if a.get("sku") and a.get("id_variation") in couleur_par_id_variation
+    }
+
+    # Agrégation (catégorie, couleur) -> ventes, même logique que la page
+    # "🎨 Meilleures variations NPC", pour classer les couleurs par
+    # Ventes/SKU/mois au sein de chaque catégorie (utilisé par la section
+    # "Couleurs manquantes" de chaque expander de groupe).
+    agg_couleur = {}
+    for sku_parent_c, variations_c in groupes.items():
+        cat_c = categorie_par_parent.get(sku_parent_c, "")
+        if not cat_c:
+            continue
+        for v in variations_c:
+            if not v["couleur"]:
+                continue
+            entry_c = agg_couleur.setdefault((cat_c, v["couleur"]), {"skus": set(), "unites": 0})
+            entry_c["skus"].add(v["sku"])
+            entry_c["unites"] += v["unites"]
+
+    classement_par_categorie = {}
+    for (cat_c, couleur_c), v in agg_couleur.items():
+        nb_skus_c = len(v["skus"])
+        vsm_c = round(v["unites"] / nb_skus_c / nb_mois, 1) if nb_skus_c > 0 else 0
+        classement_par_categorie.setdefault(cat_c, []).append(
+            {"couleur": couleur_c, "ventes_sku_mois": vsm_c, "unites_totales": v["unites"]}
+        )
+    for cat_c, liste_c in classement_par_categorie.items():
+        liste_c.sort(key=lambda x: -x["ventes_sku_mois"])
+        for i, it in enumerate(liste_c, start=1):
+            it["rang_ventes_sku_mois"] = i
+        # Deuxième classement (ventes totales) sur les MÊMES objets, pour que
+        # les deux rangs coexistent sur chaque entrée.
+        for i, it in enumerate(sorted(liste_c, key=lambda x: -x["unites_totales"]), start=1):
+            it["rang_ventes_totales"] = i
+
+    # Répartition par catégorie sur l'ENSEMBLE des groupes (indépendante du
+    # filtre "Catégorie" de la sidebar, qui n'affecte que le tableau
+    # détaillé plus bas) — sert de barre de métriques globale.
+    categories_noms = sorted(c.get("categorie") for c in categories_npc if c.get("categorie"))
+    unites_par_categorie = {cat: 0 for cat in categories_noms}
+    total_unites_tous_groupes = 0
+    for sku_parent_g, variations_g in groupes.items():
+        total_unites_groupe = sum(v["unites"] for v in variations_g)
+        total_unites_tous_groupes += total_unites_groupe
+        cat_g = categorie_par_parent.get(sku_parent_g, "")
+        if cat_g in unites_par_categorie:
+            unites_par_categorie[cat_g] += total_unites_groupe
+
+    rows = []
+    for sku_parent, variations in groupes.items():
+        categorie_nom = categorie_par_parent.get(sku_parent, "")
+
+        # "Unités vendues total" est dérivé des 3 colonnes plateforme
+        # ci-dessous (somme exacte), pas recalculé séparément depuis
+        # v["unites"] — garantit Wizishop + Etsy + Faire == Total par
+        # construction, même si les définitions changent un jour.
+        unites_wizishop = sum(v["unites_wizi"] for v in variations)
+        unites_etsy = sum(v["unites_etsy"] for v in variations)
+        unites_faire = sum(v["unites_faire"] for v in variations)
+        total_unites = unites_wizishop + unites_etsy + unites_faire
+
+        nb_variations_avec_couleur = sum(1 for v in variations if v["sku"] in skus_avec_couleur_assoc)
+        ventes_couleur = (
+            round(total_unites / nb_variations_avec_couleur, 1) if nb_variations_avec_couleur > 0 else None
+        )
+        rows.append({
+            "Nom groupe": nom_groupe_par_parent.get(sku_parent) or sku_parent,
+            "SKU parent": sku_parent,
+            "Catégorie": categorie_nom or "(aucune)",
+            "Nb variations": len(variations),
+            "Unités Wizishop": unites_wizishop,
+            "Unités Etsy": unites_etsy,
+            "Unités Faire": unites_faire,
+            "Unités vendues total": total_unites,
+            "Ventes/mois": round(total_unites / nb_mois, 1),
+            "Ventes/couleur": ventes_couleur,
+            "_variations": variations,
+        })
+
+    df_best = pd.DataFrame(rows)
+
+    cols_metriques = st.columns(1 + len(categories_noms))
+    with cols_metriques[0]:
+        st.metric("Total unités vendues", total_unites_tous_groupes)
+    for col_cat, cat in zip(cols_metriques[1:], categories_noms):
+        unites_cat = unites_par_categorie.get(cat, 0)
+        pct = round(unites_cat / total_unites_tous_groupes * 100) if total_unites_tous_groupes > 0 else 0
+        with col_cat:
+            st.metric(cat, unites_cat, delta=f"{pct}%", delta_color="off")
+
+    # Choix de tri global à la page — appliqué au tableau principal ET à
+    # chaque tableau par catégorie en dessous.
+    tri_choix = st.radio(
+        "Trier par", ["📊 Ventes totales", "🎨 Ventes par couleur"], horizontal=True,
+    )
+    colonne_tri = "Unités vendues total" if tri_choix.startswith("📊") else "Ventes/couleur"
+    if not df_best.empty:
+        df_best = df_best.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
+
+    def _formater_ventes_couleur(df):
+        """Copie d'affichage : NaN -> '—' sur Ventes/couleur, sans toucher au
+        DataFrame numérique d'origine (encore utile pour trier/filtrer)."""
+        df_affichage = df.copy()
+        df_affichage["Ventes/couleur"] = df_affichage["Ventes/couleur"].apply(
+            lambda x: "—" if pd.isna(x) else x
+        )
+        return df_affichage
+
+    if df_best.empty:
+        st.info("Aucun groupe trouvé pour ces filtres.")
+    else:
+        cols_affichage = ["SKU parent", "Nom groupe", "Catégorie", "Nb variations",
+                           "Unités vendues total", "Ventes/mois", "Ventes/couleur"]
+        st.dataframe(_formater_ventes_couleur(df_best)[cols_affichage], use_container_width=True, hide_index=True)
+
+        csv = _formater_ventes_couleur(df_best)[cols_affichage].to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv, "best_sellers_npc.csv", "text/csv")
+
+        # Tableaux par catégorie : pas de colonne "Catégorie" (un seul
+        # tableau par catégorie), détail par plateforme avant le total, et
+        # "Rang" en tête selon le tri actif (colonne_tri).
+        cols_affichage_categorie = ["Rang", "Nom groupe", "SKU parent", "Nb variations",
+                                     "Unités Wizishop", "Unités Etsy", "Unités Faire",
+                                     "Unités vendues total", "Ventes/mois", "Ventes/couleur"]
+
+        st.divider()
+        for cat_obj in categories_npc_triees:
+            cat_nom = cat_obj.get("categorie")
+            if not cat_nom:
+                continue
+            df_cat = df_best[(df_best["Catégorie"] == cat_nom) & (df_best["Unités vendues total"] > 0)]
+            df_cat = df_cat.sort_values(colonne_tri, ascending=False, na_position="last").reset_index(drop=True)
+            st.subheader(f"🏷️ {cat_nom} ({len(df_cat)} modèles)")
+            if df_cat.empty:
+                st.info("Aucun groupe avec des ventes dans cette catégorie.")
+            else:
+                df_cat["Rang"] = df_cat.index + 1
+                st.dataframe(
+                    _formater_ventes_couleur(df_cat)[cols_affichage_categorie],
+                    use_container_width=True, hide_index=True,
+                )
+
+                for _, r in df_cat.iterrows():
+                    titre = f"{r['Nom groupe']} — {r['Unités vendues total']} unités"
+                    ref_fournisseur = _reference_fournisseur_groupe(r["_variations"])
+                    if ref_fournisseur:
+                        titre += f" — Réf. fournisseur : {ref_fournisseur}"
+                    with st.expander(titre):
+                        detail_rows = []
+                        for v in sorted(r["_variations"], key=lambda x: -x["unites"]):
+                            couleur = v["couleur"] or "⚠️ Couleur fournisseur non renseignée"
+                            detail_rows.append({
+                                "Couleur fournisseur": couleur,
+                                "SKU variation": v["sku"],
+                                "Unités vendues": v["unites"],
+                                "Ventes/mois": round(v["unites"] / nb_mois, 1),
+                            })
+                        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+
+                        st.markdown("**Couleurs manquantes**")
+                        couleurs_du_groupe = {
+                            couleur_reelle_par_sku.get(v["sku"])
+                            for v in r["_variations"]
+                            if couleur_reelle_par_sku.get(v["sku"])
+                        }
+                        classement_categorie = classement_par_categorie.get(cat_nom, [])
+                        manquantes = [
+                            it for it in classement_categorie if it["couleur"] not in couleurs_du_groupe
+                        ]
+                        manquantes.sort(key=lambda x: x["rang_ventes_sku_mois"])
+
+                        if not manquantes:
+                            st.success("✅ Toutes les meilleures couleurs sont disponibles pour ce produit")
+                        else:
+                            df_manquantes = pd.DataFrame([
+                                {
+                                    "Couleur fournisseur": it["couleur"],
+                                    "Rang (ventes/SKU/mois)": it["rang_ventes_sku_mois"],
+                                    "Rang (ventes totales)": it["rang_ventes_totales"],
+                                    "Ventes/SKU/mois": it["ventes_sku_mois"],
+                                }
+                                for it in manquantes
+                            ])
+                            st.dataframe(df_manquantes, use_container_width=True, hide_index=True)
+
+elif page == "🎨 Meilleures variations NPC":
+    FOURNISSEUR_NPC = "NPC"
+
+    with st.sidebar:
+        st.divider()
+        nb_mois = st.slider("Période (mois)", min_value=1, max_value=12, value=6)
+
+    st.subheader("🎨 Meilleures variations NPC")
+
+    date_limite = (pd.Timestamp.now() - pd.DateOffset(months=nb_mois)).strftime("%Y-%m-%dT%H:%M:%S")
+    ventes_wizi, ventes_etsy, ventes_faire, _ = _get_catalogue_ventes(date_limite)
+
+    parametrage_data = select("npc_parametrage", "select=sku,sku_parent,id_variation") or []
+
+    groupes_data = select("npc_groupes", "select=sku_parent,nom_groupe,categorie") or []
+    categorie_par_parent = {
+        g["sku_parent"]: g.get("categorie") or "" for g in groupes_data if g.get("sku_parent")
+    }
+    nom_groupe_par_parent = {
+        g["sku_parent"]: g.get("nom_groupe") or "" for g in groupes_data if g.get("sku_parent")
+    }
+
+    variations_data = select("variations_fournisseur", "select=id,fournisseur,couleur_fournisseur") or []
+    variations_npc = [
+        v for v in variations_data
+        if (v.get("fournisseur") or "").strip() == FOURNISSEUR_NPC
+    ]
+    couleur_par_id_variation = {v["id"]: v.get("couleur_fournisseur") or "" for v in variations_npc}
+
+    # Disponibilité couleur par SKU = source de vérité sku_variations_fournisseur
+    # (pas npc_parametrage.id_variation, qui n'en est qu'une copie) —
+    # utilisé pour la colonne "Disponible" des expanders par couleur ci-dessous.
+    associations_data = select("sku_variations_fournisseur", "select=sku,id_variation") or []
+    couleur_disponible_par_sku = {
+        a["sku"]: couleur_par_id_variation[a["id_variation"]]
+        for a in associations_data
+        if a.get("sku") and a.get("id_variation") in couleur_par_id_variation
+    }
+
+    # Regroupement de tous les SKUs par sku_parent (indépendamment de la
+    # couleur), pour les tableaux "best-sellers" affichés dans chaque
+    # expander couleur.
+    groupes_par_parent = {}
+    for p in parametrage_data:
+        sku_g = p.get("sku")
+        sku_parent_g = (p.get("sku_parent") or "").strip()
+        if not sku_g or not sku_parent_g:
+            continue
+        q_total_g = ventes_wizi.get(sku_g, 0) + ventes_etsy.get(sku_g, 0) + ventes_faire.get(sku_g, 0)
+        entry_g = groupes_par_parent.setdefault(sku_parent_g, {"skus": [], "unites": 0})
+        entry_g["skus"].append(sku_g)
+        entry_g["unites"] += q_total_g
+
+    categories_data = select("categories_fournisseur", "select=id,fournisseur,categorie") or []
+    categories_npc = [
+        c for c in categories_data
+        if (c.get("fournisseur") or "").strip() == FOURNISSEUR_NPC
+    ]
+    # Ordre d'affichage = ordre de création dans categories_fournisseur (id
+    # croissant), pas l'ordre alphabétique — cf. "🏆 Best-sellers NPC".
+    categories_npc_triees = sorted(categories_npc, key=lambda c: c.get("id") or 0)
+
+    # Agrégation par (catégorie, couleur fournisseur) : pour chaque SKU de
+    # npc_parametrage, on résout sa couleur (via id_variation) et sa
+    # catégorie (via sku_parent -> npc_groupes.categorie), puis on
+    # cumule ses ventes sous cette paire. Les SKUs sans couleur ou sans
+    # catégorie résolue ne contribuent à aucun groupe.
+    agg = {}
+    for p in parametrage_data:
+        sku = p.get("sku")
+        sku_parent = (p.get("sku_parent") or "").strip()
+        id_var = p.get("id_variation")
+        if not sku or not sku_parent or id_var is None:
+            continue
+
+        couleur = couleur_par_id_variation.get(id_var)
+        if not couleur:
+            continue
+        categorie = categorie_par_parent.get(sku_parent)
+        if not categorie:
+            continue
+
+        q_total = ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+
+        entry = agg.setdefault((categorie, couleur), {"skus": set(), "unites": 0})
+        entry["skus"].add(sku)
+        entry["unites"] += q_total
+
+    total_unites_global = sum(v["unites"] for v in agg.values())
+    unites_par_categorie = {}
+    for (categorie, couleur), v in agg.items():
+        unites_par_categorie[categorie] = unites_par_categorie.get(categorie, 0) + v["unites"]
+
+    cols_metriques = st.columns(1 + len(categories_npc_triees))
+    with cols_metriques[0]:
+        st.metric("Total unités vendues", total_unites_global)
+    for col_cat, cat_obj in zip(cols_metriques[1:], categories_npc_triees):
+        cat_nom = cat_obj.get("categorie")
+        unites_cat = unites_par_categorie.get(cat_nom, 0)
+        pct = round(unites_cat / total_unites_global * 100) if total_unites_global > 0 else 0
+        with col_cat:
+            st.metric(cat_nom, unites_cat, delta=f"{pct}%", delta_color="off")
+
+    st.divider()
+
+    tri_choix = st.radio(
+        "Trier par", ["📊 Ventes totales", "🎨 Ventes/SKU/mois"], horizontal=True,
+    )
+    colonne_tri = "Unités vendues total" if tri_choix.startswith("📊") else "Ventes/SKU/mois"
+
+    rows_export = []
+    for cat_obj in categories_npc_triees:
+        cat_nom = cat_obj.get("categorie")
+        if not cat_nom:
+            continue
+        st.subheader(cat_nom)
+
+        rows_cat = []
+        for (categorie, couleur), v in agg.items():
+            if categorie != cat_nom:
+                continue
+            nb_skus = len(v["skus"])
+            unites = v["unites"]
+            rows_cat.append({
+                "Couleur fournisseur": couleur,
+                "Nb SKUs associés": nb_skus,
+                "Unités vendues total": unites,
+                "Ventes/mois": round(unites / nb_mois, 1),
+                "Ventes/SKU/mois": round(unites / nb_skus / nb_mois, 1),
+            })
+
+        if not rows_cat:
+            st.info("Aucune variation avec des ventes dans cette catégorie.")
+        else:
+            df_cat = pd.DataFrame(rows_cat).sort_values(colonne_tri, ascending=False).reset_index(drop=True)
+            st.dataframe(df_cat, use_container_width=True, hide_index=True)
+            for r in df_cat.to_dict("records"):
+                rows_export.append({"Catégorie": cat_nom, **r})
+
+            # Groupes (sku_parent) de cette catégorie, triés par unités
+            # vendues décroissant — réutilisés dans chaque expander couleur
+            # ci-dessous avec une colonne "Disponible" spécifique à la couleur.
+            groupes_cat = [
+                {
+                    "sku_parent": sp,
+                    "nom_groupe": nom_groupe_par_parent.get(sp) or sp,
+                    "unites": g["unites"],
+                    "skus": g["skus"],
+                }
+                for sp, g in groupes_par_parent.items()
+                if categorie_par_parent.get(sp) == cat_nom
+            ]
+            groupes_cat.sort(key=lambda x: -x["unites"])
+
+            for couleur_row in df_cat.to_dict("records"):
+                couleur_nom = couleur_row["Couleur fournisseur"]
+                with st.expander(couleur_nom):
+                    lignes_expander = []
+                    for rang, g in enumerate(groupes_cat, start=1):
+                        skus_cette_couleur = [
+                            sku for sku in g["skus"] if couleur_disponible_par_sku.get(sku) == couleur_nom
+                        ]
+                        disponible = bool(skus_cette_couleur)
+                        if disponible:
+                            unites_couleur = sum(
+                                ventes_wizi.get(sku, 0) + ventes_etsy.get(sku, 0) + ventes_faire.get(sku, 0)
+                                for sku in skus_cette_couleur
+                            )
+                        else:
+                            unites_couleur = None
+
+                        lignes_expander.append({
+                            "Rang": rang,
+                            "Nom groupe": g["nom_groupe"],
+                            "SKU parent": g["sku_parent"],
+                            "Disponible": "✅" if disponible else "❌",
+                            "Unités (couleur)": unites_couleur if disponible else "-",
+                            "Unités/mois (couleur)": round(unites_couleur / nb_mois, 1) if disponible else "-",
+                            "Unités vendues total": g["unites"],
+                            "Ventes/mois": round(g["unites"] / nb_mois, 1),
+                        })
+                    st.dataframe(pd.DataFrame(lignes_expander), use_container_width=True, hide_index=True)
+
+    if rows_export:
+        st.divider()
+        df_export = pd.DataFrame(rows_export)
+        cols_export = ["Catégorie", "Couleur fournisseur", "Nb SKUs associés",
+                        "Unités vendues total", "Ventes/mois", "Ventes/SKU/mois"]
+        csv = df_export[cols_export].to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Exporter CSV", csv, "meilleures_variations_npc.csv", "text/csv")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
