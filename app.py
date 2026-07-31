@@ -280,6 +280,24 @@ def _get_catalogue_ventes(date_limite):
                 if sku_resolu:
                     ventes_faire[sku_resolu] = ventes_faire.get(sku_resolu, 0) + (l.get("quantite") or 0)
 
+    # DEBUG TEMPORAIRE — investigation écart BAR0031 sur "🏆 Best-sellers Veinière", à retirer une fois résolu.
+    if page == "🏆 Best-sellers Veinière":
+        _debug_skus_bar0031 = [
+            "BAR0031VISON", "BAR0031ALBA", "BAR0031EF", "BAR0031MERDUSUD", "BAR0031NR",
+            "BAR0031ONYX", "BAR0031ROUGE", "BAR0031GLOSSY", "BAR0031AFRICA", "BAR0031EC",
+            "BAR0031NACRENOIRE", "BAR0031OPERA", "BAR0031NRCUIVRE",
+        ]
+        with st.expander(f"🐛 DEBUG BAR0031 (date_limite={date_limite})"):
+            _debug_total_parent = 0
+            for _sku in _debug_skus_bar0031:
+                _w = ventes_wizi.get(_sku, 0)
+                _e = ventes_etsy.get(_sku, 0)
+                _f = ventes_faire.get(_sku, 0)
+                _t = _w + _e + _f
+                _debug_total_parent += _t
+                st.write(f"{_sku}: wizi={_w} etsy={_e} faire={_f} total={_t}")
+            st.write(f"**TOTAL sku_parent BAR0031 : {_debug_total_parent}**")
+
     return ventes_wizi, ventes_etsy, ventes_faire, ca_total
 
 
@@ -364,6 +382,7 @@ _NAV_GROUPES = {
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
                          "📒 Export comptable Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
+                         "📋 Factures Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
                          "🚀 Créer produits sur Faire"],
     "🧣 Foulard Frenchy": ["⭐ Best-sellers Foulard Frenchy", "🚨 Réapprovisionnement Foulard Frenchy"],
@@ -6210,6 +6229,90 @@ elif page == "📒 Réconciliation Faire":
         csv = df_table.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Télécharger en CSV", csv,
                            f"reconciliation_faire_{annee}.csv", "text/csv")
+
+elif page == "📋 Factures Faire":
+    st.subheader("📋 Factures Faire")
+
+    annee_courante = pd.Timestamp.now().year
+
+    bornes = select("commandes", "select=date_commande&source=eq.faire&order=date_commande.asc&limit=1")
+    date_min = pd.to_datetime(bornes[0]["date_commande"]) if bornes else pd.Timestamp.now()
+    annees_disponibles = list(range(annee_courante, date_min.year - 1, -1))
+
+    with st.sidebar:
+        st.divider()
+        index_defaut = annees_disponibles.index(annee_courante) if annee_courante in annees_disponibles else 0
+        annee = st.selectbox("Année", annees_disponibles, index=index_defaut)
+
+    commandes_faire = select("commandes",
+        f"select=id_faire,date_commande,nom_facturation,montant_ttc,commission_faire,"
+        f"frais_port,tva_client,montant_net_recu,frais_expedition_faire"
+        f"&source=eq.faire"
+        f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee + 1}-01-01"
+        f"&order=date_commande.desc")
+
+    if not commandes_faire:
+        st.info("Aucune commande Faire pour cette année.")
+    else:
+        df_cmd = pd.DataFrame(commandes_faire)
+        for col in ["montant_ttc", "commission_faire", "frais_port", "tva_client",
+                    "montant_net_recu", "frais_expedition_faire"]:
+            df_cmd[col] = pd.to_numeric(df_cmd[col], errors="coerce").fillna(0)
+
+        rows = []
+        for _, row in df_cmd.iterrows():
+            try:
+                date = pd.to_datetime(row["date_commande"]).strftime("%d/%m/%Y")
+            except Exception:
+                date = ""
+            ca_ht = float(row["montant_ttc"])
+            commission = float(row["commission_faire"])
+            net_recu = float(row["montant_net_recu"])
+            ecart = round(ca_ht - commission - net_recu, 2)
+
+            rows.append({
+                "Date": date,
+                "N° commande": row["id_faire"],
+                "Client": row.get("nom_facturation", "") or "",
+                "CA HT": ca_ht,
+                "Commission Faire": commission,
+                "Frais port": float(row["frais_port"]),
+                "TVA": float(row["tva_client"]),
+                "Frais expédition Faire": float(row["frais_expedition_faire"]),
+                "Net reçu": net_recu,
+                "Écart": ecart,
+            })
+
+        df_table = pd.DataFrame(rows)
+
+        ca_total = df_table["CA HT"].sum()
+        commission_total = df_table["Commission Faire"].sum()
+        net_recu_total = df_table["Net reçu"].sum()
+        ecart_total = df_table["Écart"].sum()
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total CA HT", f"{ca_total:.2f} €")
+        with col2:
+            st.metric("Total commissions", f"{commission_total:.2f} €")
+        with col3:
+            st.metric("Total net reçu", f"{net_recu_total:.2f} €")
+        with col4:
+            st.metric("Total écarts", f"{ecart_total:.2f} €")
+
+        st.divider()
+
+        styled = df_table.style \
+            .map(lambda v: "color: red" if v != 0 else "", subset=["Écart"]) \
+            .format({
+                "CA HT": "{:.2f}", "Commission Faire": "{:.2f}", "Frais port": "{:.2f}",
+                "TVA": "{:.2f}", "Frais expédition Faire": "{:.2f}", "Net reçu": "{:.2f}",
+                "Écart": "{:.2f}",
+            })
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        csv = df_table.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv, f"factures_faire_{annee}.csv", "text/csv")
 
 elif page == "📊 Gestion stock Faire":
     st.subheader("📊 Gestion stock Faire")
