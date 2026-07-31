@@ -6268,12 +6268,50 @@ elif page == "📋 Factures Faire":
             except Exception:
                 return ""
 
+        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+        ids_str = ",".join(ids_faire)
+
+        lignes = select("lignes_commande",
+            f"select=id_commande,sku,quantite&id_commande=in.({ids_str})",
+            limit=50000)
+
+        produits_data = select("produits", "select=sku,prix_achat_ht")
+        prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
+        mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+        sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
+
+        cout_achat_par_cmd = {}
+        prix_achat_ok_par_cmd = {}
+
+        if lignes:
+            for ligne in lignes:
+                id_cmd = str(ligne.get("id_commande", ""))
+                sku = ligne.get("sku") or ""
+                qty = float(ligne.get("quantite") or 0)
+                sku_resolu = sku_mapping.get(sku, sku)
+                prod_info = get_prod_parent(sku_resolu, prod_map_achat)
+                prix = float(prod_info.get("prix_achat_ht") or 0)
+
+                if id_cmd not in cout_achat_par_cmd:
+                    cout_achat_par_cmd[id_cmd] = 0.0
+                    prix_achat_ok_par_cmd[id_cmd] = True
+
+                cout_achat_par_cmd[id_cmd] += prix * qty
+                if prix <= 0:
+                    prix_achat_ok_par_cmd[id_cmd] = False
+
         rows = []
         for _, row in df_cmd.iterrows():
+            id_faire = str(row["id_faire"])
             ca_ht = float(row["montant_ttc"])
             commission = float(row["commission_faire"])
             net_recu = float(row["montant_net_recu"])
             ecart = round(ca_ht - commission - net_recu, 2)
+
+            cout_achat = round(cout_achat_par_cmd.get(id_faire, 0), 2)
+            prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_faire, False)
+            marge = round(net_recu - cout_achat, 2)
+            marge_pct = round(marge / net_recu * 100, 1) if net_recu else 0
 
             rows.append({
                 "Date": _format_date(row["date_commande"]),
@@ -6286,8 +6324,13 @@ elif page == "📋 Factures Faire":
                 "Frais expédition Faire": float(row["frais_expedition_faire"]),
                 "Net reçu": net_recu,
                 "Écart": ecart,
+                "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
+                "Marge": marge,
+                "Marge %": marge_pct,
                 "Date paiement": _format_date(row.get("date_paiement_faire")),
                 "Date paiement estimée": _format_date(row.get("date_paiement_estime_faire")),
+                "_cout_achat": cout_achat,
+                "_prix_achat_manquant": prix_achat_manquant,
             })
 
         df_table = pd.DataFrame(rows)
@@ -6296,6 +6339,10 @@ elif page == "📋 Factures Faire":
         commission_total = df_table["Commission Faire"].sum()
         net_recu_total = df_table["Net reçu"].sum()
         ecart_total = df_table["Écart"].sum()
+        cout_achat_total = df_table["_cout_achat"].sum()
+        marge_totale = df_table["Marge"].sum()
+        marge_pct_moyenne = round(marge_totale / net_recu_total * 100, 1) if net_recu_total else 0
+        nb_prix_manquant = int(df_table["_prix_achat_manquant"].sum())
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
@@ -6307,18 +6354,29 @@ elif page == "📋 Factures Faire":
         with col4:
             st.metric("Total écarts", f"{ecart_total:.2f} €")
 
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            st.metric("Total coût achat", f"{cout_achat_total:.2f} €")
+        with col6:
+            st.metric("Marge totale", f"{marge_totale:.2f} €")
+        with col7:
+            st.metric("Marge % moyenne", f"{marge_pct_moyenne:.1f} %")
+        with col8:
+            st.metric("⚠️ Prix achat manquant", nb_prix_manquant)
+
         st.divider()
 
-        styled = df_table.style \
+        df_affiche = df_table.drop(columns=["_cout_achat", "_prix_achat_manquant"])
+        styled = df_affiche.style \
             .map(lambda v: "color: red" if v != 0 else "", subset=["Écart"]) \
             .format({
                 "CA HT": "{:.2f}", "Commission Faire": "{:.2f}", "Frais port": "{:.2f}",
                 "TVA": "{:.2f}", "Frais expédition Faire": "{:.2f}", "Net reçu": "{:.2f}",
-                "Écart": "{:.2f}",
+                "Écart": "{:.2f}", "Marge": "{:.2f}", "Marge %": "{:.1f}",
             })
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
-        csv = df_table.to_csv(index=False).encode("utf-8")
+        csv = df_affiche.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Télécharger en CSV", csv, f"factures_faire_{annee}.csv", "text/csv")
 
 elif page == "📊 Gestion stock Faire":
