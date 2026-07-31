@@ -6246,7 +6246,8 @@ elif page == "📋 Factures Faire":
 
     commandes_faire = select("commandes",
         f"select=id_faire,date_commande,nom_facturation,montant_ttc,commission_faire,"
-        f"frais_port,tva_client,montant_net_recu,frais_expedition_faire"
+        f"frais_port,tva_client,montant_net_recu,frais_expedition_faire,"
+        f"date_paiement_faire,date_paiement_estime_faire"
         f"&source=eq.faire"
         f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee + 1}-01-01"
         f"&order=date_commande.desc")
@@ -6259,19 +6260,23 @@ elif page == "📋 Factures Faire":
                     "montant_net_recu", "frais_expedition_faire"]:
             df_cmd[col] = pd.to_numeric(df_cmd[col], errors="coerce").fillna(0)
 
+        def _format_date(valeur):
+            if not valeur or pd.isna(valeur):
+                return ""
+            try:
+                return pd.to_datetime(valeur).strftime("%d/%m/%Y")
+            except Exception:
+                return ""
+
         rows = []
         for _, row in df_cmd.iterrows():
-            try:
-                date = pd.to_datetime(row["date_commande"]).strftime("%d/%m/%Y")
-            except Exception:
-                date = ""
             ca_ht = float(row["montant_ttc"])
             commission = float(row["commission_faire"])
             net_recu = float(row["montant_net_recu"])
             ecart = round(ca_ht - commission - net_recu, 2)
 
             rows.append({
-                "Date": date,
+                "Date": _format_date(row["date_commande"]),
                 "N° commande": row["id_faire"],
                 "Client": row.get("nom_facturation", "") or "",
                 "CA HT": ca_ht,
@@ -6281,6 +6286,8 @@ elif page == "📋 Factures Faire":
                 "Frais expédition Faire": float(row["frais_expedition_faire"]),
                 "Net reçu": net_recu,
                 "Écart": ecart,
+                "Date paiement": _format_date(row.get("date_paiement_faire")),
+                "Date paiement estimée": _format_date(row.get("date_paiement_estime_faire")),
             })
 
         df_table = pd.DataFrame(rows)

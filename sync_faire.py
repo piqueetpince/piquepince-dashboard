@@ -77,6 +77,8 @@ def sync_faire_commandes():
             "tva_client": (payout.get("net_tax") or {}).get("amount_minor", 0) / 100,
             "montant_net_recu": (payout.get("total_payout") or {}).get("amount_minor", 0) / 100,
             "frais_expedition_faire": (payout.get("shipping_subsidy") or {}).get("amount_minor", 0) / 100,
+            "date_paiement_faire": order.get("payment_initiated_at"),
+            "date_paiement_estime_faire": order.get("estimated_payout_at"),
             "pays_facturation_iso": country_iso2,
             "pays_facturation": address.get("country"),
             "ville_facturation": address.get("city"),
