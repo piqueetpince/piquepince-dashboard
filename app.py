@@ -6336,8 +6336,9 @@ elif page == "📋 Factures Faire":
 
             cout_achat = round(cout_achat_par_cmd.get(id_faire, 0), 2)
             prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_faire, False)
-            marge = round(net_recu - cout_achat, 2)
-            marge_pct = round(marge / net_recu * 100, 1) if net_recu else 0
+            net_recu_hors_tva = net_recu - tva
+            marge = round(net_recu_hors_tva - cout_achat, 2)
+            marge_pct = round(marge / net_recu_hors_tva * 100, 1) if net_recu_hors_tva else 0
 
             rows.append({
                 "Date": date_fmt,
@@ -6383,10 +6384,12 @@ elif page == "📋 Factures Faire":
         ca_total = df_table["CA HT"].sum()
         commission_total = df_table["Commission Faire"].sum()
         net_recu_total = df_table["Net reçu"].sum()
+        tva_total = df_table["TVA"].sum()
         ecart_total = df_table["_ecart"].sum()
         cout_achat_total = df_table["_cout_achat"].sum()
         marge_totale = df_table["Marge"].sum()
-        marge_pct_moyenne = round(marge_totale / net_recu_total * 100, 1) if net_recu_total else 0
+        net_recu_hors_tva_total = net_recu_total - tva_total
+        marge_pct_moyenne = round(marge_totale / net_recu_hors_tva_total * 100, 1) if net_recu_hors_tva_total else 0
         nb_prix_manquant = int(df_table["_prix_achat_manquant"].sum())
 
         col1, col2, col3, col4 = st.columns(4)
