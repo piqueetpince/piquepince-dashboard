@@ -6272,41 +6272,64 @@ elif page == "📋 Factures Faire":
         ids_str = ",".join(ids_faire)
 
         lignes = select("lignes_commande",
-            f"select=id_commande,sku,quantite&id_commande=in.({ids_str})",
+            f"select=id_commande,sku,nom_produit,quantite,prix_unitaire_ttc"
+            f"&id_commande=in.({ids_str})",
             limit=50000)
 
-        produits_data = select("produits", "select=sku,prix_achat_ht")
+        produits_data = select("produits", "select=sku,nom,prix_achat_ht")
         prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
         mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
         sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
 
         cout_achat_par_cmd = {}
         prix_achat_ok_par_cmd = {}
+        lignes_par_cmd = {}
 
         if lignes:
             for ligne in lignes:
                 id_cmd = str(ligne.get("id_commande", ""))
                 sku = ligne.get("sku") or ""
                 qty = float(ligne.get("quantite") or 0)
+                prix_vente = float(ligne.get("prix_unitaire_ttc") or 0)
                 sku_resolu = sku_mapping.get(sku, sku)
                 prod_info = get_prod_parent(sku_resolu, prod_map_achat)
-                prix = float(prod_info.get("prix_achat_ht") or 0)
+                prix_achat = float(prod_info.get("prix_achat_ht") or 0)
+                nom_produit = ligne.get("nom_produit") or prod_info.get("nom") or sku
 
                 if id_cmd not in cout_achat_par_cmd:
                     cout_achat_par_cmd[id_cmd] = 0.0
                     prix_achat_ok_par_cmd[id_cmd] = True
+                    lignes_par_cmd[id_cmd] = []
 
-                cout_achat_par_cmd[id_cmd] += prix * qty
-                if prix <= 0:
+                cout_achat_par_cmd[id_cmd] += prix_achat * qty
+                if prix_achat <= 0:
                     prix_achat_ok_par_cmd[id_cmd] = False
 
+                lignes_par_cmd[id_cmd].append({
+                    "sku": sku,
+                    "nom_produit": nom_produit,
+                    "quantite": qty,
+                    "prix_vente_unitaire": prix_vente,
+                    "total_vente": round(prix_vente * qty, 2),
+                    "prix_achat_unitaire": prix_achat,
+                    "cout_achat_total": round(prix_achat * qty, 2),
+                    "prix_achat_manquant": prix_achat <= 0,
+                })
+
         rows = []
+        details = []
         for _, row in df_cmd.iterrows():
             id_faire = str(row["id_faire"])
+            date_fmt = _format_date(row["date_commande"])
+            client = row.get("nom_facturation", "") or ""
             ca_ht = float(row["montant_ttc"])
             commission = float(row["commission_faire"])
+            frais_port = float(row["frais_port"])
+            tva = float(row["tva_client"])
+            frais_exp = float(row["frais_expedition_faire"])
             net_recu = float(row["montant_net_recu"])
             ecart = round(ca_ht - commission - net_recu, 2)
+            total_ttc = round(ca_ht + frais_port + tva, 2)
 
             cout_achat = round(cout_achat_par_cmd.get(id_faire, 0), 2)
             prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_faire, False)
@@ -6314,14 +6337,14 @@ elif page == "📋 Factures Faire":
             marge_pct = round(marge / net_recu * 100, 1) if net_recu else 0
 
             rows.append({
-                "Date": _format_date(row["date_commande"]),
+                "Date": date_fmt,
                 "N° commande": row["id_faire"],
-                "Client": row.get("nom_facturation", "") or "",
+                "Client": client,
                 "CA HT": ca_ht,
                 "Commission Faire": commission,
-                "Frais port": float(row["frais_port"]),
-                "TVA": float(row["tva_client"]),
-                "Frais expédition Faire": float(row["frais_expedition_faire"]),
+                "Frais port": frais_port,
+                "TVA": tva,
+                "Frais expédition Faire": frais_exp,
                 "Net reçu": net_recu,
                 "Écart": ecart,
                 "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
@@ -6331,6 +6354,24 @@ elif page == "📋 Factures Faire":
                 "Date paiement estimée": _format_date(row.get("date_paiement_estime_faire")),
                 "_cout_achat": cout_achat,
                 "_prix_achat_manquant": prix_achat_manquant,
+            })
+
+            details.append({
+                "id_faire": row["id_faire"],
+                "date": date_fmt,
+                "client": client,
+                "ca_ht": ca_ht,
+                "commission": commission,
+                "frais_port": frais_port,
+                "tva": tva,
+                "frais_exp": frais_exp,
+                "net_recu": net_recu,
+                "ecart": ecart,
+                "total_ttc": total_ttc,
+                "cout_achat": cout_achat,
+                "marge": marge,
+                "marge_pct": marge_pct,
+                "lignes": lignes_par_cmd.get(id_faire, []),
             })
 
         df_table = pd.DataFrame(rows)
@@ -6378,6 +6419,70 @@ elif page == "📋 Factures Faire":
 
         csv = df_affiche.to_csv(index=False).encode("utf-8")
         st.download_button("📥 Télécharger en CSV", csv, f"factures_faire_{annee}.csv", "text/csv")
+
+        st.divider()
+        st.markdown("### Détail par commande")
+
+        for d in details:
+            titre = (f"🔍 {d['date']} — {d['client']} — {d['ca_ht']:.2f}€ — "
+                     f"Marge: {d['marge_pct']:.1f}%")
+            with st.expander(titre):
+                lignes_cmd = d["lignes"]
+
+                st.markdown("**📄 Facture client**")
+                if lignes_cmd:
+                    df_lignes_vente = pd.DataFrame([{
+                        "SKU": l["sku"],
+                        "Produit": l["nom_produit"],
+                        "Quantité": int(l["quantite"]),
+                        "Prix unitaire HT": l["prix_vente_unitaire"],
+                        "Total HT": l["total_vente"],
+                    } for l in lignes_cmd])
+                    st.dataframe(
+                        df_lignes_vente.style.format({
+                            "Prix unitaire HT": "{:.2f}", "Total HT": "{:.2f}",
+                        }),
+                        use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune ligne de commande trouvée.")
+
+                total_articles = sum(l["total_vente"] for l in lignes_cmd)
+                st.write(f"**Total articles :** {total_articles:.2f} €")
+                st.write(f"**Frais port :** {d['frais_port']:.2f} €")
+                st.write(f"**TVA :** {d['tva']:.2f} €")
+                st.write(f"**Total TTC :** {d['total_ttc']:.2f} €")
+
+                st.markdown("---")
+                st.markdown("**🧾 Facture commission Faire**")
+                st.write(f"**Commission Faire :** {d['commission']:.2f} €")
+                st.write(f"**Frais expédition Faire :** {d['frais_exp']:.2f} €")
+                ecart_color = "red" if d["ecart"] != 0 else "inherit"
+                st.markdown(
+                    f"**Écart inexpliqué :** "
+                    f"<span style='color:{ecart_color}'>{d['ecart']:.2f} €</span>",
+                    unsafe_allow_html=True)
+                st.write(f"**Net reçu :** {d['net_recu']:.2f} €")
+
+                st.markdown("---")
+                st.markdown("**📊 Analyse marge**")
+                if lignes_cmd:
+                    df_lignes_marge = pd.DataFrame([{
+                        "SKU": l["sku"],
+                        "Produit": l["nom_produit"],
+                        "Quantité": int(l["quantite"]),
+                        "Prix achat HT unitaire": f"{l['prix_achat_unitaire']:.2f} ⚠️"
+                            if l["prix_achat_manquant"] else f"{l['prix_achat_unitaire']:.2f}",
+                        "Coût achat total": l["cout_achat_total"],
+                    } for l in lignes_cmd])
+                    st.dataframe(
+                        df_lignes_marge.style.format({"Coût achat total": "{:.2f}"}),
+                        use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune ligne de commande trouvée.")
+
+                st.write(f"**Total coût achat :** {d['cout_achat']:.2f} €")
+                st.write(f"**Marge brute :** {d['marge']:.2f} €")
+                st.write(f"**Marge % :** {d['marge_pct']:.1f} %")
 
 elif page == "📊 Gestion stock Faire":
     st.subheader("📊 Gestion stock Faire")
