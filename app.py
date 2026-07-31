@@ -6328,8 +6328,11 @@ elif page == "📋 Factures Faire":
             tva = float(row["tva_client"])
             frais_exp = float(row["frais_expedition_faire"])
             net_recu = float(row["montant_net_recu"])
-            ecart = round(ca_ht - commission - net_recu, 2)
+            ecart_expander = round(ca_ht - commission - net_recu, 2)
             total_ttc = round(ca_ht + frais_port + tva, 2)
+
+            montant_ttc_calc = round(ca_ht + tva, 2)
+            ecart_tableau = round(ca_ht + tva - commission - net_recu, 2)
 
             cout_achat = round(cout_achat_par_cmd.get(id_faire, 0), 2)
             prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_faire, False)
@@ -6341,12 +6344,12 @@ elif page == "📋 Factures Faire":
                 "N° commande": row["id_faire"],
                 "Client": client,
                 "CA HT": ca_ht,
+                "TVA": tva,
+                "Montant TTC": montant_ttc_calc,
                 "Commission Faire": commission,
                 "Frais port": frais_port,
-                "TVA": tva,
-                "Frais expédition Faire": frais_exp,
                 "Net reçu": net_recu,
-                "Écart": ecart,
+                "Écart": "" if ecart_tableau == 0 else f"{ecart_tableau:.2f}",
                 "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
                 "Marge": marge,
                 "Marge %": marge_pct,
@@ -6354,6 +6357,7 @@ elif page == "📋 Factures Faire":
                 "Date paiement estimée": _format_date(row.get("date_paiement_estime_faire")),
                 "_cout_achat": cout_achat,
                 "_prix_achat_manquant": prix_achat_manquant,
+                "_ecart": ecart_tableau,
             })
 
             details.append({
@@ -6366,7 +6370,7 @@ elif page == "📋 Factures Faire":
                 "tva": tva,
                 "frais_exp": frais_exp,
                 "net_recu": net_recu,
-                "ecart": ecart,
+                "ecart": ecart_expander,
                 "total_ttc": total_ttc,
                 "cout_achat": cout_achat,
                 "marge": marge,
@@ -6379,7 +6383,7 @@ elif page == "📋 Factures Faire":
         ca_total = df_table["CA HT"].sum()
         commission_total = df_table["Commission Faire"].sum()
         net_recu_total = df_table["Net reçu"].sum()
-        ecart_total = df_table["Écart"].sum()
+        ecart_total = df_table["_ecart"].sum()
         cout_achat_total = df_table["_cout_achat"].sum()
         marge_totale = df_table["Marge"].sum()
         marge_pct_moyenne = round(marge_totale / net_recu_total * 100, 1) if net_recu_total else 0
@@ -6407,13 +6411,13 @@ elif page == "📋 Factures Faire":
 
         st.divider()
 
-        df_affiche = df_table.drop(columns=["_cout_achat", "_prix_achat_manquant"])
+        df_affiche = df_table.drop(columns=["_cout_achat", "_prix_achat_manquant", "_ecart"])
         styled = df_affiche.style \
-            .map(lambda v: "color: red" if v != 0 else "", subset=["Écart"]) \
+            .map(lambda v: "color: red" if v != "" else "", subset=["Écart"]) \
             .format({
-                "CA HT": "{:.2f}", "Commission Faire": "{:.2f}", "Frais port": "{:.2f}",
-                "TVA": "{:.2f}", "Frais expédition Faire": "{:.2f}", "Net reçu": "{:.2f}",
-                "Écart": "{:.2f}", "Marge": "{:.2f}", "Marge %": "{:.1f}",
+                "CA HT": "{:.2f}", "TVA": "{:.2f}", "Montant TTC": "{:.2f}",
+                "Commission Faire": "{:.2f}", "Frais port": "{:.2f}", "Net reçu": "{:.2f}",
+                "Marge": "{:.2f}", "Marge %": "{:.1f}",
             })
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
