@@ -6437,10 +6437,14 @@ elif page == "📋 Factures Faire":
                         "Quantité": int(l["quantite"]),
                         "Prix unitaire HT": l["prix_vente_unitaire"],
                         "Total HT": l["total_vente"],
+                        "Prix achat HT": f"{l['prix_achat_unitaire']:.2f} ⚠️"
+                            if l["prix_achat_manquant"] else f"{l['prix_achat_unitaire']:.2f}",
+                        "Coût total HT": l["cout_achat_total"],
                     } for l in lignes_cmd])
                     st.dataframe(
                         df_lignes_vente.style.format({
                             "Prix unitaire HT": "{:.2f}", "Total HT": "{:.2f}",
+                            "Coût total HT": "{:.2f}",
                         }),
                         use_container_width=True, hide_index=True)
                 else:
