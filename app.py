@@ -382,7 +382,7 @@ _NAV_GROUPES = {
                          "🏆 Best-sellers par variation"],
     "🏷️ Etsy":         ["⭐ Best-sellers Etsy", "📊 Gestion stock Etsy",
                          "🔎 Produits manquants sur Etsy", "🔍 Vérification Etsy",
-                         "📒 Export comptable Etsy"],
+                         "📒 Export comptable Etsy", "📋 Factures Etsy"],
     "🛒 Faire":         ["⭐ Best-sellers Faire", "🔍 Vérification Faire", "📒 Réconciliation Faire",
                          "📋 Factures Faire",
                          "📊 Gestion stock Faire", "🔎 Produits manquants sur Faire",
@@ -5796,6 +5796,339 @@ elif page == "📒 Export comptable Etsy":
                 f"export_comptable_etsy_{date_debut.strftime('%Y%m%d')}_{date_fin.strftime('%Y%m%d')}.csv",
                 "text/csv",
             )
+
+elif page == "📋 Factures Etsy":
+    st.subheader("📋 Factures Etsy")
+
+    bornes = select("commandes",
+        "select=date_commande&source=eq.etsy&date_commande=not.is.null"
+        "&order=date_commande.asc&limit=1")
+    date_min = pd.to_datetime(bornes[0]["date_commande"]).tz_localize(None) if bornes else pd.Timestamp.now()
+
+    mois_courant = pd.Timestamp.now().normalize().replace(day=1)
+    mois_min = date_min.replace(day=1)
+
+    mois_disponibles = []
+    m = mois_courant
+    while m >= mois_min:
+        mois_disponibles.append(m)
+        m = m - pd.DateOffset(months=1)
+    mois_labels = [m.strftime("%m/%Y") for m in mois_disponibles]
+
+    with st.sidebar:
+        st.divider()
+        mois_label_choisi = st.selectbox("Mois", mois_labels, index=0)
+
+    mois_choisi = mois_disponibles[mois_labels.index(mois_label_choisi)]
+    date_debut_str = mois_choisi.strftime("%Y-%m-%d")
+    date_fin_str = (mois_choisi + pd.DateOffset(months=1)).strftime("%Y-%m-%d")
+
+    commandes_etsy = select("commandes",
+        f"select=id_wizi,date_commande,nom_facturation,montant_ttc,montant_ht,frais_port"
+        f"&source=eq.etsy&statut_code=not.in.(0,45,50)"
+        f"&date_commande=gte.{date_debut_str}&date_commande=lt.{date_fin_str}"
+        f"&order=date_commande.desc")
+
+    if not commandes_etsy:
+        st.info("Aucune commande Etsy pour ce mois.")
+    else:
+        df_cmd = pd.DataFrame(commandes_etsy)
+        for col in ["montant_ttc", "montant_ht", "frais_port"]:
+            df_cmd[col] = pd.to_numeric(df_cmd[col], errors="coerce").fillna(0)
+
+        def _format_date(valeur):
+            if not valeur or pd.isna(valeur):
+                return ""
+            try:
+                return pd.to_datetime(valeur).strftime("%d/%m/%Y")
+            except Exception:
+                return ""
+
+        ids_receipt = [str(c["id_wizi"]) for c in commandes_etsy if c.get("id_wizi")]
+        ids_str = ",".join(ids_receipt)
+
+        # ── Lignes de commande (+ transaction_id, cf. backfill) ──────────────
+        lignes = select("lignes_commande",
+            f"select=id_commande,sku,nom_produit,quantite,prix_unitaire_ttc,transaction_id"
+            f"&id_commande=in.({ids_str})&source=eq.etsy",
+            limit=50000)
+
+        produits_data = select("produits", "select=sku,nom,prix_achat_ht")
+        prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+        lignes_par_cmd = {}
+        cout_achat_par_cmd = {}
+        prix_achat_ok_par_cmd = {}
+        transaction_to_receipt = {}
+        transaction_ids = []
+
+        for l in lignes or []:
+            id_cmd = str(l.get("id_commande", ""))
+            sku = l.get("sku") or ""
+            qty = float(l.get("quantite") or 0)
+            prix_ttc_unitaire = float(l.get("prix_unitaire_ttc") or 0)
+            prix_ht_unitaire = round(prix_ttc_unitaire / 1.2, 4)
+            prod_info = get_prod_parent(sku, prod_map_achat)
+            prix_achat = float(prod_info.get("prix_achat_ht") or 0)
+            nom_produit = l.get("nom_produit") or prod_info.get("nom") or sku
+            transaction_id = l.get("transaction_id")
+
+            if id_cmd not in lignes_par_cmd:
+                lignes_par_cmd[id_cmd] = []
+                cout_achat_par_cmd[id_cmd] = 0.0
+                prix_achat_ok_par_cmd[id_cmd] = True
+
+            cout_achat_par_cmd[id_cmd] += prix_achat * qty
+            if prix_achat <= 0:
+                prix_achat_ok_par_cmd[id_cmd] = False
+
+            lignes_par_cmd[id_cmd].append({
+                "sku": sku,
+                "nom_produit": nom_produit,
+                "quantite": qty,
+                "prix_ht_unitaire": prix_ht_unitaire,
+                "total_ht": round(prix_ht_unitaire * qty, 2),
+                "prix_achat_unitaire": prix_achat,
+                "cout_achat_total": round(prix_achat * qty, 2),
+                "prix_achat_manquant": prix_achat <= 0,
+            })
+
+            if transaction_id:
+                transaction_to_receipt[str(transaction_id)] = id_cmd
+                transaction_ids.append(transaction_id)
+
+        # ── etsy_payments (résolution payment_id -> receipt_id) ──────────────
+        payments = select("etsy_payments",
+            f"select=payment_id,receipt_id&receipt_id=in.({ids_str})")
+        payment_to_receipt = {str(p["payment_id"]): str(p["receipt_id"]) for p in (payments or [])}
+        payment_ids = [p["payment_id"] for p in (payments or [])]
+
+        # ── etsy_ledger_entries : 3 requêtes ciblées selon le mode de jointure ─
+        # 1) reference_id = receipt_id directement (reference_type "receipt",
+        #    parfois "etsy" pour offsite_ads_fee — on ne filtre pas sur
+        #    reference_type, seulement sur la valeur numérique).
+        ledger_receipt = select("etsy_ledger_entries",
+            f"select=ledger_type,reference_id,amount"
+            f"&ledger_type=in.(shipping_transaction,regulatory_operating_fee,offsite_ads_fee)"
+            f"&reference_id=in.({ids_str})",
+            limit=50000)
+
+        # 2) reference_id = transaction_id (résolu via lignes_commande.transaction_id)
+        ledger_transaction = []
+        if transaction_ids:
+            tids_str = ",".join(str(t) for t in transaction_ids)
+            ledger_transaction = select("etsy_ledger_entries",
+                f"select=ledger_type,reference_id,amount"
+                f"&ledger_type=in.(transaction,transaction_quantity,prolist)"
+                f"&reference_id=in.({tids_str})",
+                limit=50000)
+
+        # 3) reference_id = payment_id (résolu via etsy_payments.receipt_id)
+        ledger_payment = []
+        if payment_ids:
+            pids_str = ",".join(str(p) for p in payment_ids)
+            ledger_payment = select("etsy_ledger_entries",
+                f"select=ledger_type,reference_id,amount"
+                f"&ledger_type=eq.PAYMENT_PROCESSING_FEE"
+                f"&reference_id=in.({pids_str})",
+                limit=50000)
+
+        commission_transaction = {}
+        publicite_onsite = {}
+        commission_port = {}
+        frais_reglementaire = {}
+        publicite_offsite = {}
+        frais_traitement = {}
+
+        for e in ledger_receipt or []:
+            receipt = str(e.get("reference_id"))
+            if receipt not in ids_receipt:
+                continue
+            montant = abs(e.get("amount") or 0) / 100
+            if e["ledger_type"] == "shipping_transaction":
+                commission_port[receipt] = commission_port.get(receipt, 0) + montant
+            elif e["ledger_type"] == "regulatory_operating_fee":
+                frais_reglementaire[receipt] = frais_reglementaire.get(receipt, 0) + montant
+            elif e["ledger_type"] == "offsite_ads_fee":
+                publicite_offsite[receipt] = publicite_offsite.get(receipt, 0) + montant
+
+        for e in ledger_transaction or []:
+            receipt = transaction_to_receipt.get(str(e.get("reference_id")))
+            if not receipt:
+                continue
+            montant = abs(e.get("amount") or 0) / 100
+            if e["ledger_type"] in ("transaction", "transaction_quantity"):
+                commission_transaction[receipt] = commission_transaction.get(receipt, 0) + montant
+            elif e["ledger_type"] == "prolist":
+                publicite_onsite[receipt] = publicite_onsite.get(receipt, 0) + montant
+
+        for e in ledger_payment or []:
+            receipt = payment_to_receipt.get(str(e.get("reference_id")))
+            if not receipt:
+                continue
+            montant = abs(e.get("amount") or 0) / 100
+            frais_traitement[receipt] = frais_traitement.get(receipt, 0) + montant
+
+        rows = []
+        details = []
+        for _, row in df_cmd.iterrows():
+            id_wizi = str(row["id_wizi"])
+            date_fmt = _format_date(row["date_commande"])
+            client = row.get("nom_facturation", "") or ""
+            frais_port = float(row["frais_port"])
+            montant_ttc = float(row["montant_ttc"])
+            montant_ht_db = float(row["montant_ht"])
+
+            lignes_cmd = lignes_par_cmd.get(id_wizi, [])
+            ca_ht = round(sum(l["total_ht"] for l in lignes_cmd), 2)
+
+            # TVA = montant_ttc - montant_ht si le champ commande est renseigné,
+            # sinon estimée à 20% du CA HT calculé depuis les lignes. Note :
+            # côté Etsy, montant_ht (subtotal) exclut déjà le port — contrairement
+            # à Wizishop — donc ce calcul inclut potentiellement le port dans le
+            # résultat si montant_ht est renseigné (montant_ttc = subtotal+tax+port).
+            if montant_ht_db:
+                tva = round(montant_ttc - montant_ht_db, 2)
+            else:
+                tva = round(ca_ht * 0.2, 2)
+
+            c_transaction = commission_transaction.get(id_wizi, 0)
+            c_port = commission_port.get(id_wizi, 0)
+            commission_etsy = round(c_transaction + c_port, 2)
+            f_traitement = round(frais_traitement.get(id_wizi, 0), 2)
+            f_reglementaire = round(frais_reglementaire.get(id_wizi, 0), 2)
+            p_onsite = publicite_onsite.get(id_wizi, 0)
+            p_offsite = publicite_offsite.get(id_wizi, 0)
+            publicite = round(p_onsite + p_offsite, 2)
+            renouvellement = 0.0  # non rattachable à une commande (cf. note ci-dessous)
+
+            total_frais_etsy = round(commission_etsy + f_traitement + f_reglementaire
+                                      + publicite + renouvellement, 2)
+
+            cout_achat = round(cout_achat_par_cmd.get(id_wizi, 0), 2)
+            prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_wizi, False)
+            marge = round(ca_ht - total_frais_etsy - cout_achat, 2)
+            marge_pct = round(marge / ca_ht * 100, 1) if ca_ht else 0
+
+            rows.append({
+                "Date": date_fmt,
+                "N° commande": row["id_wizi"],
+                "Client": client,
+                "CA HT": ca_ht,
+                "Frais port": frais_port,
+                "TVA": tva,
+                "Montant TTC": montant_ttc,
+                "Commission Etsy": commission_etsy,
+                "Frais traitement paiement": f_traitement,
+                "Frais réglementaire": f_reglementaire,
+                "Publicité": publicite,
+                "Renouvellement annonce": renouvellement,
+                "Total frais Etsy": total_frais_etsy,
+                "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
+                "Marge": marge,
+                "Marge %": marge_pct,
+                "_cout_achat": cout_achat,
+                "_prix_achat_manquant": prix_achat_manquant,
+            })
+
+            details.append({
+                "id_wizi": row["id_wizi"],
+                "date": date_fmt,
+                "client": client,
+                "ca_ht": ca_ht,
+                "marge_pct": marge_pct,
+                "lignes": lignes_cmd,
+                "frais": {
+                    "Commission transaction": round(c_transaction, 2),
+                    "Commission port": round(c_port, 2),
+                    "Frais traitement paiement": f_traitement,
+                    "Frais réglementaire": f_reglementaire,
+                    "Publicité on-site (prolist)": round(p_onsite, 2),
+                    "Publicité off-site": round(p_offsite, 2),
+                    "Renouvellement annonce": renouvellement,
+                },
+            })
+
+        df_table = pd.DataFrame(rows)
+
+        ca_ht_total = df_table["CA HT"].sum()
+        ca_ttc_total = df_table["Montant TTC"].sum()
+        frais_etsy_total = df_table["Total frais Etsy"].sum()
+        cout_achat_total = df_table["_cout_achat"].sum()
+        marge_totale = df_table["Marge"].sum()
+        marge_pct_moyenne = round(marge_totale / ca_ht_total * 100, 1) if ca_ht_total else 0
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("CA HT total", f"{ca_ht_total:.2f} €")
+        with col2:
+            st.metric("CA TTC total", f"{ca_ttc_total:.2f} €")
+        with col3:
+            st.metric("Total frais Etsy", f"{frais_etsy_total:.2f} €")
+
+        col4, col5, col6 = st.columns(3)
+        with col4:
+            st.metric("Coût achat total", f"{cout_achat_total:.2f} €")
+        with col5:
+            st.metric("Marge totale", f"{marge_totale:.2f} €")
+        with col6:
+            st.metric("Marge % moyenne", f"{marge_pct_moyenne:.1f} %")
+
+        st.caption("ℹ️ \"Renouvellement annonce\" (renew_sold_auto) est toujours à 0€ : "
+                   "son reference_id est un listing_id (pas un transaction_id), qu'on ne "
+                   "stocke pas — impossible à rattacher à une commande précise avec le "
+                   "schéma actuel.")
+
+        st.divider()
+
+        df_affiche = df_table.drop(columns=["_cout_achat", "_prix_achat_manquant"])
+        styled = df_affiche.style \
+            .format({
+                "CA HT": "{:.2f}", "Frais port": "{:.2f}", "TVA": "{:.2f}",
+                "Montant TTC": "{:.2f}", "Commission Etsy": "{:.2f}",
+                "Frais traitement paiement": "{:.2f}", "Frais réglementaire": "{:.2f}",
+                "Publicité": "{:.2f}", "Renouvellement annonce": "{:.2f}",
+                "Total frais Etsy": "{:.2f}", "Marge": "{:.2f}", "Marge %": "{:.1f}",
+            })
+        st.dataframe(styled, use_container_width=True, hide_index=True)
+
+        csv = df_affiche.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv,
+                           f"factures_etsy_{mois_label_choisi.replace('/', '-')}.csv", "text/csv")
+
+        st.divider()
+        st.markdown("### Détail par commande")
+
+        for d in details:
+            titre = f"🔍 {d['date']} — {d['client']} — {d['ca_ht']:.2f}€ — Marge: {d['marge_pct']:.1f}%"
+            with st.expander(titre):
+                lignes_cmd = d["lignes"]
+                if lignes_cmd:
+                    df_lignes = pd.DataFrame([{
+                        "SKU": l["sku"],
+                        "Produit": l["nom_produit"],
+                        "Quantité": int(l["quantite"]),
+                        "Prix unitaire HT": l["prix_ht_unitaire"],
+                        "Total HT": l["total_ht"],
+                        "Prix achat HT": f"{l['prix_achat_unitaire']:.2f} ⚠️"
+                            if l["prix_achat_manquant"] else f"{l['prix_achat_unitaire']:.2f}",
+                        "Coût total HT": l["cout_achat_total"],
+                    } for l in lignes_cmd])
+                    st.dataframe(
+                        df_lignes.style.format({
+                            "Prix unitaire HT": "{:.2f}", "Total HT": "{:.2f}",
+                            "Coût total HT": "{:.2f}",
+                        }),
+                        use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune ligne de commande trouvée.")
+
+                st.markdown("**Détail des frais Etsy**")
+                df_frais = pd.DataFrame(
+                    [{"Type": k, "Montant (€)": v} for k, v in d["frais"].items()])
+                st.dataframe(
+                    df_frais.style.format({"Montant (€)": "{:.2f}"}),
+                    use_container_width=True, hide_index=True)
 
 elif page == "🚀 Créer produits sur Faire":
     st.subheader("🚀 Créer produits sur Faire")

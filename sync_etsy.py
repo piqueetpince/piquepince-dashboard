@@ -2,7 +2,7 @@ import requests
 import streamlit as st
 import time
 from datetime import datetime, timezone, timedelta
-from supabase_api import upsert, select, insert, update, delete
+from supabase_api import upsert, select, update, delete, upsert_ignore
 from etsy_api import api_get, get_headers, get_shop_id
 
 ETSY_API_URL = "https://openapi.etsy.com/v3"
@@ -131,7 +131,7 @@ def sync_etsy_commandes(shop_id):
             })
 
         if lignes:
-            insert("lignes_commande", lignes)
+            upsert_ignore("lignes_commande", lignes, "transaction_id")
 
         total += 1
         time.sleep(0.05)
