@@ -490,10 +490,14 @@ if page == "🔄 Synchronisation":
                 with st.spinner("Synchronisation commandes... (10-15 min)"):
                     debut = time.time()
                     try:
-                        nb = sync_commandes(token_cached, shop_id_cached)
+                        nb, nb_nulles_trouvees, nb_nulles_corrigees = sync_commandes(token_cached, shop_id_cached)
                         duree = time.time() - debut
                         log_sync("commandes", "wizishop", nb, "success", f"{nb} enregistrements", duree)
                         st.success(f"✓ {nb} commandes en {duree:.1f}s")
+                        # DEBUG TEMPORAIRE — à retirer une fois le bug NULL résolu.
+                        st.info(f"🔧 DEBUG passe 3 (retry NULL) : {nb_nulles_trouvees} commande(s) "
+                                f"trouvée(s) avec date_commande NULL, {nb_nulles_corrigees} corrigée(s) avec succès "
+                                f"({nb_nulles_trouvees - nb_nulles_corrigees} échec(s) résiduel(s)).")
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 

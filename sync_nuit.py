@@ -181,8 +181,12 @@ if any(_active(s) for s in _wizi_slugs):
             run("Wizishop — produits",
                 lambda: f"{sync_produits(token_wizi, shop_id_wizi)} produits")
         if _active("wizishop-commandes"):
-            run("Wizishop — commandes",
-                lambda: f"{sync_commandes(token_wizi, shop_id_wizi)} commandes")
+            def _wizi_commandes():
+                nb, nb_nulles_trouvees, nb_nulles_corrigees = sync_commandes(token_wizi, shop_id_wizi)
+                detail_nulles = (f", {nb_nulles_corrigees}/{nb_nulles_trouvees} NULL corrigées"
+                                  if nb_nulles_trouvees else "")
+                return f"{nb} commandes{detail_nulles}"
+            run("Wizishop — commandes", _wizi_commandes)
 
 # ── 2. Etsy commandes ─────────────────────────────────────────────────────────
 

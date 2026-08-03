@@ -490,15 +490,16 @@ def _sync_commandes_nulles(headers, shop_id):
     que le statut minimal posé par le fallback de la passe 2)."""
     commandes_nulles = select("commandes",
         "select=id_wizi&source=eq.wizishop&date_commande=is.null")
-    total = 0
+    trouvees = len(commandes_nulles or [])
+    corrigees = 0
     for cmd in commandes_nulles or []:
         id_wizi = cmd.get("id_wizi")
         if not id_wizi:
             continue
         if _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes=True):
-            total += 1
+            corrigees += 1
         time.sleep(0.05)
-    return total
+    return trouvees, corrigees
 
 
 def sync_commandes(token, shop_id):
@@ -514,9 +515,12 @@ def sync_commandes(token, shop_id):
     date_30j = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00+00:00")
     total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_30j}, insert_lignes=False)
 
-    total += _sync_commandes_nulles(headers, shop_id)
+    # DEBUG TEMPORAIRE — nb_nulles_trouvees/corrigees renvoyés pour affichage
+    # dans app.py (page Synchronisation), à retirer une fois le bug NULL résolu.
+    nb_nulles_trouvees, nb_nulles_corrigees = _sync_commandes_nulles(headers, shop_id)
+    total += nb_nulles_corrigees
 
-    return total
+    return total, nb_nulles_trouvees, nb_nulles_corrigees
 
 def log_sync(table, source, nb, statut, message, duree):
     upsert("sync_log", [{
