@@ -5,8 +5,8 @@ import json
 import os
 from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, get_wizi_shops, sync_categories, sync_marques,
-                           sync_skus, sync_commandes, sync_commandes_nulles_only, sync_produits, log_sync,
-                           WIZISHOP_API_URL)
+                           sync_skus, sync_commandes, sync_commandes_nulles_only, sync_commande_unique,
+                           sync_produits, log_sync, WIZISHOP_API_URL)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
@@ -512,6 +512,22 @@ if page == "🔄 Synchronisation":
                         st.success(f"✓ {nb_corrigees}/{nb_trouvees} commande(s) incomplète(s) corrigée(s) en {duree:.1f}s")
                     except Exception as e:
                         st.error(f"Erreur : {e}")
+
+            id_wizi_resync = st.number_input("N° commande", min_value=0, step=1, value=0)
+            if st.button("🔄 Resync commande", use_container_width=True):
+                if not id_wizi_resync:
+                    st.warning("Renseigne un N° de commande.")
+                else:
+                    with st.spinner(f"Resync de la commande {id_wizi_resync}..."):
+                        try:
+                            ok = sync_commande_unique(token_cached, shop_id_cached, int(id_wizi_resync))
+                            if ok:
+                                st.success(f"✓ Commande {id_wizi_resync} resynchronisée.")
+                            else:
+                                st.error(f"Échec — l'appel détail Wizishop pour la commande "
+                                         f"{id_wizi_resync} a échoué (commande inexistante ?).")
+                        except Exception as e:
+                            st.error(f"Erreur : {e}")
 
             if st.button("4️⃣ Sync Produits Wizishop (lent ~2h)", use_container_width=True):
                 with st.spinner("Synchronisation produits... (très long, ne pas fermer la page)"):

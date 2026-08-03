@@ -2,7 +2,7 @@ import requests
 import streamlit as st
 import time
 from datetime import datetime, timezone, timedelta
-from supabase_api import upsert, select, insert
+from supabase_api import upsert, select, insert, delete
 
 WIZISHOP_API_URL = "https://api.wizishop.com"
 
@@ -310,12 +310,17 @@ def get_max_commande_id():
         return results[0].get("id_wizi", 0)
     return 0
 
-def _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes):
+def _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes, remplacer_lignes=False):
     """Récupère le détail complet d'une commande Wizishop et met à jour
     `commandes` (+ `lignes_commande` si insert_lignes). Retourne True si
     l'appel détail a réussi, False sinon (la commande reste inchangée en
     base — c'est ce cas qui laisse date_commande/montant_ttc à NULL,
-    cf. _sync_commandes_nulles pour le retry)."""
+    cf. _sync_commandes_nulles pour le retry).
+    remplacer_lignes=True supprime les lignes existantes de cette commande
+    juste avant réinsertion (uniquement une fois l'appel détail confirmé en
+    succès, pour ne jamais perdre les lignes si l'API échoue) — nécessaire
+    pour un resync forcé d'une commande déjà synchronisée (cf.
+    sync_commande_unique), sinon insert() dupliquerait les lignes."""
     detail_r = requests.get(
         f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders/{id_wizi}",
         headers=headers
@@ -440,6 +445,8 @@ def _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes):
             })
 
     if lignes and insert_lignes:
+        if remplacer_lignes:
+            delete("lignes_commande", f"id_commande=eq.{id_wizi}&source=eq.wizishop")
         insert("lignes_commande", lignes)
 
     return True
@@ -508,6 +515,18 @@ def sync_commandes_nulles_only(token, shop_id):
     sync_commandes() — retry ciblé et rapide, indépendant de la sync complète."""
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     return _sync_commandes_nulles(headers, shop_id)
+
+
+def sync_commande_unique(token, shop_id, id_wizi):
+    """Resynchronise une seule commande Wizishop depuis l'API en forçant la
+    mise à jour de tous ses champs, même si elle existe déjà en base avec des
+    données complètes — utile pour corriger une commande dont les données
+    sont visiblement fausses (ex: #22062, date/montant incohérents avec
+    l'export Wizishop). Contrairement au sync normal, les lignes existantes
+    sont supprimées puis réinsérées (remplacer_lignes=True) pour éviter les
+    doublons d'une commande déjà synchronisée. Retourne True/False."""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    return _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes=True, remplacer_lignes=True)
 
 
 def sync_commandes(token, shop_id):
