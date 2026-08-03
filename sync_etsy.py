@@ -139,6 +139,42 @@ def sync_etsy_commandes(shop_id):
     return total
 
 
+def backfill_etsy_transaction_ids(shop_id):
+    """Backfill ciblé : met à jour transaction_id sur les lignes déjà en base
+    qui ne l'ont pas encore (transaction_id IS NULL), en parcourant tout
+    l'historique des receipts Etsy. N'insère jamais de nouvelle ligne — un
+    resync complet via insert() dupliquerait tout l'historique (cf. la boucle
+    ci-dessus, ligne ~133), donc on ne fait que des UPDATE ciblés.
+    Retourne (nb_traitees, nb_mises_a_jour)."""
+    from etsy_api import get_all_receipts
+    receipts = get_all_receipts(shop_id)
+
+    nb_traitees = 0
+    nb_maj = 0
+    for receipt in receipts:
+        receipt_id = receipt.get("receipt_id")
+        if not receipt_id:
+            continue
+
+        for transaction in receipt.get("transactions", []):
+            transaction_id = transaction.get("transaction_id")
+            sku = transaction.get("sku")
+            if not transaction_id or not sku:
+                continue
+            nb_traitees += 1
+
+            existants = select("lignes_commande",
+                f"select=id&id_commande=eq.{receipt_id}&sku=eq.{sku}&transaction_id=is.null&limit=1")
+            if existants:
+                ok = update("lignes_commande",
+                    f"id_commande=eq.{receipt_id}&sku=eq.{sku}&transaction_id=is.null",
+                    {"transaction_id": transaction_id})
+                if ok:
+                    nb_maj += 1
+
+    return nb_traitees, nb_maj
+
+
 def _clean_etsy_inventory(products_raw, stock_wizi_map):
     """
     Prépare le body d'inventaire pour le PUT Etsy :
