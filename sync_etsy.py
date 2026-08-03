@@ -126,6 +126,7 @@ def sync_etsy_commandes(shop_id):
                 "prix_unitaire_ttc": prix_unitaire,
                 "sku_variation": sku_variation,
                 "libelle_variation": libelle_variation,
+                "transaction_id": transaction.get("transaction_id"),
                 "source": "etsy"
             })
 
