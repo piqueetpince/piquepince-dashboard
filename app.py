@@ -5,7 +5,7 @@ import json
 import os
 from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, get_wizi_shops, sync_categories, sync_marques,
-                           sync_skus, sync_commandes, sync_produits, log_sync,
+                           sync_skus, sync_commandes, sync_commandes_nulles_only, sync_produits, log_sync,
                            WIZISHOP_API_URL)
 from sync_etsy import sync_etsy_commandes, log_sync_etsy
 from sync_etsy_produits import sync_produits_etsy
@@ -498,6 +498,18 @@ if page == "🔄 Synchronisation":
                         st.info(f"🔧 DEBUG passe 3 (retry NULL) : {nb_nulles_trouvees} commande(s) "
                                 f"trouvée(s) avec date_commande NULL, {nb_nulles_corrigees} corrigée(s) avec succès "
                                 f"({nb_nulles_trouvees - nb_nulles_corrigees} échec(s) résiduel(s)).")
+                    except Exception as e:
+                        st.error(f"Erreur : {e}")
+
+            if st.button("🔧 Retry commandes incomplètes", use_container_width=True):
+                with st.spinner("Retry des commandes date_commande NULL..."):
+                    debut = time.time()
+                    try:
+                        nb_trouvees, nb_corrigees = sync_commandes_nulles_only(token_cached, shop_id_cached)
+                        duree = time.time() - debut
+                        log_sync("commandes", "wizishop", nb_corrigees, "success",
+                                 f"retry NULL: {nb_corrigees}/{nb_trouvees}", duree)
+                        st.success(f"✓ {nb_corrigees}/{nb_trouvees} commande(s) incomplète(s) corrigée(s) en {duree:.1f}s")
                     except Exception as e:
                         st.error(f"Erreur : {e}")
 

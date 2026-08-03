@@ -502,6 +502,14 @@ def _sync_commandes_nulles(headers, shop_id):
     return trouvees, corrigees
 
 
+def sync_commandes_nulles_only(token, shop_id):
+    """Retente uniquement les commandes wizishop avec date_commande NULL
+    (cf. _sync_commandes_nulles), sans repasser par les passes 1/2 de
+    sync_commandes() — retry ciblé et rapide, indépendant de la sync complète."""
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    return _sync_commandes_nulles(headers, shop_id)
+
+
 def sync_commandes(token, shop_id):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     total = 0
