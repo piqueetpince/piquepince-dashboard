@@ -371,7 +371,7 @@ st.title("Pique&Pince — Dashboard ventes")
 # ── Navigation groupée ────────────────────────────────────────────────────────
 
 _NAV_GROUPES = {
-    "📊 Général":       ["📊 Vue d'ensemble", "📊 Analyse catalogue"],
+    "📊 Général":       ["📊 Vue d'ensemble", "📊 Analyse catalogue", "📊 Marge consolidée"],
     "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories", "🐌 Produits peu vendus"],
     "🛍️ Wizishop":     ["📦 Commandes", "👥 Clients", "⭐ Best-sellers", "🚨 Réapprovisionnement",
                          "📋 Factures Wizishop",
@@ -834,6 +834,138 @@ elif page == "📊 Analyse catalogue":
         st.download_button("📥 Exporter CSV", csv, "analyse_catalogue.csv", "text/csv")
     else:
         st.info("Aucune donnée. Lance d'abord une synchronisation depuis le menu 🔄.")
+
+elif page == "📊 Marge consolidée":
+    st.subheader("📊 Marge consolidée")
+
+    annee_courante = pd.Timestamp.now().year
+    bornes_wizi = select("commandes",
+        "select=date_commande&source=eq.wizishop&date_commande=not.is.null&order=date_commande.asc&limit=1")
+    bornes_faire = select("commandes",
+        "select=date_commande&source=eq.faire&date_commande=not.is.null&order=date_commande.asc&limit=1")
+    annees_min = []
+    if bornes_wizi:
+        annees_min.append(pd.to_datetime(bornes_wizi[0]["date_commande"]).tz_localize(None).year)
+    if bornes_faire:
+        annees_min.append(pd.to_datetime(bornes_faire[0]["date_commande"]).tz_localize(None).year)
+    annee_min = min(annees_min) if annees_min else annee_courante
+    annees_disponibles = list(range(annee_courante, annee_min - 1, -1))
+
+    with st.sidebar:
+        st.divider()
+        index_defaut = annees_disponibles.index(annee_courante) if annee_courante in annees_disponibles else 0
+        annee = st.selectbox("Année", annees_disponibles, index=index_defaut)
+
+    # Wizishop raisonne en heure locale Europe/Paris (même logique que la
+    # page "📋 Factures Wizishop") — bornes de l'année converties en UTC.
+    tz_paris = ZoneInfo("Europe/Paris")
+    debut_annee_local = pd.Timestamp(f"{annee}-01-01").tz_localize(tz_paris)
+    fin_annee_local = pd.Timestamp(f"{annee + 1}-01-01").tz_localize(tz_paris)
+    date_debut_wizi = debut_annee_local.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%S")
+    date_fin_wizi = fin_annee_local.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%S")
+
+    produits_data = select("produits", "select=sku,prix_achat_ht")
+    prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+    # ── Marge Wizishop par mois (même logique que "📋 Factures Wizishop") ──
+    commandes_wizi = select("commandes",
+        f"select=id_wizi,date_commande,montant_ht"
+        f"&source=eq.wizishop&statut_code=not.in.(0,45,50)"
+        f"&date_commande=gte.{date_debut_wizi}&date_commande=lt.{date_fin_wizi}")
+
+    marge_wizi_par_mois = [0.0] * 12
+    if commandes_wizi:
+        ids_wizi = [str(c["id_wizi"]) for c in commandes_wizi if c.get("id_wizi")]
+        ids_str = ",".join(ids_wizi)
+        lignes_wizi = select("lignes_commande",
+            f"select=id_commande,sku,quantite&id_commande=in.({ids_str})&source=eq.wizishop",
+            limit=50000)
+
+        cout_par_cmd_wizi = {}
+        for l in lignes_wizi or []:
+            id_cmd = str(l.get("id_commande", ""))
+            sku = l.get("sku") or ""
+            qty = float(l.get("quantite") or 0)
+            prod_info = get_prod_parent(sku, prod_map_achat)
+            prix_achat = float(prod_info.get("prix_achat_ht") or 0)
+            cout_par_cmd_wizi[id_cmd] = cout_par_cmd_wizi.get(id_cmd, 0.0) + prix_achat * qty
+
+        for c in commandes_wizi:
+            id_wizi = str(c["id_wizi"])
+            ca_ht = float(c.get("montant_ht") or 0)
+            cout = cout_par_cmd_wizi.get(id_wizi, 0.0)
+            mois_idx = pd.to_datetime(c["date_commande"]).tz_convert(tz_paris).month - 1
+            marge_wizi_par_mois[mois_idx] += ca_ht - cout
+
+    # ── Marge Faire par mois (même logique que "📋 Factures Faire") ──
+    commandes_faire = select("commandes",
+        f"select=id_faire,date_commande,montant_net_recu,tva_client"
+        f"&source=eq.faire"
+        f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee + 1}-01-01")
+
+    marge_faire_par_mois = [0.0] * 12
+    if commandes_faire:
+        ids_faire = [str(c["id_faire"]) for c in commandes_faire if c.get("id_faire")]
+        ids_str = ",".join(ids_faire)
+        lignes_faire = select("lignes_commande",
+            f"select=id_commande,sku,quantite&id_commande=in.({ids_str})",
+            limit=50000)
+        mapping_data = select("sku_mapping_faire", "select=sku_faire,sku_wizishop")
+        sku_mapping = {m["sku_faire"]: m["sku_wizishop"] for m in mapping_data} if mapping_data else {}
+
+        cout_par_cmd_faire = {}
+        for l in lignes_faire or []:
+            id_cmd = str(l.get("id_commande", ""))
+            sku = l.get("sku") or ""
+            qty = float(l.get("quantite") or 0)
+            sku_resolu = sku_mapping.get(sku, sku)
+            prod_info = get_prod_parent(sku_resolu, prod_map_achat)
+            prix_achat = float(prod_info.get("prix_achat_ht") or 0)
+            cout_par_cmd_faire[id_cmd] = cout_par_cmd_faire.get(id_cmd, 0.0) + prix_achat * qty
+
+        for c in commandes_faire:
+            id_faire = str(c["id_faire"])
+            net_recu = float(c.get("montant_net_recu") or 0)
+            tva = float(c.get("tva_client") or 0)
+            cout = cout_par_cmd_faire.get(id_faire, 0.0)
+            mois_idx = pd.to_datetime(c["date_commande"]).month - 1
+            marge_faire_par_mois[mois_idx] += net_recu - tva - cout
+
+    marge_totale_par_mois = [w + f for w, f in zip(marge_wizi_par_mois, marge_faire_par_mois)]
+    total_wizi = sum(marge_wizi_par_mois)
+    total_faire = sum(marge_faire_par_mois)
+    total_general = total_wizi + total_faire
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Marge Wizishop totale annuelle", f"{total_wizi:.2f} €")
+    with col2:
+        st.metric("Marge Faire totale annuelle", f"{total_faire:.2f} €")
+    with col3:
+        st.metric("Marge totale annuelle", f"{total_general:.2f} €")
+
+    st.divider()
+
+    mois_labels_fr = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun",
+                       "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
+
+    data_tableau = {"": ["Marge Wizishop", "Marge Faire", "Marge Totale"]}
+    for i, label in enumerate(mois_labels_fr):
+        data_tableau[label] = [
+            round(marge_wizi_par_mois[i], 2),
+            round(marge_faire_par_mois[i], 2),
+            round(marge_totale_par_mois[i], 2),
+        ]
+    data_tableau["Total"] = [round(total_wizi, 2), round(total_faire, 2), round(total_general, 2)]
+
+    df_marge = pd.DataFrame(data_tableau)
+    colonnes_montant = mois_labels_fr + ["Total"]
+
+    styled = df_marge.style \
+        .format({c: "{:.2f} €" for c in colonnes_montant}) \
+        .apply(lambda row: ["font-weight: bold" if row[""] == "Marge Totale" else ""
+                             for _ in row], axis=1)
+    st.dataframe(styled, use_container_width=True, hide_index=True)
 
 elif page == "📦 Commandes":
     with st.sidebar:
