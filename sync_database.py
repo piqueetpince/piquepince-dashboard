@@ -481,8 +481,8 @@ def sync_commandes(token, shop_id):
         params_new["id_greater_than"] = depuis_id
     total += _sync_commandes_paginated(headers, shop_id, params_new, insert_lignes=True)
 
-    date_14j = (datetime.now(timezone.utc) - timedelta(days=14)).strftime("%Y-%m-%dT00:00:00+00:00")
-    total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_14j}, insert_lignes=False)
+    date_30j = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00+00:00")
+    total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_30j}, insert_lignes=False)
 
     return total
 
