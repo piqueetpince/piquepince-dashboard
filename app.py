@@ -373,6 +373,7 @@ _NAV_GROUPES = {
     "📊 Général":       ["📊 Vue d'ensemble", "📊 Analyse catalogue"],
     "📊 Analytique":    ["🎨 Meilleures variations", "📊 CA par catégories", "🐌 Produits peu vendus"],
     "🛍️ Wizishop":     ["📦 Commandes", "👥 Clients", "⭐ Best-sellers", "🚨 Réapprovisionnement",
+                         "📋 Factures Wizishop",
                          "🏭 Stock & Fournisseurs", "🔍 Vérification Wizishop",
                          "💎 Valorisation du stock", "🗂️ Catalogue par catégories",
                          "📈 Évolution CA annuelle", "🏪 Revendeurs Wizishop",
@@ -3564,6 +3565,232 @@ elif page == "🎨 Meilleures variations NPC":
                         "Unités vendues total", "Ventes/mois", "Ventes/SKU/mois"]
         csv = df_export[cols_export].to_csv(index=False).encode("utf-8")
         st.download_button("📥 Exporter CSV", csv, "meilleures_variations_npc.csv", "text/csv")
+
+elif page == "📋 Factures Wizishop":
+    st.subheader("📋 Factures Wizishop")
+
+    bornes = select("commandes",
+        "select=date_commande&source=eq.wizishop&date_commande=not.is.null"
+        "&order=date_commande.asc&limit=1")
+    date_min = pd.to_datetime(bornes[0]["date_commande"]).tz_localize(None) if bornes else pd.Timestamp.now()
+
+    mois_courant = pd.Timestamp.now().replace(day=1)
+    mois_min = date_min.replace(day=1)
+
+    mois_disponibles = []
+    m = mois_courant
+    while m >= mois_min:
+        mois_disponibles.append(m)
+        m = m - pd.DateOffset(months=1)
+    mois_labels = [m.strftime("%m/%Y") for m in mois_disponibles]
+
+    with st.sidebar:
+        st.divider()
+        mois_label_choisi = st.selectbox("Mois", mois_labels, index=0)
+
+    mois_choisi = mois_disponibles[mois_labels.index(mois_label_choisi)]
+    date_debut = mois_choisi.strftime("%Y-%m-%d")
+    date_fin = (mois_choisi + pd.DateOffset(months=1)).strftime("%Y-%m-%d")
+
+    commandes_wizi = select("commandes",
+        f"select=id_wizi,date_commande,nom_facturation,prenom_facturation,montant_ht,montant_ttc,"
+        f"frais_port,remise,code_promo,numero_facture,url_facture"
+        f"&source=eq.wizishop&statut_code=not.in.(0,45,50)"
+        f"&date_commande=gte.{date_debut}&date_commande=lt.{date_fin}"
+        f"&order=date_commande.desc")
+
+    if not commandes_wizi:
+        st.info("Aucune commande Wizishop pour ce mois.")
+    else:
+        df_cmd = pd.DataFrame(commandes_wizi)
+        for col in ["montant_ht", "montant_ttc", "frais_port", "remise"]:
+            df_cmd[col] = pd.to_numeric(df_cmd[col], errors="coerce").fillna(0)
+
+        def _format_date(valeur):
+            if not valeur or pd.isna(valeur):
+                return ""
+            try:
+                return pd.to_datetime(valeur).strftime("%d/%m/%Y")
+            except Exception:
+                return ""
+
+        ids_wizi = [str(c["id_wizi"]) for c in commandes_wizi if c.get("id_wizi")]
+        ids_str = ",".join(ids_wizi)
+
+        lignes = select("lignes_commande",
+            f"select=id_commande,sku,nom_produit,quantite,prix_unitaire_ttc"
+            f"&id_commande=in.({ids_str})&source=eq.wizishop",
+            limit=50000)
+
+        produits_data = select("produits", "select=sku,nom,prix_achat_ht")
+        prod_map_achat = {p["sku"]: p for p in produits_data} if produits_data else {}
+
+        cout_achat_par_cmd = {}
+        prix_achat_ok_par_cmd = {}
+        lignes_par_cmd = {}
+
+        if lignes:
+            for ligne in lignes:
+                id_cmd = str(ligne.get("id_commande", ""))
+                sku = ligne.get("sku") or ""
+                qty = float(ligne.get("quantite") or 0)
+                prix_vente = float(ligne.get("prix_unitaire_ttc") or 0)
+                prod_info = get_prod_parent(sku, prod_map_achat)
+                prix_achat = float(prod_info.get("prix_achat_ht") or 0)
+                nom_produit = ligne.get("nom_produit") or prod_info.get("nom") or sku
+
+                if id_cmd not in cout_achat_par_cmd:
+                    cout_achat_par_cmd[id_cmd] = 0.0
+                    prix_achat_ok_par_cmd[id_cmd] = True
+                    lignes_par_cmd[id_cmd] = []
+
+                cout_achat_par_cmd[id_cmd] += prix_achat * qty
+                if prix_achat <= 0:
+                    prix_achat_ok_par_cmd[id_cmd] = False
+
+                lignes_par_cmd[id_cmd].append({
+                    "sku": sku,
+                    "nom_produit": nom_produit,
+                    "quantite": qty,
+                    "prix_vente_unitaire": prix_vente,
+                    "total_vente": round(prix_vente * qty, 2),
+                    "prix_achat_unitaire": prix_achat,
+                    "cout_achat_total": round(prix_achat * qty, 2),
+                    "prix_achat_manquant": prix_achat <= 0,
+                })
+
+        rows = []
+        details = []
+        for _, row in df_cmd.iterrows():
+            id_wizi = str(row["id_wizi"])
+            date_fmt = _format_date(row["date_commande"])
+            client = f"{row.get('prenom_facturation', '') or ''} {row.get('nom_facturation', '') or ''}".strip()
+            ca_ht = float(row["montant_ht"])
+            montant_ttc = float(row["montant_ttc"])
+            tva = round(montant_ttc - ca_ht, 2)
+            frais_port = float(row["frais_port"])
+            remise = float(row["remise"])
+            code_promo = row.get("code_promo") or ""
+            numero_facture = row.get("numero_facture") or ""
+            url_facture = row.get("url_facture") or ""
+
+            cout_achat = round(cout_achat_par_cmd.get(id_wizi, 0), 2)
+            prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_wizi, False)
+            marge = round(ca_ht - cout_achat, 2)
+            marge_pct = round(marge / ca_ht * 100, 1) if ca_ht else 0
+
+            # Le LinkColumn Streamlit ne peut extraire le texte affiché que
+            # depuis l'URL elle-même (regex) — on encode le numéro de facture
+            # dans un fragment #xxx (ignoré par le navigateur/serveur au clic)
+            # pour pouvoir l'afficher comme texte du lien.
+            lien_facture = f"{url_facture}#{numero_facture}" if (url_facture and numero_facture) else ""
+
+            rows.append({
+                "Date": date_fmt,
+                "N° commande": row["id_wizi"],
+                "N° facture": lien_facture,
+                "Client": client,
+                "CA HT": ca_ht,
+                "TVA": tva,
+                "Montant TTC": montant_ttc,
+                "Frais port": frais_port,
+                "Remise": "" if remise == 0 else f"{remise:.2f}",
+                "Code promo": code_promo,
+                "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
+                "Marge": marge,
+                "Marge %": marge_pct,
+                "_cout_achat": cout_achat,
+                "_prix_achat_manquant": prix_achat_manquant,
+                "_remise": remise,
+                "_numero_facture_plain": numero_facture,
+            })
+
+            details.append({
+                "id_wizi": row["id_wizi"],
+                "date": date_fmt,
+                "client": client,
+                "ca_ht": ca_ht,
+                "marge_pct": marge_pct,
+                "lignes": lignes_par_cmd.get(id_wizi, []),
+            })
+
+        df_table = pd.DataFrame(rows)
+
+        nb_commandes = len(df_table)
+        ca_total = df_table["CA HT"].sum()
+        tva_total = df_table["TVA"].sum()
+        remise_total = df_table["_remise"].sum()
+        cout_achat_total = df_table["_cout_achat"].sum()
+        marge_totale = df_table["Marge"].sum()
+        marge_pct_moyenne = round(marge_totale / ca_total * 100, 1) if ca_total else 0
+        nb_prix_manquant = int(df_table["_prix_achat_manquant"].sum())
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Nb commandes", nb_commandes)
+        with col2:
+            st.metric("CA HT total", f"{ca_total:.2f} €")
+        with col3:
+            st.metric("TVA totale", f"{tva_total:.2f} €")
+        with col4:
+            st.metric("Total remises", f"{remise_total:.2f} €")
+
+        col5, col6, col7, col8 = st.columns(4)
+        with col5:
+            st.metric("Coût achat total", f"{cout_achat_total:.2f} €")
+        with col6:
+            st.metric("Marge totale", f"{marge_totale:.2f} €")
+        with col7:
+            st.metric("Marge % moyenne", f"{marge_pct_moyenne:.1f} %")
+        with col8:
+            st.metric("⚠️ Prix achat manquant", nb_prix_manquant)
+
+        st.divider()
+
+        df_affiche = df_table.drop(columns=["_cout_achat", "_prix_achat_manquant",
+                                              "_remise", "_numero_facture_plain"])
+        styled = df_affiche.style \
+            .format({
+                "CA HT": "{:.2f}", "TVA": "{:.2f}", "Montant TTC": "{:.2f}",
+                "Frais port": "{:.2f}", "Marge": "{:.2f}", "Marge %": "{:.1f}",
+            })
+        st.dataframe(
+            styled, use_container_width=True, hide_index=True,
+            column_config={
+                "N° facture": st.column_config.LinkColumn(display_text=r"#(.+)$"),
+            })
+
+        df_csv = df_affiche.copy()
+        df_csv["N° facture"] = df_table["_numero_facture_plain"]
+        csv = df_csv.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 Télécharger en CSV", csv, f"factures_wizishop_{mois_label_choisi.replace('/', '-')}.csv", "text/csv")
+
+        st.divider()
+        st.markdown("### Détail par commande")
+
+        for d in details:
+            titre = f"🔍 {d['date']} — {d['client']} — {d['ca_ht']:.2f}€ — Marge: {d['marge_pct']:.1f}%"
+            with st.expander(titre):
+                lignes_cmd = d["lignes"]
+                if lignes_cmd:
+                    df_lignes = pd.DataFrame([{
+                        "SKU": l["sku"],
+                        "Produit": l["nom_produit"],
+                        "Quantité": int(l["quantite"]),
+                        "Prix unitaire HT": l["prix_vente_unitaire"],
+                        "Total HT": l["total_vente"],
+                        "Prix achat HT": f"{l['prix_achat_unitaire']:.2f} ⚠️"
+                            if l["prix_achat_manquant"] else f"{l['prix_achat_unitaire']:.2f}",
+                        "Coût total HT": l["cout_achat_total"],
+                    } for l in lignes_cmd])
+                    st.dataframe(
+                        df_lignes.style.format({
+                            "Prix unitaire HT": "{:.2f}", "Total HT": "{:.2f}",
+                            "Coût total HT": "{:.2f}",
+                        }),
+                        use_container_width=True, hide_index=True)
+                else:
+                    st.info("Aucune ligne de commande trouvée.")
 
 elif page == "🏭 Stock & Fournisseurs":
     with st.sidebar:
