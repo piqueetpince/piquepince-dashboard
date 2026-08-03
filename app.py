@@ -3758,6 +3758,7 @@ elif page == "📋 Factures Wizishop":
 
         nb_commandes = len(df_table)
         ca_total = df_table["CA HT"].sum()
+        ca_ttc_total = df_table["Montant TTC"].sum()
         tva_total = df_table["TVA"].sum()
         remise_total = df_table["_remise"].sum()
         cout_achat_total = df_table["_cout_achat"].sum()
@@ -3765,24 +3766,26 @@ elif page == "📋 Factures Wizishop":
         marge_pct_moyenne = round(marge_totale / ca_total * 100, 1) if ca_total else 0
         nb_prix_manquant = int(df_table["_prix_achat_manquant"].sum())
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
             st.metric("Nb commandes", nb_commandes)
         with col2:
             st.metric("CA HT total", f"{ca_total:.2f} €")
         with col3:
-            st.metric("TVA totale", f"{tva_total:.2f} €")
+            st.metric("CA TTC total", f"{ca_ttc_total:.2f} €")
         with col4:
+            st.metric("TVA totale", f"{tva_total:.2f} €")
+        with col5:
             st.metric("Total remises", f"{remise_total:.2f} €")
 
-        col5, col6, col7, col8 = st.columns(4)
-        with col5:
-            st.metric("Coût achat total", f"{cout_achat_total:.2f} €")
+        col6, col7, col8, col9 = st.columns(4)
         with col6:
-            st.metric("Marge totale", f"{marge_totale:.2f} €")
+            st.metric("Coût achat total", f"{cout_achat_total:.2f} €")
         with col7:
-            st.metric("Marge % moyenne", f"{marge_pct_moyenne:.1f} %")
+            st.metric("Marge totale", f"{marge_totale:.2f} €")
         with col8:
+            st.metric("Marge % moyenne", f"{marge_pct_moyenne:.1f} %")
+        with col9:
             st.metric("⚠️ Prix achat manquant", nb_prix_manquant)
 
         st.divider()
