@@ -310,6 +310,141 @@ def get_max_commande_id():
         return results[0].get("id_wizi", 0)
     return 0
 
+def _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes):
+    """Récupère le détail complet d'une commande Wizishop et met à jour
+    `commandes` (+ `lignes_commande` si insert_lignes). Retourne True si
+    l'appel détail a réussi, False sinon (la commande reste inchangée en
+    base — c'est ce cas qui laisse date_commande/montant_ttc à NULL,
+    cf. _sync_commandes_nulles pour le retry)."""
+    detail_r = requests.get(
+        f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders/{id_wizi}",
+        headers=headers
+    )
+    if detail_r.status_code != 200:
+        return False
+    o = detail_r.json()
+    bil = o.get("billing_address", {})
+    shp = o.get("shipping_address", {})
+    shipping = o.get("shippings", [{}])[0] if o.get("shippings") else {}
+    services = o.get("services", {})
+    zone = get_zone_tva(bil.get("country_iso"))
+
+    discounts = o.get("discounts", [])
+    code_promo = discounts[0].get("name") if discounts else None
+
+    upsert("commandes", [{
+        "id_wizi": o.get("id"),
+        "numero_commande": o.get("public_id"),
+        "date_commande": clean_date(o.get("date")),
+        "statut_code": o.get("status_code"),
+        "statut_texte": o.get("status_text"),
+        "devise": o.get("currency"),
+        "montant_ttc": o.get("total_amount"),
+        "montant_ht": o.get("total_amount_excl_tax"),
+        "montant_produits_ttc": o.get("total_products_amount"),
+        "frais_port": o.get("total_shipping_amount"),
+        "remise": o.get("total_reduc_amount"),
+        "code_promo": code_promo,
+        "frais_supplementaires": o.get("total_fees"),
+        "mode_paiement": str(o.get("payment_mode")) if o.get("payment_mode") else None,
+        "type_paiement": str(o.get("payment_type")) if o.get("payment_type") else None,
+        "libelle_paiement": o.get("payment_label"),
+        "numero_transaction": o.get("transaction_number"),
+        "numero_facture": str(o.get("invoice_id")) if o.get("invoice_id") else None,
+        "url_facture": o.get("invoice_url"),
+        "poids_total": o.get("weight"),
+        "origine": o.get("origin"),
+        "tag": o.get("tag"),
+        "commentaire": o.get("comment"),
+        "id_client": o.get("customer_id"),
+        "civilite_facturation": bil.get("civility"),
+        "prenom_facturation": bil.get("firstname"),
+        "nom_facturation": bil.get("lastname"),
+        "email_client": bil.get("email"),
+        "telephone_facturation": bil.get("phone"),
+        "societe_facturation": bil.get("company"),
+        "adresse_facturation": bil.get("street"),
+        "cp_facturation": bil.get("postal_code"),
+        "ville_facturation": bil.get("town"),
+        "pays_facturation": bil.get("country"),
+        "pays_facturation_iso": bil.get("country_iso"),
+        "prenom_livraison": shp.get("firstname"),
+        "nom_livraison": shp.get("lastname"),
+        "telephone_livraison": shp.get("phone"),
+        "adresse_livraison": shp.get("street"),
+        "cp_livraison": shp.get("postal_code"),
+        "ville_livraison": shp.get("town"),
+        "pays_livraison": shp.get("country"),
+        "pays_livraison_iso": shp.get("country_iso"),
+        "mode_transport": str(shipping.get("mode")) if shipping.get("mode") is not None else None,
+        "nom_transporteur": shipping.get("name"),
+        "numero_suivi": shipping.get("tracking_number"),
+        "pickup_number": shipping.get("pickup_number"),
+        "shipping_tax": shipping.get("tax"),
+        "emballage_cadeau": services.get("gift_wrap", False),
+        "message_cadeau": services.get("message"),
+        "third_party_id": o.get("third_party_id"),
+        "third_party_from": o.get("third_party_from"),
+        "zone_tva": zone,
+        "source": "wizishop"
+    }], "id_wizi")
+
+    lignes = []
+    for sku_item in shipping.get("skus", []):
+        customisations = sku_item.get("customisations", [])
+        custom_titre = customisations[0].get("title") if customisations else None
+        custom_contenu = customisations[0].get("content") if customisations else None
+        custom_prix = customisations[0].get("price") if customisations else None
+
+        variations = sku_item.get("variations", [])
+        if variations:
+            for variation in variations:
+                lignes.append({
+                    "id_commande": o.get("id"),
+                    "sku": sku_item.get("sku"),
+                    "nom_produit": sku_item.get("title"),
+                    "quantite": sku_item.get("quantity"),
+                    "prix_unitaire_ttc": sku_item.get("price"),
+                    "tva": sku_item.get("tax"),
+                    "remise_produit": sku_item.get("total_discount"),
+                    "poids": sku_item.get("weight"),
+                    "image_url": sku_item.get("image_url"),
+                    "sku_variation": variation.get("sku"),
+                    "libelle_variation": variation.get("title"),
+                    "quantite_variation": variation.get("quantity"),
+                    "poids_variation": variation.get("weight"),
+                    "customisation_titre": custom_titre,
+                    "customisation_contenu": custom_contenu,
+                    "customisation_prix": custom_prix,
+                    "source": "wizishop"
+                })
+        else:
+            lignes.append({
+                "id_commande": o.get("id"),
+                "sku": sku_item.get("sku"),
+                "nom_produit": sku_item.get("title"),
+                "quantite": sku_item.get("quantity"),
+                "prix_unitaire_ttc": sku_item.get("price"),
+                "tva": sku_item.get("tax"),
+                "remise_produit": sku_item.get("total_discount"),
+                "poids": sku_item.get("weight"),
+                "image_url": sku_item.get("image_url"),
+                "sku_variation": None,
+                "libelle_variation": None,
+                "quantite_variation": None,
+                "poids_variation": None,
+                "customisation_titre": custom_titre,
+                "customisation_contenu": custom_contenu,
+                "customisation_prix": custom_prix,
+                "source": "wizishop"
+            })
+
+    if lignes and insert_lignes:
+        insert("lignes_commande", lignes)
+
+    return True
+
+
 def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
     page, total = 1, 0
     while True:
@@ -336,131 +471,8 @@ def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
                 continue
 
             # Passe 1 (ou fallback si status_code absent du listing) : appel détail complet
-            detail_r = requests.get(
-                f"{WIZISHOP_API_URL}/v3/shops/{shop_id}/orders/{cmd['id']}",
-                headers=headers
-            )
-            if detail_r.status_code != 200:
+            if not _sync_commande_detail(headers, shop_id, cmd["id"], insert_lignes):
                 continue
-            o = detail_r.json()
-            bil = o.get("billing_address", {})
-            shp = o.get("shipping_address", {})
-            shipping = o.get("shippings", [{}])[0] if o.get("shippings") else {}
-            services = o.get("services", {})
-            zone = get_zone_tva(bil.get("country_iso"))
-
-            discounts = o.get("discounts", [])
-            code_promo = discounts[0].get("name") if discounts else None
-
-            upsert("commandes", [{
-                "id_wizi": o.get("id"),
-                "numero_commande": o.get("public_id"),
-                "date_commande": clean_date(o.get("date")),
-                "statut_code": o.get("status_code"),
-                "statut_texte": o.get("status_text"),
-                "devise": o.get("currency"),
-                "montant_ttc": o.get("total_amount"),
-                "montant_ht": o.get("total_amount_excl_tax"),
-                "montant_produits_ttc": o.get("total_products_amount"),
-                "frais_port": o.get("total_shipping_amount"),
-                "remise": o.get("total_reduc_amount"),
-                "code_promo": code_promo,
-                "frais_supplementaires": o.get("total_fees"),
-                "mode_paiement": str(o.get("payment_mode")) if o.get("payment_mode") else None,
-                "type_paiement": str(o.get("payment_type")) if o.get("payment_type") else None,
-                "libelle_paiement": o.get("payment_label"),
-                "numero_transaction": o.get("transaction_number"),
-                "numero_facture": str(o.get("invoice_id")) if o.get("invoice_id") else None,
-                "url_facture": o.get("invoice_url"),
-                "poids_total": o.get("weight"),
-                "origine": o.get("origin"),
-                "tag": o.get("tag"),
-                "commentaire": o.get("comment"),
-                "id_client": o.get("customer_id"),
-                "civilite_facturation": bil.get("civility"),
-                "prenom_facturation": bil.get("firstname"),
-                "nom_facturation": bil.get("lastname"),
-                "email_client": bil.get("email"),
-                "telephone_facturation": bil.get("phone"),
-                "societe_facturation": bil.get("company"),
-                "adresse_facturation": bil.get("street"),
-                "cp_facturation": bil.get("postal_code"),
-                "ville_facturation": bil.get("town"),
-                "pays_facturation": bil.get("country"),
-                "pays_facturation_iso": bil.get("country_iso"),
-                "prenom_livraison": shp.get("firstname"),
-                "nom_livraison": shp.get("lastname"),
-                "telephone_livraison": shp.get("phone"),
-                "adresse_livraison": shp.get("street"),
-                "cp_livraison": shp.get("postal_code"),
-                "ville_livraison": shp.get("town"),
-                "pays_livraison": shp.get("country"),
-                "pays_livraison_iso": shp.get("country_iso"),
-                "mode_transport": str(shipping.get("mode")) if shipping.get("mode") is not None else None,
-                "nom_transporteur": shipping.get("name"),
-                "numero_suivi": shipping.get("tracking_number"),
-                "pickup_number": shipping.get("pickup_number"),
-                "shipping_tax": shipping.get("tax"),
-                "emballage_cadeau": services.get("gift_wrap", False),
-                "message_cadeau": services.get("message"),
-                "third_party_id": o.get("third_party_id"),
-                "third_party_from": o.get("third_party_from"),
-                "zone_tva": zone,
-                "source": "wizishop"
-            }], "id_wizi")
-
-            lignes = []
-            for sku_item in shipping.get("skus", []):
-                customisations = sku_item.get("customisations", [])
-                custom_titre = customisations[0].get("title") if customisations else None
-                custom_contenu = customisations[0].get("content") if customisations else None
-                custom_prix = customisations[0].get("price") if customisations else None
-
-                variations = sku_item.get("variations", [])
-                if variations:
-                    for variation in variations:
-                        lignes.append({
-                            "id_commande": o.get("id"),
-                            "sku": sku_item.get("sku"),
-                            "nom_produit": sku_item.get("title"),
-                            "quantite": sku_item.get("quantity"),
-                            "prix_unitaire_ttc": sku_item.get("price"),
-                            "tva": sku_item.get("tax"),
-                            "remise_produit": sku_item.get("total_discount"),
-                            "poids": sku_item.get("weight"),
-                            "image_url": sku_item.get("image_url"),
-                            "sku_variation": variation.get("sku"),
-                            "libelle_variation": variation.get("title"),
-                            "quantite_variation": variation.get("quantity"),
-                            "poids_variation": variation.get("weight"),
-                            "customisation_titre": custom_titre,
-                            "customisation_contenu": custom_contenu,
-                            "customisation_prix": custom_prix,
-                            "source": "wizishop"
-                        })
-                else:
-                    lignes.append({
-                        "id_commande": o.get("id"),
-                        "sku": sku_item.get("sku"),
-                        "nom_produit": sku_item.get("title"),
-                        "quantite": sku_item.get("quantity"),
-                        "prix_unitaire_ttc": sku_item.get("price"),
-                        "tva": sku_item.get("tax"),
-                        "remise_produit": sku_item.get("total_discount"),
-                        "poids": sku_item.get("weight"),
-                        "image_url": sku_item.get("image_url"),
-                        "sku_variation": None,
-                        "libelle_variation": None,
-                        "quantite_variation": None,
-                        "poids_variation": None,
-                        "customisation_titre": custom_titre,
-                        "customisation_contenu": custom_contenu,
-                        "customisation_prix": custom_prix,
-                        "source": "wizishop"
-                    })
-
-            if lignes and insert_lignes:
-                insert("lignes_commande", lignes)
 
             total += 1
             time.sleep(0.05)
@@ -468,6 +480,24 @@ def _sync_commandes_paginated(headers, shop_id, extra_params, insert_lignes):
         if page >= data.get("pages", 1):
             break
         page += 1
+    return total
+
+
+def _sync_commandes_nulles(headers, shop_id):
+    """Passe 3 : retente les commandes wizishop dont le détail n'a jamais été
+    récupéré avec succès (date_commande NULL en base malgré un id_wizi déjà
+    connu — l'appel détail avait échoué lors d'un sync précédent, ne laissant
+    que le statut minimal posé par le fallback de la passe 2)."""
+    commandes_nulles = select("commandes",
+        "select=id_wizi&source=eq.wizishop&date_commande=is.null")
+    total = 0
+    for cmd in commandes_nulles or []:
+        id_wizi = cmd.get("id_wizi")
+        if not id_wizi:
+            continue
+        if _sync_commande_detail(headers, shop_id, id_wizi, insert_lignes=True):
+            total += 1
+        time.sleep(0.05)
     return total
 
 
@@ -483,6 +513,8 @@ def sync_commandes(token, shop_id):
 
     date_30j = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT00:00:00+00:00")
     total += _sync_commandes_paginated(headers, shop_id, {"date_from": date_30j}, insert_lignes=False)
+
+    total += _sync_commandes_nulles(headers, shop_id)
 
     return total
 

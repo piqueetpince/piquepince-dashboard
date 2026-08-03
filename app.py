@@ -14,6 +14,7 @@ from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
 from sync_shopify import sync_shopify_produits, sync_shopify_commandes, log_sync_shopify
 import time
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from faire_api import (api_get as faire_api_get, test_write_permission,
                        api_patch as faire_api_patch, create_product as faire_create_product)
 from shopify_api import (
@@ -3574,7 +3575,7 @@ elif page == "📋 Factures Wizishop":
         "&order=date_commande.asc&limit=1")
     date_min = pd.to_datetime(bornes[0]["date_commande"]).tz_localize(None) if bornes else pd.Timestamp.now()
 
-    mois_courant = pd.Timestamp.now().replace(day=1)
+    mois_courant = pd.Timestamp.now().normalize().replace(day=1)
     mois_min = date_min.replace(day=1)
 
     mois_disponibles = []
@@ -3589,8 +3590,15 @@ elif page == "📋 Factures Wizishop":
         mois_label_choisi = st.selectbox("Mois", mois_labels, index=0)
 
     mois_choisi = mois_disponibles[mois_labels.index(mois_label_choisi)]
-    date_debut = mois_choisi.strftime("%Y-%m-%d")
-    date_fin = (mois_choisi + pd.DateOffset(months=1)).strftime("%Y-%m-%d")
+    # Wizishop raisonne en heure locale Europe/Paris (ex: son export CSV) alors
+    # que date_commande est stocké en UTC — minuit local converti en UTC pour
+    # que les bornes du mois correspondent à ce que Wizishop considère comme
+    # "juillet" plutôt qu'à minuit UTC (qui décale ~2h en été/1h en hiver).
+    tz_paris = ZoneInfo("Europe/Paris")
+    debut_local = mois_choisi.tz_localize(tz_paris)
+    fin_local = (mois_choisi + pd.DateOffset(months=1)).tz_localize(tz_paris)
+    date_debut = debut_local.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%S")
+    date_fin = fin_local.tz_convert("UTC").strftime("%Y-%m-%dT%H:%M:%S")
 
     commandes_wizi = select("commandes",
         f"select=id_wizi,date_commande,nom_facturation,prenom_facturation,montant_ht,montant_ttc,"
