@@ -6001,30 +6001,30 @@ elif page == "📋 Factures Etsy":
 
             lignes_cmd = lignes_par_cmd.get(id_wizi, [])
 
-            # CA HT et TVA : la méthode dépend de si Etsy collecte lui-même la
-            # taxe pour ce pays (marketplace facilitator — USA, UK, Suisse...,
-            # reflété par tva_etsy > 0) ou non (France/UE — TVA déjà incluse
-            # dans le prix affiché au client, jamais collectée séparément par
-            # Etsy, donc à reconstituer nous-mêmes).
+            # CA HT et TVA : la TVA française à 20% ne s'applique qu'en
+            # France (et en UE si Etsy ne l'a pas collectée lui-même). Hors
+            # UE, il n'y a jamais de TVA française à reconstituer — soit
+            # Etsy a collecté sa propre taxe locale (tva_etsy), soit aucune.
             zone = get_zone_tva(pays_facturation_iso)
-            if zone in ("france", "ue"):
-                # FR/UE : pas de tva_etsy — TVA calculée par déduction à 20%
-                # sur le montant TTC des articles (hors port).
-                montant_articles_ttc = round(montant_ttc - frais_port, 2)
+            montant_articles_ttc = round(montant_ttc - frais_port, 2)
+
+            if zone == "france":
+                # France : TVA à 20% toujours calculée par déduction.
                 ca_ht = round(montant_articles_ttc / 1.20, 2)
                 tva = round(montant_articles_ttc - ca_ht, 2)
-            elif tva_etsy_db > 0:
-                # Hors UE avec taxe collectée par Etsy : montant_ht (subtotal)
-                # exclut déjà le port, directement utilisable comme CA HT.
-                ca_ht = round(montant_ht_db, 2)
-                tva = round(tva_etsy_db, 2)
+            elif zone == "ue":
+                if tva_etsy_db > 0:
+                    # Taxe locale déjà collectée par Etsy — pas de TVA fr à 20%.
+                    ca_ht = round(montant_articles_ttc, 2)
+                    tva = round(tva_etsy_db, 2)
+                else:
+                    ca_ht = round(montant_articles_ttc / 1.20, 2)
+                    tva = round(montant_articles_ttc - ca_ht, 2)
             else:
-                # Hors UE mais tva_etsy pas encore renseignée (backfill pas
-                # encore passé sur cette commande) — même repli que FR/UE en
-                # attendant, plus fiable que d'inventer un taux au hasard.
-                montant_articles_ttc = round(montant_ttc - frais_port, 2)
-                ca_ht = round(montant_articles_ttc / 1.20, 2)
-                tva = round(montant_articles_ttc - ca_ht, 2)
+                # Hors UE (USA, UK, Suisse, Australie...) ou pays inconnu :
+                # jamais de TVA française à 20%.
+                ca_ht = round(montant_articles_ttc, 2)
+                tva = round(tva_etsy_db, 2) if tva_etsy_db > 0 else 0.0
 
             c_transaction = commission_transaction.get(id_wizi, 0)
             c_port = commission_port.get(id_wizi, 0)
