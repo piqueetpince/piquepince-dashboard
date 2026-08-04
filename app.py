@@ -4618,67 +4618,42 @@ elif page == "🔍 Vérification Wizishop":
             st.info("Aucune commande Wizishop trouvée.")
 
     with tab2:
-        produits_sans_prix = select("produits",
-            "select=sku,nom,nom_categorie,fournisseur,prix_vente_ht"
-            "&or=(prix_achat_ht.is.null,prix_achat_ht.eq.0)"
-            "&order=fournisseur.asc,nom.asc")
+        # Même filtre catalogue que "📊 Analyse catalogue" : uniquement les SKUs
+        # visibles de la boutique BtoC, parents exclus, AE_ déjà exclus par
+        # select() sur skus/produits.
+        skus_catalogue = _get_skus_catalogue()
+        stock_map = {s["sku"]: s.get("stock") or 0 for s in (skus_catalogue or []) if s.get("sku")}
+        skus_catalogue_set = set(stock_map.keys())
 
-        if produits_sans_prix:
-            skus_stock = select("skus", "select=sku,stock")
-            stock_map = {s["sku"]: s.get("stock") or 0 for s in skus_stock} if skus_stock else {}
+        produits_data = select("produits",
+            "select=sku,nom,nom_categorie,fournisseur,prix_vente_ht,prix_achat_ht")
+        prod_map = {p["sku"]: p for p in produits_data} if produits_data else {}
 
-            # SKU parent = SKU le plus court partagé par un même produit Wizishop (id_wizi)
-            tous_produits = select("produits", "select=sku,id_wizi,statut")
-            prod_map = {p["sku"]: p for p in tous_produits} if tous_produits else {}
-            parent_par_id_wizi = {}
-            if tous_produits:
-                for p in tous_produits:
-                    iw, sku = p.get("id_wizi"), p.get("sku")
-                    if iw is None or not sku:
-                        continue
-                    courant = parent_par_id_wizi.get(iw)
-                    if courant is None or len(sku) < len(courant["sku"]):
-                        parent_par_id_wizi[iw] = p
-            prod_map_parents = {p["sku"]: p for p in parent_par_id_wizi.values()}
+        rows_manquants = []
+        for sku in skus_catalogue_set:
+            prod = prod_map.get(sku, {})
+            prix_achat = prod.get("prix_achat_ht")
+            if prix_achat is None or float(prix_achat) == 0:
+                rows_manquants.append({
+                    "SKU": sku,
+                    "Nom produit": prod.get("nom") or "",
+                    "Catégorie": prod.get("nom_categorie") or "",
+                    "Fournisseur": prod.get("fournisseur") or "",
+                    "Prix vente HT": float(prod.get("prix_vente_ht") or 0),
+                    "Stock": stock_map.get(sku, 0),
+                })
 
-            def _statut_parent(sku):
-                if sku in prod_map_parents:
-                    return prod_map_parents[sku].get("statut") or ""
-                # Fallback : préfixe le plus court trouvé parmi les SKUs parents
-                for longueur in range(4, len(sku)):
-                    prefixe = sku[:longueur]
-                    if prefixe in prod_map_parents:
-                        return prod_map_parents[prefixe].get("statut") or ""
-                # Aucun parent trouvé : statut du SKU lui-même
-                return (prod_map.get(sku) or {}).get("statut") or ""
+        df_pa = pd.DataFrame(rows_manquants)
+        if not df_pa.empty:
+            df_pa = df_pa.sort_values(["Fournisseur", "Nom produit"]).reset_index(drop=True)
 
-            df_pa = pd.DataFrame(produits_sans_prix)
-            df_pa["stock"] = df_pa["sku"].map(stock_map).fillna(0)
-            df_pa = df_pa[df_pa["stock"] > 0]
-
-            df_pa["statut"] = df_pa["sku"].apply(_statut_parent)
-
-            df_pa["prix_vente_ht"] = pd.to_numeric(df_pa["prix_vente_ht"], errors="coerce").fillna(0)
-            for col in ["nom", "nom_categorie", "fournisseur", "statut"]:
-                df_pa[col] = df_pa[col].fillna("")
-            df_pa = df_pa.rename(columns={
-                "sku": "SKU",
-                "nom": "Nom produit",
-                "nom_categorie": "Catégorie",
-                "fournisseur": "Fournisseur",
-                "statut": "Statut",
-                "prix_vente_ht": "Prix vente HT",
-            })[["SKU", "Nom produit", "Catégorie", "Fournisseur", "Statut", "Prix vente HT"]]
-
-            st.metric("SKUs sans prix d'achat (stock > 0)", len(df_pa))
-            if not df_pa.empty:
-                st.dataframe(df_pa, use_container_width=True, hide_index=True)
-                csv = df_pa.to_csv(index=False).encode("utf-8")
-                st.download_button("Télécharger en CSV", csv, "prix_achat_manquants.csv", "text/csv")
-            else:
-                st.success("✅ Tous les produits visibles avec du stock ont un prix d'achat renseigné.")
+        st.metric("SKUs du catalogue affiché sans prix d'achat", len(df_pa))
+        if not df_pa.empty:
+            st.dataframe(df_pa, use_container_width=True, hide_index=True)
+            csv = df_pa.to_csv(index=False).encode("utf-8")
+            st.download_button("Télécharger en CSV", csv, "prix_achat_manquants.csv", "text/csv")
         else:
-            st.success("✅ Tous les produits visibles ont un prix d'achat renseigné.")
+            st.success("✅ Tous les SKUs du catalogue affiché ont un prix d'achat renseigné.")
 
     with tab3:
         st.caption("SKUs affichés (visibles, non parents, hors AliExpress) sans fournisseur "
