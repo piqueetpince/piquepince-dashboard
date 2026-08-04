@@ -7,7 +7,8 @@ from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, get_wizi_shops, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_commandes_nulles_only, sync_commande_unique,
                            sync_produits, log_sync, WIZISHOP_API_URL)
-from sync_etsy import sync_etsy_commandes, log_sync_etsy, backfill_etsy_transaction_ids, backfill_etsy_tva
+from sync_etsy import (sync_etsy_commandes, log_sync_etsy, backfill_etsy_transaction_ids,
+                       backfill_etsy_tva, get_zone_tva)
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
@@ -5840,7 +5841,8 @@ elif page == "📋 Factures Etsy":
     date_fin_str = (mois_choisi + pd.DateOffset(months=1)).strftime("%Y-%m-%d")
 
     commandes_etsy = select("commandes",
-        f"select=id_wizi,date_commande,nom_facturation,montant_ttc,montant_ht,frais_port,tva_etsy"
+        f"select=id_wizi,date_commande,nom_facturation,montant_ttc,montant_ht,frais_port,"
+        f"tva_etsy,pays_facturation_iso"
         f"&source=eq.etsy&statut_code=not.in.(0,45,50)"
         f"&date_commande=gte.{date_debut_str}&date_commande=lt.{date_fin_str}"
         f"&order=date_commande.desc")
@@ -5995,21 +5997,34 @@ elif page == "📋 Factures Etsy":
             montant_ttc = float(row["montant_ttc"])
             montant_ht_db = float(row["montant_ht"])
             tva_etsy_db = float(row.get("tva_etsy") or 0)
+            pays_facturation_iso = row.get("pays_facturation_iso") or ""
 
             lignes_cmd = lignes_par_cmd.get(id_wizi, [])
-            ca_ht = round(sum(l["total_ht"] for l in lignes_cmd), 2)
 
-            # TVA : en priorité le champ tva_etsy (receipt.total_tax_cost, la
-            # vraie taxe Etsy). À défaut (commandes synchronisées avant l'ajout
-            # de ce champ, ou tva_etsy=0), repli sur montant_ttc - montant_ht -
-            # frais_port — montant_ht (subtotal) exclut déjà le port côté Etsy,
-            # donc il faut le soustraire en plus pour ne pas le compter dans la TVA.
-            if tva_etsy_db > 0:
+            # CA HT et TVA : la méthode dépend de si Etsy collecte lui-même la
+            # taxe pour ce pays (marketplace facilitator — USA, UK, Suisse...,
+            # reflété par tva_etsy > 0) ou non (France/UE — TVA déjà incluse
+            # dans le prix affiché au client, jamais collectée séparément par
+            # Etsy, donc à reconstituer nous-mêmes).
+            zone = get_zone_tva(pays_facturation_iso)
+            if zone in ("france", "ue"):
+                # FR/UE : pas de tva_etsy — TVA calculée par déduction à 20%
+                # sur le montant TTC des articles (hors port).
+                montant_articles_ttc = round(montant_ttc - frais_port, 2)
+                ca_ht = round(montant_articles_ttc / 1.20, 2)
+                tva = round(montant_articles_ttc - ca_ht, 2)
+            elif tva_etsy_db > 0:
+                # Hors UE avec taxe collectée par Etsy : montant_ht (subtotal)
+                # exclut déjà le port, directement utilisable comme CA HT.
+                ca_ht = round(montant_ht_db, 2)
                 tva = round(tva_etsy_db, 2)
-            elif montant_ht_db:
-                tva = round(montant_ttc - montant_ht_db - frais_port, 2)
             else:
-                tva = round(ca_ht * 0.2, 2)
+                # Hors UE mais tva_etsy pas encore renseignée (backfill pas
+                # encore passé sur cette commande) — même repli que FR/UE en
+                # attendant, plus fiable que d'inventer un taux au hasard.
+                montant_articles_ttc = round(montant_ttc - frais_port, 2)
+                ca_ht = round(montant_articles_ttc / 1.20, 2)
+                tva = round(montant_articles_ttc - ca_ht, 2)
 
             c_transaction = commission_transaction.get(id_wizi, 0)
             c_port = commission_port.get(id_wizi, 0)
