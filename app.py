@@ -6008,6 +6008,7 @@ elif page == "📋 Factures Etsy":
             zone = get_zone_tva(pays_facturation_iso)
             montant_articles_ttc = round(montant_ttc - frais_port, 2)
 
+            taxe_pays = 0.0
             if zone == "france":
                 # France : TVA à 20% toujours calculée par déduction.
                 ca_ht = round(montant_articles_ttc / 1.20, 2)
@@ -6022,9 +6023,13 @@ elif page == "📋 Factures Etsy":
                     tva = round(montant_articles_ttc - ca_ht, 2)
             else:
                 # Hors UE (USA, UK, Suisse, Australie...) ou pays inconnu :
-                # jamais de TVA française à 20%.
-                ca_ht = round(montant_articles_ttc, 2)
-                tva = round(tva_etsy_db, 2) if tva_etsy_db > 0 else 0.0
+                # jamais de TVA française. tva_etsy est une taxe étrangère
+                # collectée par Etsy et reversée au pays du client — ce n'est
+                # ni un revenu du vendeur ni une TVA à afficher : on la sort
+                # du CA et on la traite comme un frais (Total frais Etsy).
+                taxe_pays = round(tva_etsy_db, 2) if tva_etsy_db > 0 else 0.0
+                ca_ht = round(montant_articles_ttc - taxe_pays, 2)
+                tva = 0.0
 
             c_transaction = commission_transaction.get(id_wizi, 0)
             c_port = commission_port.get(id_wizi, 0)
@@ -6039,8 +6044,10 @@ elif page == "📋 Factures Etsy":
             # Total frais Etsy (et Marge) : publicité et renouvellement d'annonce
             # exclus — ce sont des frais au niveau du compte/de l'annonce, pas
             # rattachables proprement à une commande précise (cf. détail dans
-            # l'expander pour leur valeur informative par commande).
-            total_frais_etsy = round(commission_etsy + f_traitement + f_reglementaire, 2)
+            # l'expander pour leur valeur informative par commande). taxe_pays
+            # (hors UE uniquement) est en revanche bien un frais par commande.
+            total_frais_etsy = round(commission_etsy + f_traitement + f_reglementaire
+                                      + taxe_pays, 2)
 
             cout_achat = round(cout_achat_par_cmd.get(id_wizi, 0), 2)
             prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_wizi, False)
@@ -6058,6 +6065,7 @@ elif page == "📋 Factures Etsy":
                 "Commission Etsy": commission_etsy,
                 "Frais traitement paiement": f_traitement,
                 "Frais réglementaire": f_reglementaire,
+                "Taxe pays": taxe_pays,
                 "Total frais Etsy": total_frais_etsy,
                 "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
                 "Marge": marge,
@@ -6081,6 +6089,7 @@ elif page == "📋 Factures Etsy":
                     "Publicité on-site (prolist)": round(p_onsite, 2),
                     "Publicité off-site": round(p_offsite, 2),
                     "Renouvellement annonce": renouvellement,
+                    "Taxe pays (hors UE)": taxe_pays,
                 },
             })
 
@@ -6122,6 +6131,7 @@ elif page == "📋 Factures Etsy":
                 "Montant TTC": "{:.2f}", "Frais port": "{:.2f}", "TVA": "{:.2f}",
                 "CA HT": "{:.2f}", "Commission Etsy": "{:.2f}",
                 "Frais traitement paiement": "{:.2f}", "Frais réglementaire": "{:.2f}",
+                "Taxe pays": "{:.2f}",
                 "Total frais Etsy": "{:.2f}", "Marge": "{:.2f}", "Marge %": "{:.1f}",
             })
         st.dataframe(styled, use_container_width=True, hide_index=True)
