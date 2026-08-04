@@ -907,6 +907,7 @@ elif page == "📊 Marge consolidée":
         f"&date_commande=gte.{date_debut_wizi}&date_commande=lt.{date_fin_wizi}")
 
     marge_wizi_par_mois = [0.0] * 12
+    nb_commandes_wizi_par_mois = [0] * 12
     if commandes_wizi:
         ids_wizi = [str(c["id_wizi"]) for c in commandes_wizi if c.get("id_wizi")]
         ids_str = ",".join(ids_wizi)
@@ -929,6 +930,7 @@ elif page == "📊 Marge consolidée":
             cout = cout_par_cmd_wizi.get(id_wizi, 0.0)
             mois_idx = pd.to_datetime(c["date_commande"]).tz_convert(tz_paris).month - 1
             marge_wizi_par_mois[mois_idx] += ca_ht - cout
+            nb_commandes_wizi_par_mois[mois_idx] += 1
 
     # ── Marge Faire par mois (même logique que "📋 Factures Faire") ──
     commandes_faire = select("commandes",
@@ -964,17 +966,162 @@ elif page == "📊 Marge consolidée":
             mois_idx = pd.to_datetime(c["date_commande"]).month - 1
             marge_faire_par_mois[mois_idx] += net_recu - tva - cout
 
-    marge_totale_par_mois = [w + f for w, f in zip(marge_wizi_par_mois, marge_faire_par_mois)]
+    # Nb commandes Faire (filtre statut_code, contrairement au calcul de
+    # marge Faire ci-dessus qui n'en applique aucun — requête séparée).
+    commandes_faire_filtrees = select("commandes",
+        f"select=date_commande&source=eq.faire&statut_code=not.in.(0,45,50)"
+        f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee + 1}-01-01")
+    nb_commandes_faire_par_mois = [0] * 12
+    for c in commandes_faire_filtrees or []:
+        mois_idx = pd.to_datetime(c["date_commande"]).month - 1
+        nb_commandes_faire_par_mois[mois_idx] += 1
+
+    # ── Marge Etsy par mois (même logique que "📋 Factures Etsy") ──
+    commandes_etsy = select("commandes",
+        f"select=id_wizi,date_commande,montant_ttc,frais_port,tva_etsy,pays_facturation_iso"
+        f"&source=eq.etsy&statut_code=not.in.(0,45,50)"
+        f"&date_commande=gte.{annee}-01-01&date_commande=lt.{annee + 1}-01-01")
+
+    marge_etsy_par_mois = [0.0] * 12
+    nb_commandes_etsy_par_mois = [0] * 12
+    if commandes_etsy:
+        ids_etsy = [str(c["id_wizi"]) for c in commandes_etsy if c.get("id_wizi")]
+        ids_str = ",".join(ids_etsy)
+
+        lignes_etsy = select("lignes_commande",
+            f"select=id_commande,sku,quantite,transaction_id&id_commande=in.({ids_str})&source=eq.etsy",
+            limit=50000)
+
+        cout_par_cmd_etsy = {}
+        transaction_to_receipt = {}
+        transaction_ids = []
+        for l in lignes_etsy or []:
+            id_cmd = str(l.get("id_commande", ""))
+            sku = l.get("sku") or ""
+            qty = float(l.get("quantite") or 0)
+            prod_info = get_prod_parent(sku, prod_map_achat)
+            prix_achat = float(prod_info.get("prix_achat_ht") or 0)
+            cout_par_cmd_etsy[id_cmd] = cout_par_cmd_etsy.get(id_cmd, 0.0) + prix_achat * qty
+            tid = l.get("transaction_id")
+            if tid:
+                transaction_to_receipt[str(tid)] = id_cmd
+                transaction_ids.append(tid)
+
+        payments_etsy = select("etsy_payments",
+            f"select=payment_id,receipt_id&receipt_id=in.({ids_str})")
+        payment_to_receipt = {str(p["payment_id"]): str(p["receipt_id"]) for p in (payments_etsy or [])}
+        payment_ids = [p["payment_id"] for p in (payments_etsy or [])]
+
+        # Frais rattachables directement via receipt_id (reference_id = id_wizi)
+        ledger_receipt = select("etsy_ledger_entries",
+            f"select=ledger_type,reference_id,amount"
+            f"&ledger_type=in.(shipping_transaction,regulatory_operating_fee)"
+            f"&reference_id=in.({ids_str})",
+            limit=50000)
+
+        # Commission transaction : reference_id = transaction_id
+        ledger_transaction = []
+        if transaction_ids:
+            tids_str = ",".join(str(t) for t in transaction_ids)
+            ledger_transaction = select("etsy_ledger_entries",
+                f"select=ledger_type,reference_id,amount"
+                f"&ledger_type=in.(transaction,transaction_quantity)"
+                f"&reference_id=in.({tids_str})",
+                limit=50000)
+
+        # Frais traitement paiement : reference_id = payment_id
+        ledger_payment = []
+        if payment_ids:
+            pids_str = ",".join(str(p) for p in payment_ids)
+            ledger_payment = select("etsy_ledger_entries",
+                f"select=ledger_type,reference_id,amount"
+                f"&ledger_type=eq.PAYMENT_PROCESSING_FEE"
+                f"&reference_id=in.({pids_str})",
+                limit=50000)
+
+        commission_port_etsy = {}
+        frais_reglementaire_etsy = {}
+        for e in ledger_receipt or []:
+            receipt = str(e.get("reference_id"))
+            if receipt not in ids_etsy:
+                continue
+            montant = abs(e.get("amount") or 0) / 100
+            if e["ledger_type"] == "shipping_transaction":
+                commission_port_etsy[receipt] = commission_port_etsy.get(receipt, 0) + montant
+            elif e["ledger_type"] == "regulatory_operating_fee":
+                frais_reglementaire_etsy[receipt] = frais_reglementaire_etsy.get(receipt, 0) + montant
+
+        commission_transaction_etsy = {}
+        for e in ledger_transaction or []:
+            receipt = transaction_to_receipt.get(str(e.get("reference_id")))
+            if not receipt:
+                continue
+            montant = abs(e.get("amount") or 0) / 100
+            commission_transaction_etsy[receipt] = commission_transaction_etsy.get(receipt, 0) + montant
+
+        frais_traitement_etsy = {}
+        for e in ledger_payment or []:
+            receipt = payment_to_receipt.get(str(e.get("reference_id")))
+            if not receipt:
+                continue
+            montant = abs(e.get("amount") or 0) / 100
+            frais_traitement_etsy[receipt] = frais_traitement_etsy.get(receipt, 0) + montant
+
+        for c in commandes_etsy:
+            id_wizi = str(c["id_wizi"])
+            montant_ttc = float(c.get("montant_ttc") or 0)
+            frais_port = float(c.get("frais_port") or 0)
+            tva_etsy_db = float(c.get("tva_etsy") or 0)
+            pays_facturation_iso = c.get("pays_facturation_iso") or ""
+
+            # CA Produits HT : TVA/taxe pays exclues, même logique que la page
+            # "📋 Factures Etsy" (France/UE à 20% par déduction, hors UE la
+            # taxe étrangère collectée par Etsy est retirée du CA, jamais de
+            # TVA française hors UE).
+            zone = get_zone_tva(pays_facturation_iso)
+            montant_articles_ttc = round(montant_ttc - frais_port, 2)
+            if zone == "france":
+                ca_produits_ht = round(montant_articles_ttc / 1.20, 2)
+            elif zone == "ue":
+                if tva_etsy_db > 0:
+                    ca_produits_ht = round(montant_articles_ttc, 2)
+                else:
+                    ca_produits_ht = round(montant_articles_ttc / 1.20, 2)
+            else:
+                if tva_etsy_db > 0:
+                    ca_produits_ht = round(montant_articles_ttc - tva_etsy_db, 2)
+                else:
+                    ca_produits_ht = round(montant_articles_ttc, 2)
+
+            commission_etsy = (commission_transaction_etsy.get(id_wizi, 0)
+                                + commission_port_etsy.get(id_wizi, 0))
+            f_traitement = frais_traitement_etsy.get(id_wizi, 0)
+            f_reglementaire = frais_reglementaire_etsy.get(id_wizi, 0)
+            total_frais_etsy = commission_etsy + f_traitement + f_reglementaire
+
+            cout = cout_par_cmd_etsy.get(id_wizi, 0.0)
+            mois_idx = pd.to_datetime(c["date_commande"]).month - 1
+            marge_etsy_par_mois[mois_idx] += ca_produits_ht - total_frais_etsy - cout
+            nb_commandes_etsy_par_mois[mois_idx] += 1
+
+    marge_totale_par_mois = [w + f + e for w, f, e in
+                              zip(marge_wizi_par_mois, marge_faire_par_mois, marge_etsy_par_mois)]
+    nb_commandes_par_mois = [w + f + e for w, f, e in
+                              zip(nb_commandes_wizi_par_mois, nb_commandes_faire_par_mois,
+                                  nb_commandes_etsy_par_mois)]
     total_wizi = sum(marge_wizi_par_mois)
     total_faire = sum(marge_faire_par_mois)
-    total_general = total_wizi + total_faire
+    total_etsy = sum(marge_etsy_par_mois)
+    total_general = total_wizi + total_faire + total_etsy
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Marge Wizishop totale annuelle", f"{total_wizi:.2f} €")
     with col2:
         st.metric("Marge Faire totale annuelle", f"{total_faire:.2f} €")
     with col3:
+        st.metric("Marge Etsy totale annuelle", f"{total_etsy:.2f} €")
+    with col4:
         st.metric("Marge totale annuelle", f"{total_general:.2f} €")
 
     st.divider()
@@ -982,20 +1129,32 @@ elif page == "📊 Marge consolidée":
     mois_labels_fr = ["Jan", "Fév", "Mar", "Avr", "Mai", "Jun",
                        "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"]
 
-    data_tableau = {"": ["Marge Wizishop", "Marge Faire", "Marge Totale"]}
+    data_tableau = {"": ["Marge Wizishop", "Marge Faire", "Marge Etsy", "Marge Totale", "Nb commandes"]}
+    total_nb_commandes = sum(nb_commandes_par_mois)
     for i, label in enumerate(mois_labels_fr):
         data_tableau[label] = [
             round(marge_wizi_par_mois[i], 2),
             round(marge_faire_par_mois[i], 2),
+            round(marge_etsy_par_mois[i], 2),
             round(marge_totale_par_mois[i], 2),
+            nb_commandes_par_mois[i],
         ]
-    data_tableau["Total"] = [round(total_wizi, 2), round(total_faire, 2), round(total_general, 2)]
+    data_tableau["Total"] = [
+        round(total_wizi, 2), round(total_faire, 2), round(total_etsy, 2),
+        round(total_general, 2), total_nb_commandes,
+    ]
 
     df_marge = pd.DataFrame(data_tableau)
     colonnes_montant = mois_labels_fr + ["Total"]
 
+    idx_montant = df_marge.index[df_marge[""] != "Nb commandes"]
+    idx_nb = df_marge.index[df_marge[""] == "Nb commandes"]
+
     styled = df_marge.style \
-        .format({c: "{:.2f} €" for c in colonnes_montant}) \
+        .format({c: "{:.2f} €" for c in colonnes_montant},
+                subset=pd.IndexSlice[idx_montant, colonnes_montant]) \
+        .format({c: "{:.0f}" for c in colonnes_montant},
+                subset=pd.IndexSlice[idx_nb, colonnes_montant]) \
         .apply(lambda row: ["font-weight: bold" if row[""] == "Marge Totale" else ""
                              for _ in row], axis=1)
     st.dataframe(styled, use_container_width=True, hide_index=True)
