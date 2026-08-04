@@ -7,7 +7,7 @@ from supabase_api import select, upsert, insert, update, delete
 from sync_database import (get_wizi_token, get_wizi_shops, sync_categories, sync_marques,
                            sync_skus, sync_commandes, sync_commandes_nulles_only, sync_commande_unique,
                            sync_produits, log_sync, WIZISHOP_API_URL)
-from sync_etsy import sync_etsy_commandes, log_sync_etsy, backfill_etsy_transaction_ids
+from sync_etsy import sync_etsy_commandes, log_sync_etsy, backfill_etsy_transaction_ids, backfill_etsy_tva
 from sync_etsy_produits import sync_produits_etsy
 from etsy_api import get_shop_id
 from sync_faire import sync_faire_commandes, sync_faire_produits, log_sync_faire
@@ -585,6 +585,22 @@ if page == "🔄 Synchronisation":
                         log_sync_etsy("backfill_transaction_id", nb_maj, "success",
                                      f"{nb_maj}/{nb_traitees} lignes", duree)
                         st.success(f"✓ {nb_maj} lignes mises à jour sur {nb_traitees} traitées en {duree:.1f}s")
+                    else:
+                        st.error("Impossible de récupérer le shop_id Etsy.")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+
+        if st.button("🔄 Backfill TVA Etsy", use_container_width=True):
+            with st.spinner("Backfill tva_etsy sur tout l'historique Etsy... (peut être long)"):
+                debut = time.time()
+                try:
+                    shop_id_etsy = get_shop_id()
+                    if shop_id_etsy:
+                        nb_traitees, nb_maj = backfill_etsy_tva(shop_id_etsy)
+                        duree = time.time() - debut
+                        log_sync_etsy("backfill_tva_etsy", nb_maj, "success",
+                                     f"{nb_maj}/{nb_traitees} commandes", duree)
+                        st.success(f"✓ {nb_maj} commandes mises à jour sur {nb_traitees} traitées en {duree:.1f}s")
                     else:
                         st.error("Impossible de récupérer le shop_id Etsy.")
                 except Exception as e:

@@ -177,6 +177,39 @@ def backfill_etsy_transaction_ids(shop_id):
     return nb_traitees, nb_maj
 
 
+def backfill_etsy_tva(shop_id):
+    """Backfill ciblé : renseigne tva_etsy sur les commandes déjà en base qui
+    ne l'ont pas encore (tva_etsy IS NULL), en parcourant tout l'historique
+    des receipts Etsy. N'écrit jamais sur une commande qui a déjà une valeur
+    (pas de resync complet des montants) — uniquement du rattrapage.
+    Retourne (nb_traitees, nb_mises_a_jour)."""
+    from etsy_api import get_all_receipts
+    receipts = get_all_receipts(shop_id)
+
+    nb_traitees = 0
+    nb_maj = 0
+    for receipt in receipts:
+        receipt_id = receipt.get("receipt_id")
+        if not receipt_id:
+            continue
+        nb_traitees += 1
+
+        grandtotal = receipt.get("grandtotal", {})
+        divisor = grandtotal.get("divisor", 100) or 100
+        tva_etsy = receipt.get("total_tax_cost", {}).get("amount", 0) / divisor
+
+        existants = select("commandes",
+            f"select=id_wizi&id_wizi=eq.{receipt_id}&source=eq.etsy&tva_etsy=is.null&limit=1")
+        if existants:
+            ok = update("commandes",
+                f"id_wizi=eq.{receipt_id}&source=eq.etsy&tva_etsy=is.null",
+                {"tva_etsy": tva_etsy})
+            if ok:
+                nb_maj += 1
+
+    return nb_traitees, nb_maj
+
+
 def _clean_etsy_inventory(products_raw, stock_wizi_map):
     """
     Prépare le body d'inventaire pour le PUT Etsy :
