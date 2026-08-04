@@ -6064,7 +6064,8 @@ elif page == "📋 Factures Etsy":
                 "Montant TTC": montant_ttc_affiche,
                 "Frais port": frais_port,
                 "TVA": tva,
-                "CA HT": ca_ht,
+                "CA Produits HT": ca_ht,
+                "CA HT": round(ca_ht + frais_port, 2),
                 "Commission Etsy": commission_etsy,
                 "Frais traitement paiement": f_traitement,
                 "Frais réglementaire": f_reglementaire,
@@ -6097,16 +6098,16 @@ elif page == "📋 Factures Etsy":
 
         df_table = pd.DataFrame(rows)
 
-        ca_ht_total = df_table["CA HT"].sum()
+        ca_produits_ht_total = df_table["CA Produits HT"].sum()
         ca_ttc_total = df_table["Montant TTC"].sum()
         frais_etsy_total = df_table["Total frais Etsy"].sum()
         cout_achat_total = df_table["_cout_achat"].sum()
         marge_totale = df_table["Marge"].sum()
-        marge_pct_moyenne = round(marge_totale / ca_ht_total * 100, 1) if ca_ht_total else 0
+        marge_pct_moyenne = round(marge_totale / ca_produits_ht_total * 100, 1) if ca_produits_ht_total else 0
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("CA HT total", f"{ca_ht_total:.2f} €")
+            st.metric("CA Produits HT total", f"{ca_produits_ht_total:.2f} €")
         with col2:
             st.metric("CA TTC total", f"{ca_ttc_total:.2f} €")
         with col3:
@@ -6131,7 +6132,7 @@ elif page == "📋 Factures Etsy":
         styled = df_affiche.style \
             .format({
                 "Montant TTC": "{:.2f}", "Frais port": "{:.2f}", "TVA": "{:.2f}",
-                "CA HT": "{:.2f}", "Commission Etsy": "{:.2f}",
+                "CA Produits HT": "{:.2f}", "CA HT": "{:.2f}", "Commission Etsy": "{:.2f}",
                 "Frais traitement paiement": "{:.2f}", "Frais réglementaire": "{:.2f}",
                 "Total frais Etsy": "{:.2f}", "Frais %": "{:.1f}",
                 "Marge": "{:.2f}", "Marge %": "{:.1f}",
