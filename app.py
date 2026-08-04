@@ -6036,8 +6036,11 @@ elif page == "📋 Factures Etsy":
             publicite = round(p_onsite + p_offsite, 2)
             renouvellement = 0.0  # non rattachable à une commande (cf. note ci-dessous)
 
-            total_frais_etsy = round(commission_etsy + f_traitement + f_reglementaire
-                                      + publicite + renouvellement, 2)
+            # Total frais Etsy (et Marge) : publicité et renouvellement d'annonce
+            # exclus — ce sont des frais au niveau du compte/de l'annonce, pas
+            # rattachables proprement à une commande précise (cf. détail dans
+            # l'expander pour leur valeur informative par commande).
+            total_frais_etsy = round(commission_etsy + f_traitement + f_reglementaire, 2)
 
             cout_achat = round(cout_achat_par_cmd.get(id_wizi, 0), 2)
             prix_achat_manquant = not prix_achat_ok_par_cmd.get(id_wizi, False)
@@ -6048,15 +6051,13 @@ elif page == "📋 Factures Etsy":
                 "Date": date_fmt,
                 "N° commande": row["id_wizi"],
                 "Client": client,
-                "CA HT": ca_ht,
+                "Montant TTC": montant_ttc,
                 "Frais port": frais_port,
                 "TVA": tva,
-                "Montant TTC": montant_ttc,
+                "CA HT": ca_ht,
                 "Commission Etsy": commission_etsy,
                 "Frais traitement paiement": f_traitement,
                 "Frais réglementaire": f_reglementaire,
-                "Publicité": publicite,
-                "Renouvellement annonce": renouvellement,
                 "Total frais Etsy": total_frais_etsy,
                 "Coût achat": f"{cout_achat:.2f} ⚠️" if prix_achat_manquant else f"{cout_achat:.2f}",
                 "Marge": marge,
@@ -6118,10 +6119,9 @@ elif page == "📋 Factures Etsy":
         df_affiche = df_table.drop(columns=["_cout_achat", "_prix_achat_manquant"])
         styled = df_affiche.style \
             .format({
-                "CA HT": "{:.2f}", "Frais port": "{:.2f}", "TVA": "{:.2f}",
-                "Montant TTC": "{:.2f}", "Commission Etsy": "{:.2f}",
+                "Montant TTC": "{:.2f}", "Frais port": "{:.2f}", "TVA": "{:.2f}",
+                "CA HT": "{:.2f}", "Commission Etsy": "{:.2f}",
                 "Frais traitement paiement": "{:.2f}", "Frais réglementaire": "{:.2f}",
-                "Publicité": "{:.2f}", "Renouvellement annonce": "{:.2f}",
                 "Total frais Etsy": "{:.2f}", "Marge": "{:.2f}", "Marge %": "{:.1f}",
             })
         st.dataframe(styled, use_container_width=True, hide_index=True)
