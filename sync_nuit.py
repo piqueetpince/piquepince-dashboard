@@ -397,4 +397,117 @@ if GMAIL_USER and GMAIL_PASSWORD:
 else:
     print("\n⚠️  GMAIL_USER/GMAIL_PASSWORD absents — email non envoyé.")
 
+# ── Email de supervision quotidienne (prix d'achat manquants) ────────────────
+
+from supabase_api import select as select_supabase
+
+
+def _get_skus_manquant_prix_achat():
+    """SKUs visibles sans prix d'achat renseigné (NULL ou 0).
+
+    Exclut les SKUs AE_ (déjà filtrés par select() sur skus/produits, cf.
+    supabase_api._TABLES_SANS_ALIEXPRESS — vérifié explicitement ici quand
+    même par sécurité) et les SKUs "parents" : tout SKU pour lequel il
+    existe un autre SKU visible qui commence par lui (SKU + suffixe) — son
+    stock/prix réel est porté par ses variations, pas par lui-même. Même
+    algorithme que _get_skus_visibles_et_parents() dans app.py."""
+    skus_data = select_supabase("skus", "select=sku,stock&statut=eq.visible")
+    if not skus_data:
+        return []
+
+    skus_tries = sorted(s["sku"] for s in skus_data if s.get("sku"))
+    parents_a_exclure = set()
+    for i, sku in enumerate(skus_tries):
+        for autre in skus_tries[i + 1:]:
+            if not autre.startswith(sku):
+                break
+            parents_a_exclure.add(sku)
+            break
+
+    produits_data = select_supabase("produits", "select=sku,nom,fournisseur,prix_achat_ht")
+    prod_map = {p["sku"]: p for p in (produits_data or [])}
+    stock_map = {s["sku"]: int(s.get("stock") or 0) for s in skus_data}
+
+    manquants = []
+    for sku in skus_tries:
+        if sku in parents_a_exclure or sku.startswith("AE_"):
+            continue
+        prod = prod_map.get(sku, {})
+        prix_achat = prod.get("prix_achat_ht")
+        if prix_achat is None or float(prix_achat) == 0:
+            manquants.append({
+                "sku": sku,
+                "nom": prod.get("nom") or sku,
+                "fournisseur": prod.get("fournisseur") or "",
+                "stock": stock_map.get(sku, 0),
+            })
+
+    return manquants
+
+
+def build_supervision_email():
+    """Construit le HTML de l'email de supervision quotidienne. Retourne le
+    HTML complet (sujet géré séparément par l'appelant, comme pour
+    _construire_html_recap())."""
+    manquants = _get_skus_manquant_prix_achat()
+    date_str = datetime.now().strftime("%d/%m/%Y")
+
+    if manquants:
+        thead = (
+            f'<tr>'
+            f'<th style="{_ENTETE}">SKU</th>'
+            f'<th style="{_ENTETE}">Produit</th>'
+            f'<th style="{_ENTETE}">Fournisseur</th>'
+            f'<th style="{_ENTETE}">Stock</th>'
+            f'</tr>'
+        )
+        lignes_html = "".join(
+            f'<tr>'
+            f'<td style="{_CELL}">{m["sku"]}</td>'
+            f'<td style="{_CELL}">{m["nom"]}</td>'
+            f'<td style="{_CELL}">{m["fournisseur"]}</td>'
+            f'<td style="{_CELL}">{m["stock"]}</td>'
+            f'</tr>'
+            for m in manquants
+        )
+        section_prix = f"""
+        <h3 style="color:#c62828;">⚠️ Prix d'achat manquants ({len(manquants)} SKUs)</h3>
+        <table style="border-collapse:collapse; font-size:13px;">
+          <thead>{thead}</thead>
+          <tbody>{lignes_html}</tbody>
+        </table>
+        """
+    else:
+        section_prix = '<h3 style="color:#2e7d32;">✅ Tous les prix d\'achat sont renseignés</h3>'
+
+    return f"""
+    <html><body style="font-family:Arial,sans-serif;">
+    <h2>📋 Supervision quotidienne Pique&amp;Pince - {date_str}</h2>
+    {section_prix}
+    <p style="color:#888; font-size:12px; margin-top:30px;">
+      Généré le {datetime.now().strftime('%d/%m/%Y à %Hh%M')} — sync nocturne
+    </p>
+    </body></html>
+    """
+
+
+if GMAIL_USER and GMAIL_PASSWORD:
+    sujet_supervision = f"📋 Supervision quotidienne — {datetime.now().strftime('%d/%m/%Y')}"
+    msg_supervision = MIMEMultipart("alternative")
+    msg_supervision["Subject"] = sujet_supervision
+    msg_supervision["From"]    = GMAIL_USER
+    msg_supervision["To"]      = DESTINATAIRE
+    msg_supervision.attach(MIMEText(build_supervision_email(), "html", "utf-8"))
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as srv:
+            srv.ehlo()
+            srv.starttls()
+            srv.login(GMAIL_USER, GMAIL_PASSWORD)
+            srv.sendmail(GMAIL_USER, DESTINATAIRE, msg_supervision.as_string())
+        print(f"📧 Email de supervision envoyé à {DESTINATAIRE}")
+    except Exception as e:
+        print(f"⚠️  Envoi email supervision échoué : {e}")
+else:
+    print("⚠️  GMAIL_USER/GMAIL_PASSWORD absents — email supervision non envoyé.")
+
 sys.exit(1 if nb_ko > 0 else 0)
