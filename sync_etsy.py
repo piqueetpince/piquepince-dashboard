@@ -61,6 +61,7 @@ def sync_etsy_commandes(shop_id):
         montant_ht = subtotal.get("amount", 0) / divisor
         frais_port = shipping.get("amount", 0) / (shipping.get("divisor", 100) or 100)
         remise = discount.get("amount", 0) / (discount.get("divisor", 100) or 100)
+        tva_etsy = receipt.get("total_tax_cost", {}).get("amount", 0) / divisor
 
         status = receipt.get("status", "")
         if status == "Completed":
@@ -87,6 +88,7 @@ def sync_etsy_commandes(shop_id):
             "montant_ht": montant_ht,
             "frais_port": frais_port,
             "remise": remise,
+            "tva_etsy": tva_etsy,
             "id_client": receipt.get("buyer_user_id"),
             "nom_facturation": receipt.get("name"),
             "adresse_facturation": receipt.get("first_line"),

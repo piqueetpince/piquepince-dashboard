@@ -5824,7 +5824,7 @@ elif page == "📋 Factures Etsy":
     date_fin_str = (mois_choisi + pd.DateOffset(months=1)).strftime("%Y-%m-%d")
 
     commandes_etsy = select("commandes",
-        f"select=id_wizi,date_commande,nom_facturation,montant_ttc,montant_ht,frais_port"
+        f"select=id_wizi,date_commande,nom_facturation,montant_ttc,montant_ht,frais_port,tva_etsy"
         f"&source=eq.etsy&statut_code=not.in.(0,45,50)"
         f"&date_commande=gte.{date_debut_str}&date_commande=lt.{date_fin_str}"
         f"&order=date_commande.desc")
@@ -5833,7 +5833,7 @@ elif page == "📋 Factures Etsy":
         st.info("Aucune commande Etsy pour ce mois.")
     else:
         df_cmd = pd.DataFrame(commandes_etsy)
-        for col in ["montant_ttc", "montant_ht", "frais_port"]:
+        for col in ["montant_ttc", "montant_ht", "frais_port", "tva_etsy"]:
             df_cmd[col] = pd.to_numeric(df_cmd[col], errors="coerce").fillna(0)
 
         def _format_date(valeur):
@@ -5978,17 +5978,20 @@ elif page == "📋 Factures Etsy":
             frais_port = float(row["frais_port"])
             montant_ttc = float(row["montant_ttc"])
             montant_ht_db = float(row["montant_ht"])
+            tva_etsy_db = float(row.get("tva_etsy") or 0)
 
             lignes_cmd = lignes_par_cmd.get(id_wizi, [])
             ca_ht = round(sum(l["total_ht"] for l in lignes_cmd), 2)
 
-            # TVA = montant_ttc - montant_ht si le champ commande est renseigné,
-            # sinon estimée à 20% du CA HT calculé depuis les lignes. Note :
-            # côté Etsy, montant_ht (subtotal) exclut déjà le port — contrairement
-            # à Wizishop — donc ce calcul inclut potentiellement le port dans le
-            # résultat si montant_ht est renseigné (montant_ttc = subtotal+tax+port).
-            if montant_ht_db:
-                tva = round(montant_ttc - montant_ht_db, 2)
+            # TVA : en priorité le champ tva_etsy (receipt.total_tax_cost, la
+            # vraie taxe Etsy). À défaut (commandes synchronisées avant l'ajout
+            # de ce champ, ou tva_etsy=0), repli sur montant_ttc - montant_ht -
+            # frais_port — montant_ht (subtotal) exclut déjà le port côté Etsy,
+            # donc il faut le soustraire en plus pour ne pas le compter dans la TVA.
+            if tva_etsy_db > 0:
+                tva = round(tva_etsy_db, 2)
+            elif montant_ht_db:
+                tva = round(montant_ttc - montant_ht_db - frais_port, 2)
             else:
                 tva = round(ca_ht * 0.2, 2)
 
